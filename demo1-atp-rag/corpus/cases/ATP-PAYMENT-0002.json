@@ -1,0 +1,69 @@
+{
+  "case_id": "73145000000000051",
+  "case_code": "ATP-PAYMENT-0002",
+  "title": "【历史】支付方式单选按钮",
+  "module_id": "M006",
+  "module_code": "PAYMENT",
+  "priority": "P2",
+  "author": "yamada.t",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2023-07-09 11:03:00",
+  "updated_at": "2023-07-21 12:03:00",
+  "steps": [
+    {
+      "step_id": "73145000000000051-S01",
+      "case_id": "73145000000000051",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/orders/${pending_order_no}/pay",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000051-S02",
+      "case_id": "73145000000000051",
+      "seq": 2,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//*[@id=\"el-id-8237-14\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": "※ 规范建立前编写，待改造"
+    },
+    {
+      "step_id": "73145000000000051-S03",
+      "case_id": "73145000000000051",
+      "seq": 3,
+      "action": "ASSERT_VISIBLE",
+      "locator_type": "XPATH",
+      "locator_value": "//input[@data-testid=\"card-number\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-002"
+  ],
+  "step_count": 3,
+  "actions_used": [
+    "ASSERT_VISIBLE",
+    "CLICK",
+    "OPEN_URL"
+  ]
+}

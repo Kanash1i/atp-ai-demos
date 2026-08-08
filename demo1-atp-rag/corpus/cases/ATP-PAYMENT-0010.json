@@ -1,0 +1,67 @@
+{
+  "case_id": "73145000000000059",
+  "case_code": "ATP-PAYMENT-0010",
+  "title": "对已支付订单重复发起支付，应阻止并提示已完成",
+  "module_id": "M006",
+  "module_code": "PAYMENT",
+  "priority": "P1",
+  "author": "sato.m",
+  "precondition": "${paid_order_no} 为已支付订单",
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2025-09-04 12:47:00",
+  "updated_at": "2025-09-24 16:47:00",
+  "steps": [
+    {
+      "step_id": "73145000000000059-S01",
+      "case_id": "73145000000000059",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/orders/${paid_order_no}/pay",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000059-S02",
+      "case_id": "73145000000000059",
+      "seq": 2,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//div[@data-testid=\"pay-blocked\"]",
+      "input_data": null,
+      "expected": "お支払いは完了しています",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000059-S03",
+      "case_id": "73145000000000059",
+      "seq": 3,
+      "action": "ASSERT_NOT_EXIST",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"pay-submit\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": false,
+  "violation_codes": [],
+  "step_count": 3,
+  "actions_used": [
+    "ASSERT_NOT_EXIST",
+    "ASSERT_TEXT",
+    "OPEN_URL"
+  ]
+}

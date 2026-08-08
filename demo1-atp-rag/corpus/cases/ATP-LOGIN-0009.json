@@ -1,0 +1,82 @@
+{
+  "case_id": "73145000000000008",
+  "case_code": "ATP-LOGIN-0009",
+  "title": "会话超时后操作页面，应自动登出并保留原页面地址",
+  "module_id": "M001",
+  "module_code": "LOGIN",
+  "priority": "P2",
+  "author": "chen.wei",
+  "precondition": "测试环境的会话超时时间已配置为 30 秒",
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 120,
+  "created_at": "2025-04-04 10:44:00",
+  "updated_at": "2025-04-13 13:44:00",
+  "steps": [
+    {
+      "step_id": "73145000000000008-S01",
+      "case_id": "73145000000000008",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/mypage",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000008-S02",
+      "case_id": "73145000000000008",
+      "seq": 2,
+      "action": "ASSERT_VISIBLE",
+      "locator_type": "XPATH",
+      "locator_value": "//div[@data-testid=\"session-expired-dialog\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 60,
+      "on_failure": "ABORT",
+      "description": "等待会话超时弹窗。超时阈值由测试环境配置为 30 秒"
+    },
+    {
+      "step_id": "73145000000000008-S03",
+      "case_id": "73145000000000008",
+      "seq": 3,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"relogin-button\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000008-S04",
+      "case_id": "73145000000000008",
+      "seq": 4,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//input[@data-testid=\"redirect-hint\"]",
+      "input_data": null,
+      "expected": "/mypage",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": false,
+  "violation_codes": [],
+  "step_count": 4,
+  "actions_used": [
+    "ASSERT_TEXT",
+    "ASSERT_VISIBLE",
+    "CLICK",
+    "OPEN_URL"
+  ]
+}

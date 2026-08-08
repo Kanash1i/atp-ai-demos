@@ -1,0 +1,54 @@
+{
+  "case_id": "73145000000000010",
+  "case_code": "ATP-SEARCH-0001",
+  "title": "【历史】搜索结果首项标题校验",
+  "module_id": "M002",
+  "module_code": "SEARCH",
+  "priority": "P2",
+  "author": "lim.jh",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2023-03-08 12:10:00",
+  "updated_at": "2023-03-19 12:10:00",
+  "steps": [
+    {
+      "step_id": "73145000000000010-S01",
+      "case_id": "73145000000000010",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/search?q=PC",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000010-S02",
+      "case_id": "73145000000000010",
+      "seq": 2,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "/html/body/div[2]/div[1]/main/ul/li[1]/h3",
+      "input_data": null,
+      "expected": "PC",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": "用浏览器复制的完整 XPath。※ 规范建立前编写，待改造"
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-001"
+  ],
+  "step_count": 2,
+  "actions_used": [
+    "ASSERT_TEXT",
+    "OPEN_URL"
+  ]
+}

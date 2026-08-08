@@ -1,0 +1,82 @@
+{
+  "case_id": "73145000000000039",
+  "case_code": "ATP-ORDER-0010",
+  "title": "按状态筛选订单列表，结果应只含该状态的订单",
+  "module_id": "M004",
+  "module_code": "ORDER",
+  "priority": "P2",
+  "author": "yamada.t",
+  "precondition": "账号下存在至少 1 笔已取消订单",
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2025-07-06 13:27:00",
+  "updated_at": "2025-08-15 17:27:00",
+  "steps": [
+    {
+      "step_id": "73145000000000039-S01",
+      "case_id": "73145000000000039",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/orders",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000039-S02",
+      "case_id": "73145000000000039",
+      "seq": 2,
+      "action": "SELECT",
+      "locator_type": "XPATH",
+      "locator_value": "//select[@data-testid=\"order-status-filter\"]",
+      "input_data": "キャンセル済み",
+      "expected": null,
+      "wait_strategy": "PRESENCE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000039-S03",
+      "case_id": "73145000000000039",
+      "seq": 3,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"order-filter-apply\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000039-S04",
+      "case_id": "73145000000000039",
+      "seq": 4,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//tr[@data-testid=\"order-row\"][1]//span[@data-testid=\"order-status\"]",
+      "input_data": null,
+      "expected": "キャンセル済み",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": false,
+  "violation_codes": [],
+  "step_count": 4,
+  "actions_used": [
+    "ASSERT_TEXT",
+    "CLICK",
+    "OPEN_URL",
+    "SELECT"
+  ]
+}

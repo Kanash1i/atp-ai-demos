@@ -1,0 +1,69 @@
+{
+  "case_id": "73145000000000011",
+  "case_code": "ATP-SEARCH-0002",
+  "title": "【历史】搜索操作走通性确认",
+  "module_id": "M002",
+  "module_code": "SEARCH",
+  "priority": "P3",
+  "author": "sato.m",
+  "precondition": null,
+  "status": "DRAFT",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2023-03-11 13:23:00",
+  "updated_at": "2023-03-23 14:23:00",
+  "steps": [
+    {
+      "step_id": "73145000000000011-S01",
+      "case_id": "73145000000000011",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000011-S02",
+      "case_id": "73145000000000011",
+      "seq": 2,
+      "action": "INPUT",
+      "locator_type": "XPATH",
+      "locator_value": "//input[@data-testid=\"search-keyword\"]",
+      "input_data": "ノートPC",
+      "expected": null,
+      "wait_strategy": "PRESENCE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000011-S03",
+      "case_id": "73145000000000011",
+      "seq": 3,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"search-submit\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-008"
+  ],
+  "step_count": 3,
+  "actions_used": [
+    "CLICK",
+    "INPUT",
+    "OPEN_URL"
+  ]
+}

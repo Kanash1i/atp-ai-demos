@@ -1,0 +1,69 @@
+{
+  "case_id": "73145000000000031",
+  "case_code": "ATP-ORDER-0002",
+  "title": "【历史】结算页下一步按钮点击",
+  "module_id": "M004",
+  "module_code": "ORDER",
+  "priority": "P2",
+  "author": "suzuki.k",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2023-05-10 12:43:00",
+  "updated_at": "2023-06-11 13:43:00",
+  "steps": [
+    {
+      "step_id": "73145000000000031-S01",
+      "case_id": "73145000000000031",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/checkout",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000031-S02",
+      "case_id": "73145000000000031",
+      "seq": 2,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//div[@id=\"mat-input-7\"]//button",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": "※ 规范建立前编写，待改造"
+    },
+    {
+      "step_id": "73145000000000031-S03",
+      "case_id": "73145000000000031",
+      "seq": 3,
+      "action": "ASSERT_VISIBLE",
+      "locator_type": "XPATH",
+      "locator_value": "//div[@data-testid=\"order-confirm-panel\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-002"
+  ],
+  "step_count": 3,
+  "actions_used": [
+    "ASSERT_VISIBLE",
+    "CLICK",
+    "OPEN_URL"
+  ]
+}

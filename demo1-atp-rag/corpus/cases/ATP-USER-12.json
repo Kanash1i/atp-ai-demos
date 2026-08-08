@@ -1,0 +1,54 @@
+{
+  "case_id": "73145000000000041",
+  "case_code": "ATP-USER-12",
+  "title": "【历史】收货地址列表显示确认",
+  "module_id": "M005",
+  "module_code": "USER",
+  "priority": "P3",
+  "author": "sato.m",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2023-06-09 15:53:00",
+  "updated_at": "2023-06-11 16:53:00",
+  "steps": [
+    {
+      "step_id": "73145000000000041-S01",
+      "case_id": "73145000000000041",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/mypage/addresses",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000041-S02",
+      "case_id": "73145000000000041",
+      "seq": 2,
+      "action": "ASSERT_VISIBLE",
+      "locator_type": "XPATH",
+      "locator_value": "//ul[@data-testid=\"address-list\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-007"
+  ],
+  "step_count": 2,
+  "actions_used": [
+    "ASSERT_VISIBLE",
+    "OPEN_URL"
+  ]
+}

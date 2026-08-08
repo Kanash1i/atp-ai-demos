@@ -1,0 +1,67 @@
+{
+  "case_id": "73145000000000018",
+  "case_code": "ATP-SEARCH-0009",
+  "title": "关键词为空时点击搜索，应停留在原页并提示输入",
+  "module_id": "M002",
+  "module_code": "SEARCH",
+  "priority": "P2",
+  "author": "tanaka.y",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2025-05-04 13:54:00",
+  "updated_at": "2025-05-23 16:54:00",
+  "steps": [
+    {
+      "step_id": "73145000000000018-S01",
+      "case_id": "73145000000000018",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000018-S02",
+      "case_id": "73145000000000018",
+      "seq": 2,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"search-submit\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000018-S03",
+      "case_id": "73145000000000018",
+      "seq": 3,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//span[@data-testid=\"search-input-error\"]",
+      "input_data": null,
+      "expected": "キーワードを入力してください",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": false,
+  "violation_codes": [],
+  "step_count": 3,
+  "actions_used": [
+    "ASSERT_TEXT",
+    "CLICK",
+    "OPEN_URL"
+  ]
+}

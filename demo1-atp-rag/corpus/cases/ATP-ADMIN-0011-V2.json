@@ -1,0 +1,54 @@
+{
+  "case_id": "73145000000000071",
+  "case_code": "ATP-ADMIN-0011-V2",
+  "title": "【历史】后台首页打开确认",
+  "module_id": "M008",
+  "module_code": "ADMIN",
+  "priority": "P3",
+  "author": "sato.m",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2023-09-07 10:23:00",
+  "updated_at": "2023-10-09 11:23:00",
+  "steps": [
+    {
+      "step_id": "73145000000000071-S01",
+      "case_id": "73145000000000071",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/admin",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000071-S02",
+      "case_id": "73145000000000071",
+      "seq": 2,
+      "action": "ASSERT_VISIBLE",
+      "locator_type": "XPATH",
+      "locator_value": "//div[@data-testid=\"admin-dashboard\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-007"
+  ],
+  "step_count": 2,
+  "actions_used": [
+    "ASSERT_VISIBLE",
+    "OPEN_URL"
+  ]
+}
