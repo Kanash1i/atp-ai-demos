@@ -126,8 +126,8 @@ tc_module  (模块字典表, 只读)
 │  JDK 8/17/21 + Maven        │ ─────► │  9800X3D / 48G DDR5 / RTX5080 16G     │
 │  demo1 / demo2 代码          │  SSH   │  driver 610.88 (Blackwell sm_120)     │
 └─────────────────────────────┘        │                                       │
-              │                        │  ├ llama-server.exe (bge-m3)    :8081 │
-              │                        │  ├ llama-server.exe (reranker)  :8082 │
+              │                        │  ├ TEI tei-embed (bge-m3)       :8081 │
+              │                        │  ├ TEI tei-rerank (reranker)    :8082 │
               │ HTTPS                  │  └ Qdrant @ Docker Desktop      :6333 │
               ▼                        └───────────────────────────────────────┘
     ┌──────────────────────┐
@@ -157,89 +157,127 @@ tc_module  (模块字典表, 只读)
 
 | 项 | 值 |
 |---|---|
-| llama.cpp | `C:\Users\kkaib\mydisk\llama_dir\llama-b9360-bin-win-cuda-13.1-x64\` |
-| 版本 | build **b9360**，win-cuda-13.1-x64（Blackwell sm_120 需要 CUDA 12.8+，13.1 ✓） |
-| PATH | `llama-server.exe` **不在 PATH**，必须用全路径 |
+| Docker | Docker Desktop **29.6.2**（WSL2 backend），`nvidia-container-runtime` 已配置 |
+| GPU 直通 | ✅ 已实测：容器内 `cuInit` 与 `cudaGetDeviceCount` 均返回成功，driver 13030 (CUDA 13.3) |
+| TEI 镜像 | `ghcr.io/huggingface/text-embeddings-inference:120-1.9.3`（已拉取，3.16 GB） |
 | WSL | 只有 `docker-desktop`，**没有通用 Linux 发行版** |
 | Docker | Docker Desktop 运行中，笔记本已配好 `docker context remote` |
 | C 盘剩余 | 约 503 GB |
 
-**(a) llama.cpp —— 两个 llama-server 实例**
+**(a) TEI (Text Embeddings Inference) —— 两个容器，已部署验证**
 
-选 llama.cpp 而不是 Ollama 或 Infinity，理由见 §2.3。
-必须起**两个独立进程**（一个进程只能有一种 pooling 模式）。
+> ✅ **本节命令已在台式机上实际执行并验证通过**，不是纸面方案。
+> 选 TEI 而非 llama.cpp 的理由见 §2.3。
 
-**第一步：下载 GGUF 模型**
+**镜像**（⚠️ tag 必须是 `120-`，这是 Blackwell sm_120 专用构建）：
 
-```powershell
-$MODELS = "C:\Users\kkaib\mydisk\models"
-New-Item -ItemType Directory -Force -Path $MODELS | Out-Null
-
-# curl.exe 是 Windows 10+ 自带的，比 Invoke-WebRequest 更能正确处理 HF 的重定向
-curl.exe -L -o "$MODELS\bge-m3-Q8_0.gguf" `
-  "https://huggingface.co/gpustack/bge-m3-GGUF/resolve/main/bge-m3-Q8_0.gguf"
-
-curl.exe -L -o "$MODELS\bge-reranker-v2-m3-Q8_0.gguf" `
-  "https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/resolve/main/bge-reranker-v2-m3-Q8_0.gguf"
+```
+ghcr.io/huggingface/text-embeddings-inference:120-1.9.3
 ```
 
-> ⚠️ **先确认仓库里的确切文件名再下载**（大小写、量化后缀可能不同）：
-> 浏览器打开 `https://huggingface.co/gpustack/bge-m3-GGUF/tree/main` 看一眼。
-> 下完检查大小：Q8_0 下 bge-m3 约 600MB、reranker 约 600MB。
-> **如果只有几 KB，说明下到的是 HTML 错误页而不是模型。**
+RTX 5080 是 Blackwell（compute capability **120**）。TEI 按算力分 tag，
+`latest` / `89-` / `hopper-` 都**不适用**。sm_120 支持由
+[PR #735](https://github.com/huggingface/text-embeddings-inference/pull/735) 引入。
 
-**第二步：启动**
+**启动命令**（笔记本上执行即可，`docker context remote` 已指向台式机）：
 
-```powershell
-$LLAMA  = "C:\Users\kkaib\mydisk\llama_dir\llama-b9360-bin-win-cuda-13.1-x64\llama-server.exe"
-$MODELS = "C:\Users\kkaib\mydisk\models"
+```bash
+# Embedding —— bge-m3，端口 8081
+docker run -d --name tei-embed --restart unless-stopped --gpus all \
+  -p 8081:80 -v tei_data:/data \
+  --tmpfs /usr/local/cuda-12.9/compat \
+  ghcr.io/huggingface/text-embeddings-inference:120-1.9.3 \
+  --model-id BAAI/bge-m3
 
-# 实例 A —— Embedding (bge-m3)，pooling = cls
-Start-Process -FilePath $LLAMA -WindowStyle Hidden -ArgumentList @(
-  "-m", "$MODELS\bge-m3-Q8_0.gguf",
-  "--host", "0.0.0.0", "--port", "8081",
-  "--embedding", "--pooling", "cls",
-  "-ngl", "99", "-c", "32768", "-np", "4", "-b", "8192"
-)
-
-# 实例 B —— Rerank (bge-reranker-v2-m3)，pooling = rank
-Start-Process -FilePath $LLAMA -WindowStyle Hidden -ArgumentList @(
-  "-m", "$MODELS\bge-reranker-v2-m3-Q8_0.gguf",
-  "--host", "0.0.0.0", "--port", "8082",
-  "--reranking", "--embedding", "--pooling", "rank",
-  "-ngl", "99", "-c", "16384", "-np", "4"
-)
+# Rerank —— bge-reranker-v2-m3，端口 8082
+docker run -d --name tei-rerank --restart unless-stopped --gpus all \
+  -p 8082:80 -v tei_data:/data \
+  --tmpfs /usr/local/cuda-12.9/compat \
+  ghcr.io/huggingface/text-embeddings-inference:120-1.9.3 \
+  --model-id BAAI/bge-reranker-v2-m3
 ```
 
-**⚠️ `-c` 和 `-np` 的关系是个静默陷阱，别配错**
+模型由 TEI 自动从 HuggingFace 拉取，缓存在 named volume `tei_data`（两容器共享）。
 
-llama.cpp 的 `-c` 是**所有 slot 共享的总 context**，每个 slot 实际只有 `c / np`。
+---
 
-- 配 `-c 8192 -np 4` → 每个 slot 只有 **2048 token**
-- bge-m3 支持 8192 token，但超过 slot 上限的输入会被**静默截断**
-- 后果：长 chunk 的尾部内容根本没进 embedding，检索质量下降，**但你从日志里看不出来**
+**⚠️⚠️ `--tmpfs /usr/local/cuda-12.9/compat` 这一行是整个部署的关键，删了就静默退化成 CPU**
 
-所以上面配的是 `-c 32768 -np 4`（每 slot 8192，跑满 bge-m3 的能力）。
-reranker 的 query+doc pair 较短，`-c 16384 -np 4`（每 slot 4096）足够。
+这是本项目踩到的最有价值的坑，**面试值得专门讲**。
 
-> 这类**静默失败**是 RAG 里最难查的一类 bug ——
-> 和后面 rerank 打分错误是同一性质：系统照常运行，只是结果悄悄变差。
-> 面试聊到"你怎么保证检索质量"时，这是很具体的答案。
+**现象**：容器正常启动、`/health` 返回 200、API 正常返回 1024 维向量 ——
+**一切看起来都对**，只有日志里一行 WARN，和 CPU 风扇的声音不对。
 
-**其他要点**
+```
+WARN Could not find a compatible CUDA device on host: CUDA is not available
+     DriverError(CUDA_ERROR_NO_DEVICE, "no CUDA-capable device is detected")
+WARN Using CPU instead
+INFO Starting Bert model on Cpu          ← 注意是 Cpu
+```
 
-- `-np 4` 开并行槽位，否则请求串行 —— **这是 llama.cpp 比 Ollama 快的关键**，别漏
-- `-ngl 99` 全部层 offload 到 GPU；bge-m3 只有 24 层，99 是"能放多少放多少"的惯用写法
-- 显存：Q8_0 下两个模型合计约 2~3GB，RTX 5080 16G 绰绰有余
-- 接口：实例 A 走 OpenAI 兼容的 `POST /v1/embeddings`；实例 B 走 `POST /v1/rerank`
-  （body: `model` / `query` / `documents` / `top_n`，**非 OpenAI 标准，需自写适配器**）
-- `Start-Process -WindowStyle Hidden` 起的进程**随登录会话存在，注销即停**。
-  demo 阶段够用；要常驻可用 NSSM 注册成 Windows 服务或加进任务计划程序（开机启动）。
+实测 CPU 模式下 `tei-embed` 吃掉 **1421% CPU**（14 核满载），GPU 利用率 0%。
 
-**停止服务**：
+**根因**：CUDA 官方镜像自带 forward-compatibility 库：
 
-```powershell
-Get-Process llama-server -ErrorAction SilentlyContinue | Stop-Process -Force
+```
+/usr/local/cuda-12.9/compat/libcuda.so.575.57.08
+```
+
+这是**原生 Linux 版**的 `libcuda`，设计用于宿主驱动过旧时向前兼容。
+但 WSL2 **没有真正的 NVIDIA 内核模块**，只有 `/dev/dxg`，
+CUDA 调用必须走转发到 Windows `nvcuda.dll` 的那个特殊 `libcuda`。
+一旦加载了 compat 版本，就枚举不到任何设备 → `CUDA_ERROR_NO_DEVICE`。
+
+用 tmpfs 把该目录盖空，强制回落到宿主注入的正确 `libcuda`，问题即解。
+
+**修复后的正确日志**（务必确认这一行）：
+
+```
+INFO Starting FlashBert model on Cuda(CudaDevice(DeviceId(1)))
+```
+
+注意不仅是 `Cuda`，还是 **FlashBert**（Flash Attention 优化实现）。
+
+**诊断这个坑的过程本身就是面试素材** —— 我最初的验证是错的：
+
+> 我跑了 `docker run --gpus all nvidia/cuda:... nvidia-smi`，看到 GPU 就以为通了。
+> 但 **`nvidia-smi` 能跑只证明 driver 的 utility 能力可用，不代表 CUDA compute 可用**。
+> 在 WSL 下 `nvidia-smi` 是转发到 Windows 的，它成功和 `cuInit` 成功是两件事。
+> 更讽刺的是：手动 `--entrypoint bash` 进容器测 `cuInit` **是成功的**，
+> 因为交互式测试和 TEI 二进制的库搜索路径不同 —— 这让误判又多藏了一层。
+
+**教训**：验证 GPU 是否真的在用，唯一可靠的判据是
+**看框架日志里的 device 字段 + 看 `nvidia-smi` 的显存增量**，
+而不是"容器里能不能看到 GPU"。
+
+**验证服务是否真在 GPU 上**：
+
+```bash
+docker logs tei-embed 2>&1 | grep -i "model on"     # 必须出现 Cuda，不能是 Cpu
+ssh kkaib@192.168.0.101 "nvidia-smi --query-gpu=memory.used --format=csv,noheader"
+```
+
+模型加载后显存应比桌面基线（约 1950 MiB）**增加约 1.6~1.9 GB/模型**。
+两个模型都加载后实测约 **5165 MiB**。
+
+---
+
+**API 形状**（⚠️ 与 llama.cpp 不同，写适配器时注意）
+
+| 用途 | 端点 | 请求体 | 说明 |
+|---|---|---|---|
+| Embedding | `POST /embed` | `{"inputs": "文本"}` | TEI 原生，返回 `[[...1024 维...]]` |
+| Embedding | `POST /v1/embeddings` | `{"input": "文本", "model": "bge-m3"}` | **OpenAI 兼容**，langchain4j 可直接用 |
+| Rerank | `POST /rerank` | `{"query": "...", "texts": [...]}` | ⚠️ 字段是 **`texts`**，不是 `documents` |
+| 健康 | `GET /health` | — | 200 = 就绪 |
+
+返回的 rerank 结果是 `[{index, score}, ...]`，**未排序**，需自己按 score 降序。
+
+**停止 / 重启**：
+
+```bash
+docker stop tei-embed tei-rerank
+docker start tei-embed tei-rerank
 ```
 
 **(b) Qdrant — 向量库**
@@ -266,25 +304,22 @@ docker run -d --name qdrant --restart unless-stopped \
 - 选它的理由：langchain4j 0.35 有官方集成、一条命令起、UI 可视化。
   面试被问"为什么不用 pgvector/ES"时的回答见 demo1 文档 §决策记录。
 
-**(c) Windows 防火墙**
+**(c) Windows 防火墙 —— 实测无需配置**
 
-`llama-server` 必须带 `--host 0.0.0.0`，否则只监听回环，笔记本连不上。
-然后在台式机上**以管理员身份**开 PowerShell 放行端口：
+✅ **已验证：Docker Desktop 的端口转发已让 8081 / 8082 / 6333 在局域网直接可达**，
+不需要手动加防火墙规则。原因是这三个服务都以容器形式运行，
+端口由 Docker Desktop 的后端进程代理，它安装时已注册好规则。
+
+如果换成在 Windows 上**原生**跑服务（非容器），才需要手动放行 ——
+以管理员身份开 PowerShell：
 
 ```powershell
-New-NetFirewallRule -DisplayName "llama-server embedding" -Direction Inbound `
+New-NetFirewallRule -DisplayName "tei-embed" -Direction Inbound `
   -Protocol TCP -LocalPort 8081 -Action Allow -Profile Private
-New-NetFirewallRule -DisplayName "llama-server rerank" -Direction Inbound `
-  -Protocol TCP -LocalPort 8082 -Action Allow -Profile Private
-New-NetFirewallRule -DisplayName "qdrant" -Direction Inbound `
-  -Protocol TCP -LocalPort 6333 -Action Allow -Profile Private
 ```
 
-- `-Profile Private` 限定家庭/工作网络，比全开安全
-- Docker Desktop 通常会自己为映射端口建规则，Qdrant 那条可能是多余的，加了也无害
-- **确认网络位置是"プライベート"而不是"パブリック"**，否则 Private 规则不生效：
-  `Get-NetConnectionProfile`
-
+并确认网络位置是"プライベート"而非"パブリック"（`Get-NetConnectionProfile`），
+否则 Private 规则不生效。
 **(d) 从笔记本验证连通**
 
 ```bash
@@ -293,53 +328,78 @@ curl -s http://192.168.0.101:8082/health && echo " ← rerank OK"
 curl -s http://192.168.0.101:6333/       && echo " ← qdrant OK"
 ```
 
-**(e) ⚠️ 两个必做的冒烟测试 —— 防的都是「静默失败」**
+**(e) ⚠️ 三个必做的冒烟测试 —— 防的都是「静默失败」**
 
-服务起来了不等于结果是对的。下面两项**开工前必须跑**，
+服务起来了不等于结果是对的。下面三项**开工前必须跑**，
 它们防的是同一类问题：**系统照常运行，只是结果悄悄错了**。
 
-**e-1. Embedding 维度必须是 1024**
+**e-1. 确认真的在 GPU 上（最重要，最容易被忽略）**
+
+```bash
+docker logs tei-embed  2>&1 | grep -i "model on"
+docker logs tei-rerank 2>&1 | grep -i "model on"
+```
+
+**期望**：`Starting FlashBert model on Cuda(CudaDevice(...))`
+**如果出现 `on Cpu`** → CUDA compat 那个坑，见 §2.1(a)，必须加 `--tmpfs`。
+
+再对一下显存（桌面基线约 1950 MiB，两个模型都加载后实测约 **5165 MiB**）：
+
+```bash
+ssh kkaib@192.168.0.101 "nvidia-smi --query-gpu=memory.used --format=csv,noheader"
+```
+
+> 本项目**实际踩过这个坑**：服务 health 200、API 正常返回 1024 维向量，
+> 一切看起来都对，实际却在 CPU 上跑，14 核满载。
+> 最后是靠**CPU 风扇的声音**发现的 —— 这就是"静默失败"的可怕之处。
+
+**e-2. Embedding 维度必须是 1024**
+
+```bash
+curl -s http://192.168.0.101:8081/embed \
+  -H 'Content-Type: application/json' \
+  -d '{"inputs":"XPath 定位器编写规范"}' | jq '.[0] | length'
+```
+
+**期望 `1024`**（实测通过）。OpenAI 兼容端点同样可验：
 
 ```bash
 curl -s http://192.168.0.101:8081/v1/embeddings \
   -H 'Content-Type: application/json' \
-  -d '{"model":"bge-m3","input":"XPath 定位器编写规范"}' \
-  | jq '.data[0].embedding | length'
+  -d '{"input":"ログイン画面のテストケース","model":"bge-m3"}' | jq '.data[0].embedding | length'
 ```
 
-**期望输出 `1024`。** 如果不是，Qdrant collection 的维度就得跟着改
-（`EMBEDDING_DIM`），否则入库时报维度不匹配 —— 这个错误至少是**显式**的，还算好查。
+日文输入也返回 1024（实测通过）—— 顺带验证了 bge-m3 的多语言能力。
 
-**e-2. Rerank 打分方向必须正确**（这个错了不报错，最危险）
+**e-3. Rerank 打分方向必须正确**
 
-llama.cpp 的 rerank 端点对部分模型存在打分错误的已知问题
-（[ggml-org/llama.cpp#16407](https://github.com/ggml-org/llama.cpp/issues/16407)，
-其中点名了 qwen3-Rerank）。bge-reranker-v2-m3 是标准 cross-encoder，预期正常，**但必须验证**：
+⚠️ TEI 的字段是 **`texts`**，不是 `documents`；返回**未排序**，需自己降序。
 
 ```bash
-curl -s http://192.168.0.101:8082/v1/rerank -H 'Content-Type: application/json' -d '{
-  "model": "bge-reranker-v2-m3",
+curl -s http://192.168.0.101:8082/rerank -H 'Content-Type: application/json' -d '{
   "query": "如何编写稳定的 XPath 定位器",
-  "documents": [
+  "texts": [
     "XPath 应优先使用 data-testid 等稳定属性，避免绝对路径",
     "今天的天气非常好，适合出门散步",
     "购物车结算流程的测试要点"
-  ]}' | jq '.results | sort_by(-.relevance_score) | .[] | {index, relevance_score}'
+  ]}' | jq -c 'sort_by(-.score) | .[] | {index, score}'
 ```
 
-**期望**：`index 0` 得分显著最高，`index 1`（天气）最低，三者分数要拉得开。
+**实测基线**（可直接对照）：
 
-**如果排序错乱、或三个分数挤在一起** → rerank 不可用。此时必须：
-1. 设 `RERANK_ENABLED=false`
-2. 在消融实验表里**如实标注**"rerank 因 llama.cpp 运行时缺陷未能验证，该行数据缺失"
+```
+{"index":0,"score":0.7352616}
+{"index":1,"score":0.00001631454}
+{"index":2,"score":0.000016187581}
+```
 
-**绝不能拿一个坏掉的 rerank 去跑评估。** 那会污染整张消融表，
-而且你会带着一张自己都不知道是错的数据去面试 —— 这比没有 rerank 严重得多。
+相关文档 `0.735`，无关的两条都在 `1e-5` 量级 —— **区分度 4 个数量级**，非常健康。
+若三个分数挤在一起或排序错乱，说明 rerank 不可用，
+应设 `RERANK_ENABLED=false` 并在消融表中如实标注该行数据缺失。
+**绝不能拿一个坏掉的 rerank 去跑评估。**
 
-> 顺带，这两个测试加上 §2.1(a) 的 `-c / -np` 截断陷阱，是同一个主题的三个实例。
-> 面试被问"你怎么保证检索质量"时，**"我把静默失败的地方都变成了显式检查"**
-> 是个比罗列技术栈有力得多的回答。
-
+> 这三项加起来是同一个主题的三个实例。面试被问"你怎么保证检索质量"时，
+> **"我把所有会静默失败的地方都变成了显式检查"** 是个比罗列技术栈有力得多的回答。
 ### 2.2 LLM Provider（生成 / 补全）
 
 **开发期用 DeepSeek，后期切 Kimi K3。** 配置全在根目录 `.env`，切换不改代码。
@@ -370,15 +430,17 @@ Kimi 才有 `json_schema` + `strict`。而且 DeepSeek 的 function calling stri
 provider 支持 strict 时作为**额外保险**开启，但本地校验永不跳过。
 详见 `02-HANDOFF-demo2-mcp.md` §3-L3。
 
-### 2.3 为什么是 llama.cpp，不是 Ollama 或 Infinity
+### 2.3 为什么是 TEI，不是 llama.cpp / Ollama / Infinity
+
+**llama.cpp 这条路已经放弃** —— 调研发现它对 bge 系列（尤其 reranker）的支持不完善，
+`/v1/rerank` 对部分模型存在[打分错误](https://github.com/ggml-org/llama.cpp/issues/16407)。
+embedding 勉强能用，但 reranker 不可靠，而 **reranker 坏了不会报错，只会悄悄让检索变差**。
 
 **先澄清一个常见误解：Ollama 慢，但不是"本地部署慢"。** Ollama 慢有三个具体根因：
 
 1. embedding 是后期补的功能，未针对 encoder 模型优化
 2. 默认不做真正的批处理，并发请求实际串行
 3. `keep_alive` 到期会卸载模型，下次请求要冷启动重新加载
-
-这三条都不适用于 llama.cpp（带 `-np`）和 Infinity。实测 llama.cpp 对 Ollama 在 bge-m3 上有 **5~8×** 差距。
 
 **但对本项目而言，速度根本不是选型依据 —— 因为负载压不到瓶颈**：
 
@@ -391,21 +453,21 @@ provider 支持 strict 时作为**额外保险**开启，但本地校验永不�
 bge-reranker-v2-m3 只有 568M 参数、encoder-only、单次前向。这个量级在 5080 上不构成压力。
 **真正的延迟瓶颈是 DeepSeek 的生成调用（秒级），不在本地模型这一侧。**
 
-所以选 llama.cpp 的实际理由是：**已验证可用、原生部署无 docker 依赖、少一个运维面**。
+**所以选 TEI 的实际理由是**：
 
-**服务机是 Windows 这件事让这个选择更明确了**：
+| 维度 | 说明 |
+|---|---|
+| **正确性** | 官方支持 bge 全系。实测 rerank 区分度达 **4 个数量级**（0.735 vs 0.000016），llama.cpp 那条路做不到 |
+| **标准协议** | 原生 `/embed` `/rerank`，另有 **OpenAI 兼容** `/v1/embeddings`，langchain4j 可直接对接 |
+| **专为此设计** | Rust 实现 + 动态 batching + FlashBert 内核，不是把生成模型服务凑合来做 embedding |
+| **部署一致** | 走 Docker，`docker context remote` 已通，笔记本一条命令部署到台式机 |
+| **架构支持** | 有 sm_120 专用 tag，Blackwell 原生支持 |
 
-- llama.cpp 有官方的 **win-cuda 预编译 binary**，解压即用，已经装好了（b9360）
-- 台式机的 WSL 只有 `docker-desktop`，**没有通用 Linux 发行版** ——
-  要在 WSL 里跑 Ollama/Infinity 得先装一个发行版，凭空多一层
-- Infinity 的镜像要在 Docker Desktop 里跑，GPU passthrough 要经 WSL2，
-  链路更长、更容易出问题，而收益（动态 batching）在本项目的负载下**根本用不上**
+**代价**：镜像 3.16 GB，且踩了 CUDA compat 那个坑（§2.1(a)）。
+但那个坑一次解决，且本身成了很好的面试素材。
 
 > 面试提示：被问"为什么本地跑推理"时，如果只答"快"会显得没想清楚。
 > 正确答法是 §3 那张表 —— **合规、成本、以及把 16G 显存用在刀刃上**，速度反而是最次要的理由。
-
----
-
 ## 3. 为什么 Embedding/Rerank 本地跑，只有生成走 API
 
 这是**面试必被追问的架构决策**，理由要能脱口而出：
@@ -420,7 +482,7 @@ bge-reranker-v2-m3 只有 568M 参数、encoder-only、单次前向。这个量�
 
 ### 3.1 关于"要不要换更强的 embedding"
 
-**Qwen3-Embedding-8B 目前是 MTEB multilingual 榜首（70.58）**，0.6B 版本 GGUF 量化后才约 600MB，
+**Qwen3-Embedding-8B 目前是 MTEB multilingual 榜首（70.58）**，0.6B 版本很轻量、TEI 可直接加载，
 支持 instruction 定制和 32~1024 的可变维度（MRL）。所以确实有更强的选择。
 
 **但建议不要直接替换，而是把它做成消融表的一行**（demo1 §5.3）。理由：
@@ -437,10 +499,10 @@ Qwen3-Embedding 是**非对称**的 —— query 侧要加 instruction prefix，
 **没有地方区分这两者**。要么自己实现接口，要么绕开 langchain4j 的抽象。
 这个约束值得写进 `DECISIONS.md`。
 
-**⚠️ Reranker 不要换。** llama.cpp 的
-[#16407](https://github.com/ggml-org/llama.cpp/issues/16407) 点名了 **qwen3-Rerank 打分错误**。
-bge-reranker-v2-m3 是标准 cross-encoder，兼容性最稳。
-**embedding 可以冒险，reranker 不要 —— 它坏了你不一定看得出来**（见 §2.1(e)）。
+**⚠️ Reranker 不要换。** bge-reranker-v2-m3 在 TEI 上**已实测可用**，
+区分度达 4 个数量级（§2.1(e) 有基线数值）。换模型意味着这套验证要重做一遍，
+而 **reranker 坏了不报错，只会悄悄让检索变差**。
+**embedding 可以冒险，reranker 不要 —— 它坏了你不一定看得出来。**
 
 ---
 
