@@ -1,0 +1,82 @@
+{
+  "case_id": "73145000000000072",
+  "case_code": "ATP-ADMIN-0002",
+  "title": "按邮箱搜索用户，应返回匹配的用户行",
+  "module_id": "M008",
+  "module_code": "ADMIN",
+  "priority": "P1",
+  "author": "tanaka.y",
+  "precondition": "使用管理员账号 ${admin_user} 登录",
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2025-10-13 11:36:00",
+  "updated_at": "2025-11-15 13:36:00",
+  "steps": [
+    {
+      "step_id": "73145000000000072-S01",
+      "case_id": "73145000000000072",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/admin/users",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000072-S02",
+      "case_id": "73145000000000072",
+      "seq": 2,
+      "action": "INPUT",
+      "locator_type": "XPATH",
+      "locator_value": "//input[@data-testid=\"user-search-keyword\"]",
+      "input_data": "${test_user_email}",
+      "expected": null,
+      "wait_strategy": "PRESENCE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000072-S03",
+      "case_id": "73145000000000072",
+      "seq": 3,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"user-search-submit\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000072-S04",
+      "case_id": "73145000000000072",
+      "seq": 4,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//tr[@data-testid=\"user-row\"][1]//span[@data-testid=\"user-email\"]",
+      "input_data": null,
+      "expected": "${test_user_email}",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": false,
+  "violation_codes": [],
+  "step_count": 4,
+  "actions_used": [
+    "ASSERT_TEXT",
+    "CLICK",
+    "INPUT",
+    "OPEN_URL"
+  ]
+}

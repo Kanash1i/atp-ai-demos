@@ -1,0 +1,113 @@
+{
+  "case_id": "73145000000000000",
+  "case_code": "ATP-LOGIN-0001",
+  "title": "【历史】登录后等待首页加载完成再校验导航栏",
+  "module_id": "M001",
+  "module_code": "LOGIN",
+  "priority": "P2",
+  "author": "tanaka.y",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2023-02-06 09:00:00",
+  "updated_at": "2023-02-07 09:00:00",
+  "steps": [
+    {
+      "step_id": "73145000000000000-S01",
+      "case_id": "73145000000000000",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/login",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000000-S02",
+      "case_id": "73145000000000000",
+      "seq": 2,
+      "action": "INPUT",
+      "locator_type": "XPATH",
+      "locator_value": "//input[@data-testid=\"login-username\"]",
+      "input_data": "${test_user}",
+      "expected": null,
+      "wait_strategy": "PRESENCE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000000-S03",
+      "case_id": "73145000000000000",
+      "seq": 3,
+      "action": "INPUT",
+      "locator_type": "XPATH",
+      "locator_value": "//input[@data-testid=\"login-password\"]",
+      "input_data": "@cred{test_user_password}",
+      "expected": null,
+      "wait_strategy": "PRESENCE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000000-S04",
+      "case_id": "73145000000000000",
+      "seq": 4,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"login-submit\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000000-S05",
+      "case_id": "73145000000000000",
+      "seq": 5,
+      "action": "SLEEP",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "3",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": "登录后首页渲染较慢，加固定等待。※ 规范建立前编写，待改造"
+    },
+    {
+      "step_id": "73145000000000000-S06",
+      "case_id": "73145000000000000",
+      "seq": 6,
+      "action": "ASSERT_VISIBLE",
+      "locator_type": "XPATH",
+      "locator_value": "//nav[@data-testid=\"main-nav\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-004"
+  ],
+  "step_count": 6,
+  "actions_used": [
+    "ASSERT_VISIBLE",
+    "CLICK",
+    "INPUT",
+    "OPEN_URL",
+    "SLEEP"
+  ]
+}

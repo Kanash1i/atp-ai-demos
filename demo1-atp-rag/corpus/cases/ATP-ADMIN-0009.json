@@ -1,0 +1,67 @@
+{
+  "case_id": "73145000000000079",
+  "case_code": "ATP-ADMIN-0009",
+  "title": "普通用户访问管理后台，应被拒绝并跳转提示页",
+  "module_id": "M008",
+  "module_code": "ADMIN",
+  "priority": "P0",
+  "author": "suzuki.k",
+  "precondition": "使用普通用户 ${test_user} 登录（非管理员）",
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2025-11-03 11:07:00",
+  "updated_at": "2025-12-13 15:07:00",
+  "steps": [
+    {
+      "step_id": "73145000000000079-S01",
+      "case_id": "73145000000000079",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/admin/users",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000079-S02",
+      "case_id": "73145000000000079",
+      "seq": 2,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//div[@data-testid=\"permission-denied\"]",
+      "input_data": null,
+      "expected": "権限がありません",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000079-S03",
+      "case_id": "73145000000000079",
+      "seq": 3,
+      "action": "ASSERT_NOT_EXIST",
+      "locator_type": "XPATH",
+      "locator_value": "//table[@data-testid=\"user-list\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": false,
+  "violation_codes": [],
+  "step_count": 3,
+  "actions_used": [
+    "ASSERT_NOT_EXIST",
+    "ASSERT_TEXT",
+    "OPEN_URL"
+  ]
+}

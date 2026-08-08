@@ -1,0 +1,67 @@
+{
+  "case_id": "73145000000000066",
+  "case_code": "ATP-REPORT-0006",
+  "title": "无报表权限的账号访问报表页，应被拒绝",
+  "module_id": "M007",
+  "module_code": "REPORT",
+  "priority": "P1",
+  "author": "tanaka.y",
+  "precondition": "使用无 REPORT 权限的 ${viewer_user} 登录",
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2025-09-25 12:18:00",
+  "updated_at": "2025-10-22 13:18:00",
+  "steps": [
+    {
+      "step_id": "73145000000000066-S01",
+      "case_id": "73145000000000066",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/admin/reports/daily",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000066-S02",
+      "case_id": "73145000000000066",
+      "seq": 2,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//div[@data-testid=\"permission-denied\"]",
+      "input_data": null,
+      "expected": "権限がありません",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000066-S03",
+      "case_id": "73145000000000066",
+      "seq": 3,
+      "action": "ASSERT_NOT_EXIST",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"report-generate\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": false,
+  "violation_codes": [],
+  "step_count": 3,
+  "actions_used": [
+    "ASSERT_NOT_EXIST",
+    "ASSERT_TEXT",
+    "OPEN_URL"
+  ]
+}

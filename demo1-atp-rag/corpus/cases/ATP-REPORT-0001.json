@@ -1,0 +1,69 @@
+{
+  "case_id": "73145000000000060",
+  "case_code": "ATP-REPORT-0001",
+  "title": "【历史】报表合计栏校验",
+  "module_id": "M007",
+  "module_code": "REPORT",
+  "priority": "P2",
+  "author": "tanaka.y",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 120,
+  "created_at": "2023-08-05 13:00:00",
+  "updated_at": "2023-08-26 13:00:00",
+  "steps": [
+    {
+      "step_id": "73145000000000060-S01",
+      "case_id": "73145000000000060",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/admin/reports/daily?date=2025-11-01",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000060-S02",
+      "case_id": "73145000000000060",
+      "seq": 2,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "/html/body/div[1]/div[2]/form/button[1]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": "※ 规范建立前编写，待改造"
+    },
+    {
+      "step_id": "73145000000000060-S03",
+      "case_id": "73145000000000060",
+      "seq": 3,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//span[@data-testid=\"report-total\"]",
+      "input_data": null,
+      "expected": "¥",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-001"
+  ],
+  "step_count": 3,
+  "actions_used": [
+    "ASSERT_TEXT",
+    "CLICK",
+    "OPEN_URL"
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "case_id": "73145000000000070",
+  "case_code": "ATP-ADMIN-0001",
+  "title": "【历史】后台用户搜索框输入",
+  "module_id": "M008",
+  "module_code": "ADMIN",
+  "priority": "P2",
+  "author": "lim.jh",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2023-09-04 09:10:00",
+  "updated_at": "2023-10-05 09:10:00",
+  "steps": [
+    {
+      "step_id": "73145000000000070-S01",
+      "case_id": "73145000000000070",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/admin/users",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000070-S02",
+      "case_id": "73145000000000070",
+      "seq": 2,
+      "action": "INPUT",
+      "locator_type": "XPATH",
+      "locator_value": "//*[@id=\"ext-gen1234\"]",
+      "input_data": "${test_user_email}",
+      "expected": null,
+      "wait_strategy": "PRESENCE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": "※ 规范建立前编写。该 id 由组件库自动生成，待改造"
+    },
+    {
+      "step_id": "73145000000000070-S03",
+      "case_id": "73145000000000070",
+      "seq": 3,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"user-search-submit\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000070-S04",
+      "case_id": "73145000000000070",
+      "seq": 4,
+      "action": "ASSERT_VISIBLE",
+      "locator_type": "XPATH",
+      "locator_value": "//table[@data-testid=\"user-list\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-002"
+  ],
+  "step_count": 4,
+  "actions_used": [
+    "ASSERT_VISIBLE",
+    "CLICK",
+    "INPUT",
+    "OPEN_URL"
+  ]
+}

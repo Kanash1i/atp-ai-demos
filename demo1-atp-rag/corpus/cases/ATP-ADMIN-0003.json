@@ -1,0 +1,81 @@
+{
+  "case_id": "73145000000000073",
+  "case_code": "ATP-ADMIN-0003",
+  "title": "停用用户后，该用户应无法登录",
+  "module_id": "M008",
+  "module_code": "ADMIN",
+  "priority": "P1",
+  "author": "suzuki.k",
+  "precondition": "使用管理员账号登录，${disable_target_user} 为专用的可停用测试账号",
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 30,
+  "created_at": "2025-10-16 12:49:00",
+  "updated_at": "2025-11-19 15:49:00",
+  "steps": [
+    {
+      "step_id": "73145000000000073-S01",
+      "case_id": "73145000000000073",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/admin/users?q=${disable_target_user}",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000073-S02",
+      "case_id": "73145000000000073",
+      "seq": 2,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//tr[@data-testid=\"user-row\"][1]//button[@data-testid=\"user-disable\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000073-S03",
+      "case_id": "73145000000000073",
+      "seq": 3,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"confirm-dialog-ok\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000073-S04",
+      "case_id": "73145000000000073",
+      "seq": 4,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//tr[@data-testid=\"user-row\"][1]//span[@data-testid=\"user-status\"]",
+      "input_data": null,
+      "expected": "無効",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": false,
+  "violation_codes": [],
+  "step_count": 4,
+  "actions_used": [
+    "ASSERT_TEXT",
+    "CLICK",
+    "OPEN_URL"
+  ]
+}

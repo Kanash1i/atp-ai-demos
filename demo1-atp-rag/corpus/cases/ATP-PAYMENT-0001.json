@@ -1,0 +1,98 @@
+{
+  "case_id": "73145000000000050",
+  "case_code": "ATP-PAYMENT-0001",
+  "title": "【历史】支付提交后等待网关回调再校验结果",
+  "module_id": "M006",
+  "module_code": "PAYMENT",
+  "priority": "P1",
+  "author": "chen.wei",
+  "precondition": null,
+  "status": "ACTIVE",
+  "browser": "CHROME",
+  "timeout_sec": 120,
+  "created_at": "2023-07-06 10:50:00",
+  "updated_at": "2023-07-17 10:50:00",
+  "steps": [
+    {
+      "step_id": "73145000000000050-S01",
+      "case_id": "73145000000000050",
+      "seq": 1,
+      "action": "OPEN_URL",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "${base_url}/orders/${pending_order_no}/pay",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000050-S02",
+      "case_id": "73145000000000050",
+      "seq": 2,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//label[@data-testid=\"pay-method-credit\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000050-S03",
+      "case_id": "73145000000000050",
+      "seq": 3,
+      "action": "CLICK",
+      "locator_type": "XPATH",
+      "locator_value": "//button[@data-testid=\"pay-submit\"]",
+      "input_data": null,
+      "expected": null,
+      "wait_strategy": "CLICKABLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    },
+    {
+      "step_id": "73145000000000050-S04",
+      "case_id": "73145000000000050",
+      "seq": 4,
+      "action": "SLEEP",
+      "locator_type": null,
+      "locator_value": null,
+      "input_data": "5",
+      "expected": null,
+      "wait_strategy": "NONE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": "等待沙箱网关回调。※ 规范建立前编写，应改为等待结果元素出现"
+    },
+    {
+      "step_id": "73145000000000050-S05",
+      "case_id": "73145000000000050",
+      "seq": 5,
+      "action": "ASSERT_TEXT",
+      "locator_type": "XPATH",
+      "locator_value": "//div[@data-testid=\"pay-result\"]",
+      "input_data": null,
+      "expected": "完了",
+      "wait_strategy": "VISIBLE",
+      "wait_timeout_sec": 10,
+      "on_failure": "ABORT",
+      "description": null
+    }
+  ],
+  "has_violation": true,
+  "violation_codes": [
+    "STD-004"
+  ],
+  "step_count": 5,
+  "actions_used": [
+    "ASSERT_TEXT",
+    "CLICK",
+    "OPEN_URL",
+    "SLEEP"
+  ]
+}
