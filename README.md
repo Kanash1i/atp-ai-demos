@@ -5,6 +5,25 @@
 
 > ⚠️ 全部语料、schema、规范均为**虚构合成**，不含任何真实公司资产。详见 `00-SHARED-CONTEXT.md` §0。
 
+**仓库**：`https://github.com/Kanash1i/atp-ai-demos`（private）
+
+---
+
+## Git 工作流
+
+**每个里程碑一个 PR，不直接推 main** —— 便于逐步 review 与回溯。
+
+```bash
+git checkout -b demo1/m4-evaluation    # 分支名：demo{1,2}/{里程碑}-{简述}
+git commit -m "feat(demo1): 加入检索评估框架与 baseline 指标"
+gh pr create --fill                     # 自动套用 .github/PULL_REQUEST_TEMPLATE.md
+```
+
+PR 模板要求填写**怎么验证的**、**决策记录**、**踩到的坑**、**面试可讲的点**。
+最后一项不是形式主义 —— 如果一个 PR 想不出能讲什么，通常说明这步做得太机械了。
+
+PR 由你 review 后 merge，两个 session 都不会自行合并。
+
 ---
 
 ## 文档地图

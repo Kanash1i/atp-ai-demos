@@ -54,3 +54,22 @@ provider 支持 strict 时作为额外保险开启，**但本地校验永不跳�
 
 先核实版本矩阵 + 打通一个 Hello World tool（Streamable HTTP 能被调用），
 再写业务逻辑。**先打通协议和部署形态，别一上来写 pipeline。**
+
+## Git 工作流
+
+仓库：`https://github.com/Kanash1i/atp-ai-demos`（private，monorepo，两个 demo 共存）
+
+**每个里程碑一个 PR，不要直接推 main。** 用户要逐步 review 和回溯。
+
+```bash
+git checkout -b demo2/m3-model-completion   # 分支名：demo2/{里程碑}-{简述}
+# ...开发...
+git commit -m "feat(demo2): 加入 LLM 策略层与字段补全"
+gh pr create --fill                          # 自动套用 PR 模板
+```
+
+- commit 前缀：`feat` / `fix` / `docs` / `test` / `chore`，scope 用 `demo2`
+- PR 模板里的**「怎么验证的」必填** —— 没有验证方式的 PR 不该合
+- **PR 由用户 review 后 merge，不要自行 merge**
+- 改动共享契约（`00-SHARED-CONTEXT.md` 的领域模型 / Action 枚举）
+  必须在 PR 里显式说明，并通知 demo1 那边

@@ -26,3 +26,9 @@ tmp/
 
 # 评估输出（结果表建议手动挑选后提交）
 eval/results/raw/
+
+# Claude Code
+# 两个 demo 都以后台任务开发，会在此创建 worktree —— 不该进版本库
+.claude/worktrees/
+.claude/settings.local.json
+# 注意：.claude/settings.json 是项目级共享配置，**可以**提交，故不在此忽略
