@@ -26,7 +26,7 @@
 **代码里不得出现硬编码的 key、URL、IP。**
 
 - 生成：DeepSeek（`deepseek-v4-flash`，OpenAI 兼容），后期可切 Kimi
-- Embedding / Rerank：服务机 `192.168.0.101` 上的两个 llama-server 实例（`:8081` / `:8082`）
+- Embedding / Rerank：服务机 `192.168.0.101` 上的两个 **TEI 容器**（`:8081` / `:8082`），**已部署验证通过**
 
 > ⚠️ **服务机是 Windows 11 Pro（日文环境），不是 Linux。**
 > `ssh kkaib@192.168.0.101` 可免密登录，但默认 shell 是 cmd.exe；
@@ -34,9 +34,15 @@
 > 笔记本已配 `docker context remote`，直接敲 docker 命令即可操作台式机上的容器。
 > 详见共享文档 §2.1。
 
-## ⚠️ rerank 必须先验证
+## ⚠️ 开工前必须确认「真的在 GPU 上」
 
-llama.cpp 的 rerank 端点对部分模型有打分错误的已知缺陷。
+这个项目**已经踩过一次**：服务 health 200、API 正常返回 1024 维向量，
+一切看起来都对，实际却在 CPU 上跑（14 核满载），靠 CPU 风扇声才发现。
+根因是 CUDA forward-compat 库在 WSL2 上有害，需 `--tmpfs` 屏蔽。详见共享文档 §2.1(a)。
+
+```bash
+docker logs tei-embed 2>&1 | grep -i "model on"   # 必须是 Cuda，不能是 Cpu
+```
 **开工前先跑冒烟测试**（共享文档 §2.1）。若不通过，设 `RERANK_ENABLED=false` 并在消融表中如实标注缺失，
 **绝不能拿一个坏掉的 rerank 去跑评估** —— 那会污染整张表，比没有 rerank 严重得多。详见交接文档 §2.4。
 
@@ -52,7 +58,7 @@ llama.cpp 的 rerank 端点对部分模型有打分错误的已知缺陷。
 ## 开工第一步
 
 不要先写业务代码。先做 §2.2 的 **Java 8 链路 spike**：
-确认 JDK 8 能连通 Qdrant (gRPC) 和 llama.cpp 的 embedding 端点。不通就得按文档里的方案 B/C/D 降级，
+确认 JDK 8 能连通 Qdrant (gRPC) 和 TEI 的 embedding 端点。不通就得按文档里的方案 B/C/D 降级，
 并把过程记进 `DECISIONS.md`。
 
 ## Git 工作流
