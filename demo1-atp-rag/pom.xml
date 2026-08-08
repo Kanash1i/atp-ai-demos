@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <groupId>com.atp</groupId>
+  <artifactId>atp-rag</artifactId>
+  <version>0.1.0-SNAPSHOT</version>
+  <packaging>jar</packaging>
+
+  <name>ATP 知识助手 (demo1)</name>
+  <description>Java 8 + langchain4j 的 RAG demo，核心交付物是检索优化的消融实验表</description>
+
+  <properties>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <maven.compiler.source>1.8</maven.compiler.source>
+    <maven.compiler.target>1.8</maven.compiler.target>
+
+    <!-- ⚠️ 硬约束，不要升级。
+         langchain4j-core 0.35.0 字节码 major=52 (Java 8)；
+         0.36.0 起为 major=61 (Java 17)，升了就编译不过。
+         验证方式见 DECISIONS.md D-001。 -->
+    <langchain4j.version>0.35.0</langchain4j.version>
+
+    <jackson.version>2.17.2</jackson.version>
+
+    <!-- ⚠️ 必须是 2.x。langchain4j 0.35.0 依赖 slf4j-api 2.0.7，
+         而 slf4j 1.7 的 provider 走 StaticLoggerBinder、2.x 走 ServiceLoader ——
+         版本混用不会报错，只会静默降级成 NOP logger（日志全部消失）。
+         slf4j 2.0.x 的 baseline 仍是 Java 8。 -->
+    <slf4j.version>2.0.13</slf4j.version>
+    <junit.version>5.10.2</junit.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j</artifactId>
+      <version>${langchain4j.version}</version>
+    </dependency>
+
+    <!-- OpenAI 兼容客户端。一份依赖两处用：
+         DeepSeek 的生成，和 TEI 的 /v1/embeddings。 -->
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j-open-ai</artifactId>
+      <version>${langchain4j.version}</version>
+    </dependency>
+
+    <!-- 走 gRPC (6334)，Java 8 兼容性是 M0 spike 的主要验证目标 -->
+    <dependency>
+      <groupId>dev.langchain4j</groupId>
+      <artifactId>langchain4j-qdrant</artifactId>
+      <version>${langchain4j.version}</version>
+    </dependency>
+
+    <!-- 解析案例 JSON、TEI /rerank 的响应 -->
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+
+    <!-- api 与 provider 显式对齐版本，避免 langchain4j 的传递依赖把 api 拖回 2.0.7 -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-api</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-simple</artifactId>
+      <version>${slf4j.version}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <version>${junit.version}</version>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <version>3.13.0</version>
+      </plugin>
+
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.2.5</version>
+      </plugin>
+
+      <!-- mvn exec:java -Dexec.mainClass=... -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.2.0</version>
+      </plugin>
+    </plugins>
+  </build>
+</project>
