@@ -14,8 +14,8 @@
 | 里程碑 | 状态 |
 |---|---|
 | **M0** Java 8 链路 spike | ✅ 已完成 |
-| M1 语料生成 | ⬜ |
-| M2 入库 pipeline | ⬜ |
+| **M1** 语料生成 | ✅ 已完成 |
+| **M2** 入库 pipeline | ✅ 已完成 |
 | M3 基础检索 + CLI | ⬜ |
 | M4 评估框架 + baseline | ⬜ |
 | M5 逐项优化 + 消融表 | ⬜ |
@@ -76,6 +76,33 @@ mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.spike.LinkageSpike
 **会静默失败**的地方（详见下节）。进 M1 之前必须全绿。
 
 ---
+
+### 4. 语料入库
+
+```bash
+python3 tools/gen_cases.py                                             # 重新生成案例（可选，已提交）
+mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.ingest.IngestMain
+```
+
+一次建好消融实验需要的全部 collection：
+
+| collection | 内容 | 对应消融表 |
+|---|---|---|
+| `atp_all_fixed` | 158 点（78 chunk + 80 案例） | 第 1 行 baseline |
+| `atp_all_heading` | 264 点（184 chunk + 80 案例） | 第 2 行 |
+| `atp_docs_heading` / `atp_cases_heading` | 184 / 80 点 | 第 3 行及以后 |
+
+collection 名由 `RagConfig` 按配置派生，不写死在 `.env` —— 否则跑第 2 组会覆盖第 1 组的数据，
+最后整张消融表只有末行是真的（见 `DECISIONS.md` D-005）。
+
+**看看检索现在什么样**：
+
+```bash
+mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.cli.SearchProbe
+```
+
+> ⚠️ `mvn -q` 会抑制 `exec:java` 转发的应用日志。要看 INFO 日志就去掉 `-q`。
+> 关键结果一律走 `System.out`，不受影响。
 
 ## 一条贯穿始终的主线：把静默失败变成显式检查
 

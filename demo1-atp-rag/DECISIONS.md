@@ -175,6 +175,94 @@ langchain4j-qdrant 走 gRPC 是 6334，而原来只有 REST 的 6333。
 
 ---
 
+## D-005 — collection 名由配置派生，不写死在 .env
+
+**日期**：2026-08-09（M2）
+
+**背景**：消融表要跑 6~7 组配置，其中前 3 组的向量各不相同（切分策略变了），
+第 7 组换 embedding 模型（向量空间整个变了）。
+
+**问题**：如果所有配置共用 `atp_docs` / `atp_cases` 这两个固定名字，
+跑第 2 组会覆盖第 1 组的数据 —— 最后整张消融表只有最后一行是真的，
+而且**不会报错**，因为每一组单独看都跑得好好的。
+
+**决定**：collection 名由 `RagConfig` 按规则生成：
+
+```
+{前缀}_{docs|cases|all}_{fixed|heading}[_{embedding标签}]
+```
+
+例：`atp_all_fixed`（baseline）、`atp_docs_heading`、`atp_docs_heading_qwen3`。
+
+`.env` 里只留 `QDRANT_COLLECTION_PREFIX=atp`，原来的
+`QDRANT_COLLECTION_DOCS` / `QDRANT_COLLECTION_CASES` 删掉。
+
+**代价**：collection 名不再能从 `.env` 一眼看全，得看 `RagConfig.collectionName()` 的规则。
+换来的是各组数据天然隔离、可反复重跑、评估阶段不必临时灌数据。
+
+---
+
+## D-006 — 切分用字符数而非 token 数
+
+**日期**：2026-08-09（M2）
+
+**背景**：交接文档 §5.3 写的是「固定 512 切分」，单位是 token。
+
+**问题**：Java 8 这边没有 bge-m3 的 tokenizer。硬凑一个（比如借 tiktoken 或
+langchain4j 的 `OpenAiTokenizer`）会得到一个**精确但错误**的数字 ——
+那是 GPT 系的分词，和 bge-m3 的 XLM-R 分词完全不是一回事，中日文上差得尤其远。
+
+**决定**：用字符数，配置项显式命名为 `CHUNK_SIZE_CHARS=700`（中日文约合 500~700 token）。
+
+**理由**：bge-m3 的输入上限是 8192 token，我们的 chunk 离它很远，
+所以精确 token 数在这里不影响任何结果。真正要保证的是
+**两种切分策略用同一个上限**，否则「标题路径更好」可能只是「chunk 更小」的假象。
+这一点由 `SplitterTest.bothStrategiesRespectSameSizeLimit()` 固定住。
+
+**诚实标注**：消融表里这一行会写「固定 700 字符」而不是「固定 512 token」。
+被问起就照实说 —— 用一个假装精确的 token 数反而更难解释。
+
+---
+
+## D-007 — Qdrant 版本检查前移到客户端构造
+
+**日期**：2026-08-09（M2）
+
+**背景**：M0 时把版本检查加在了 spike 里。M2 开发期间服务重启过一次，
+让我意识到这个位置不够。
+
+**问题**：**入库阶段完全不会因为版本不对而报错。** 写入走 upsert，proto 没变，
+158 个点会规规矩矩地写进去，点数核对也能通过。
+问题要到检索时才以 `Length of vector a (0)` 的形式爆出来，而那个报错指不到根因。
+
+也就是说，只在 spike 里检查等于「只在我记得跑 spike 的时候才检查」。
+
+**决定**：把检查挪进 `ModelFactory.qdrantClient()` —— 入库、检索、评估都必须经过这里，
+绕不过去。
+
+**顺带**：`CorpusIngestor` 加了入库后的**检索冒烟**。点数对、维度对、payload 对，
+都不能证明检索可用；必须真的查一次。这一步同时也能发现 embedding 服务中途退化
+（比如 TEI 悄悄换到 CPU），避免带着坏数据去跑 M4 的评估。
+
+---
+
+## D-008 — 入库用全量重建，不做增量
+
+**日期**：2026-08-09（M2）
+
+**决定**：每次入库都 drop 掉 collection 重建。
+
+**理由**：语料是全量生成的，增量 upsert 会让旧 chunk 残留在库里。
+**切分策略一改，旧 chunk 的边界就不对了，但它们还会被召回** ——
+表现为「某几个 query 莫名其妙地差」，在评估里极难定位。
+
+**这个做法不能照搬到生产**：真实平台的案例每天新增，全量重建不现实。
+生产的正确做法是按 `case_id` upsert + 软删标记，语料版本号进 payload，
+检索时按版本过滤。这是面试预演问题第 4 条，答案要能说清楚
+**为什么 demo 这么做、生产为什么不能这么做**。
+
+---
+
 ## 待决 / 下一步
 
 - **hybrid search（sparse + dense）** — langchain4j 0.35 不支持，必须自己实现。
