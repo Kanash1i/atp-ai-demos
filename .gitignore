@@ -1,0 +1,28 @@
+# 密钥与本地配置 —— 绝不提交
+.env
+.env.local
+*.key
+*.pem
+
+# 构建产物
+target/
+build/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+
+# 日志与临时文件
+*.log
+logs/
+tmp/
+
+# 评估输出（结果表建议手动挑选后提交）
+eval/results/raw/
