@@ -39,8 +39,8 @@
 | langchain4j | **0.35.0** | ⚠️ **硬约束**：`langchain4j-core` 0.35.0 字节码 major=52 (Java 8)，0.36.0 起 major=61 (Java 17)。已实测确认，不要升版本 |
 | 构建 | Maven | `maven.compiler.source/target = 1.8` |
 | 向量库 | Qdrant | 服务机 `:6333`，collection 维度 **1024**，距离 **Cosine** |
-| Embedding | bge-m3 @ llama.cpp | 服务机 `:8081`，`/v1/embeddings` OpenAI 兼容 |
-| Rerank | bge-reranker-v2-m3 @ llama.cpp | 服务机 `:8082`，`/v1/rerank` **非** OpenAI 标准 |
+| Embedding | bge-m3 @ **TEI** | 服务机 `:8081`，`/embed` 原生 + `/v1/embeddings` OpenAI 兼容。**已部署验证** |
+| Rerank | bge-reranker-v2-m3 @ **TEI** | 服务机 `:8082`，`/rerank`（字段 `texts`）**非** OpenAI 标准。**已部署验证** |
 | 生成 | DeepSeek（后期切 Kimi） | `deepseek-v4-flash`，OpenAI 兼容 |
 
 > **所有连接参数读仓库根目录 `../.env`**（由 `../.env.example` 复制）。
@@ -50,7 +50,7 @@
 
 ```
 dev.langchain4j:langchain4j:0.35.0
-dev.langchain4j:langchain4j-open-ai:0.35.0      ← 同时用于 DeepSeek 生成 和 llama.cpp embedding
+dev.langchain4j:langchain4j-open-ai:0.35.0      ← 同时用于 DeepSeek 生成 和 TEI embedding
 dev.langchain4j:langchain4j-qdrant:0.35.0
 dev.langchain4j:langchain4j-document-parser-apache-tika:0.35.0   （如果要吃 PDF/docx；纯 Markdown 语料可省）
 org.slf4j:slf4j-simple / logback-classic
@@ -64,7 +64,7 @@ org.junit.jupiter:junit-jupiter:5.10.x           ← 评估跑在测试里
 
 1. `mvn -Dmaven.compiler.source=1.8 -Dmaven.compiler.target=1.8` 能编译过
 2. 用 JDK 8 **运行**（不只是编译）能连通 Qdrant（langchain4j-qdrant 走 gRPC，grpc-java 对 Java 8 的支持要实测）
-3. 调 llama.cpp 的 `/v1/embeddings` 能拿到 **1024 维**向量
+3. 调 TEI 的 `/v1/embeddings` 能拿到 **1024 维**向量
 4. **跑 rerank 冒烟测试**（见共享文档 §2.1）确认打分方向正确 —— 这一步不能省，理由见 §2.4
 
 **如果 gRPC 或某个传递依赖在 Java 8 上炸了**，按这个顺序降级，并把过程记进 `DECISIONS.md`（这是很好的面试素材）：
@@ -76,12 +76,12 @@ org.junit.jupiter:junit-jupiter:5.10.x           ← 评估跑在测试里
 
 ### 2.3 一个省事的技巧
 
-llama.cpp 的 embedding 端点是 **OpenAI 兼容**的，所以不用自己实现 `EmbeddingModel`：
+TEI 的 `/v1/embeddings` 是 **OpenAI 兼容**的，所以不用自己实现 `EmbeddingModel`：
 
 ```
 OpenAiEmbeddingModel.builder()
     .baseUrl(env("EMBEDDING_BASE_URL"))   // http://192.168.0.101:8081
-    .apiKey("dummy")                       // llama.cpp 不校验，但 builder 要求非空
+    .apiKey("dummy")                       // TEI 未设 api-key，但 builder 要求非空
     .modelName(env("EMBEDDING_MODEL"))
     .build()
 ```
@@ -100,31 +100,53 @@ OpenAiChatModel.builder()
 > ⚠️ `deepseek-chat` / `deepseek-reasoner` 已于 2026-07-24 废弃，别用旧名字。
 > DeepSeek V4 默认开 thinking 模式，更慢更贵，按需关闭。
 
-但 **rerank 没有这个便利** —— llama.cpp 的 `/v1/rerank` 不是 OpenAI 标准
-（body 是 `model` / `query` / `documents` / `top_n`）。
+但 **rerank 没有这个便利** —— TEI 的 `/rerank` 不是 OpenAI 标准：
+
+```
+POST http://{SERVICE_HOST}:8082/rerank
+{ "query": "...", "texts": ["doc1", "doc2", ...] }
+  ↓
+[ {"index": 0, "score": 0.735}, {"index": 1, "score": 0.0000163}, ... ]
+```
+
+⚠️ 两个易错点：字段是 **`texts`** 而非 `documents`；返回结果**未按分数排序**，需自己降序。
+
 需要自己实现 `dev.langchain4j.model.scoring.ScoringModel`（就一个 `scoreAll` 方法），
 内部用 HTTP client 调它。**这段自写适配器是面试可以展开讲的点。**
 
-### 2.4 ⚠️ rerank 必须先验证，不能默认它是对的
+### 2.4 ⚠️ 开工前必须确认「真的在 GPU 上」
 
-llama.cpp 的 rerank 端点对部分模型存在**打分错误**的已知问题
-（[ggml-org/llama.cpp#16407](https://github.com/ggml-org/llama.cpp/issues/16407)）。
-bge-reranker-v2-m3 是标准 cross-encoder，预期正常，**但必须实测**（冒烟测试见共享文档 §2.1）。
+**这个坑本项目已经踩过，而且是最值得讲的一个。**
 
-**为什么这件事对本 demo 特别致命**：
+TEI 在检测不到 CUDA 时**不会报错退出，而是静默降级到 CPU**，只打一条 WARN。
+表现是：容器正常运行、`/health` 返回 200、API 正常返回 1024 维向量 ——
+**一切看起来都对**，实际 14 核 CPU 满载、GPU 利用率 0%，慢一个数量级。
+最后是靠**CPU 风扇的声音**发现的。
+
+根因是 CUDA forward-compat 库（`/usr/local/cuda-12.9/compat/libcuda.so.*`）
+在 WSL2 上有害 —— WSL 没有真正的 NVIDIA 内核模块，必须用转发到 Windows 的那个 `libcuda`。
+修复是启动时加 `--tmpfs /usr/local/cuda-12.9/compat`。完整分析见共享文档 §2.1(a)。
+
+**开工前必须确认**（三项冒烟测试见共享文档 §2.1(e)）：
+
+```bash
+docker logs tei-embed 2>&1 | grep -i "model on"
+# 必须是 Starting FlashBert model on Cuda(...)，不能是 on Cpu
+```
+
+**为什么这对本 demo 特别致命**：
 
 rerank 是消融实验里预期增益最大的一项（§5.3 第 4 行）。
-如果它悄悄坏掉 —— 比如返回的分数全部接近、或排序方向反了 ——
-你会得到一张**看起来正常但完全错误的消融表**，并且拿着它去面试。
+如果它悄悄坏掉 —— 分数全部接近、或排序方向反了 ——
+你会得到一张**看起来正常但完全错误的消融表**，并拿着它去面试。
 面试官只要追问"rerank 提升这么小/这么怪，你查过原因吗"，就会当场穿帮。
 
-**处理方式**：
-- 冒烟测试通过 → 正常启用
-- 不通过 → 设 `RERANK_ENABLED=false`，在消融表里**如实标注**
-  "rerank 因 llama.cpp 运行时缺陷未能验证，该行数据缺失"
+**当前状态**：bge-reranker-v2-m3 在 TEI 上**已实测通过**，
+区分度达 4 个数量级（0.735 vs 1.6e-5），基线数值见共享文档 §2.1(e)。
 
+若日后换模型导致验证不通过 → 设 `RERANK_ENABLED=false`，在消融表里**如实标注**该行数据缺失。
 **如实标注一个缺失项，远比伪造一行漂亮数字安全。**
-而且"我发现了推理后端的一个缺陷并绕开了它"本身就是很好的面试素材。
+而且"我发现了推理后端的一个静默降级并定位到根因"本身就是极好的面试素材。
 
 ---
 
@@ -402,7 +424,7 @@ demo1-atp-rag/
     │   │   ├── AtpQueryRouter
     │   │   └── XPathLintChannel       ← 关键词型查询的规则通道
     │   ├── model/
-    │   │   ├── InfinityScoringModel   ← ⭐ 自己实现的 rerank 适配器
+    │   │   ├── TeiScoringModel        ← ⭐ 自己实现的 rerank 适配器
     │   │   └── ModelFactory           ← 统一构造 embedding/chat model
     │   ├── assistant/
     │   │   ├── AtpAssistant           ← AiServices 接口定义
@@ -422,7 +444,7 @@ demo1-atp-rag/
 
 | # | 里程碑 | 产出 | 预估 |
 |---|---|---|---|
-| M0 | **Java 8 链路 spike** | 30 行代码打通 JDK8 → Infinity → Qdrant | 最先做，不通就得改方案 |
+| M0 | **Java 8 链路 spike** | 30 行代码打通 JDK8 → TEI → Qdrant | 最先做，不通就得改方案 |
 | M1 | 语料生成 | corpus/ 下全部文档与案例 | 可并行 |
 | M2 | 入库 pipeline | 双 collection 建好，Qdrant UI 能看到数据 | |
 | M3 | 基础检索 + CLI | 能问能答，带引用 | **第一个可演示版本** |

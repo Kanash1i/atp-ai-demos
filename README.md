@@ -116,31 +116,33 @@ cp .env.example .env
 > ⚠️ 两家的结构化输出能力**不对等**（DeepSeek 无 `json_schema` strict），
 > 这是 demo2 的一个核心设计约束，见 `00-SHARED-CONTEXT.md` §2.2。
 
-### 2. 服务机起模型服务（**只有 demo1 需要**）
+### 2. 服务机模型服务 ✅ **已部署完成**
 
-台式机 `192.168.0.101` —— ⚠️ **Windows 11 Pro（日文环境），命令是 PowerShell**。
+台式机 `192.168.0.101`（Windows 11 Pro / RTX 5080）。**这一项不用你做了，已经跑起来了。**
 
 | | 状态 |
 |---|---|
 | SSH 免密 `kkaib@192.168.0.101` | ✅ 已通（默认 shell 是 cmd.exe） |
 | `docker context remote` | ✅ 已通，笔记本敲 docker 命令即操作台式机 |
-| llama.cpp | ✅ 已装 `C:\Users\kkaib\mydisk\llama_dir\llama-b9360-bin-win-cuda-13.1-x64\`（不在 PATH） |
-| GPU | ✅ RTX 5080 16303 MiB，driver 610.88 |
-| GGUF 模型 | ⬜ **待下载** bge-m3 + bge-reranker-v2-m3（各约 600MB） |
-| llama-server × 2 | ⬜ 待启动（`:8081` embedding / `:8082` rerank） |
-| Qdrant | ⬜ 待启动（`:6333`） |
-| Windows 防火墙 | ⬜ 待放行 8081/8082/6333 |
+| GPU 直通 | ✅ 已实测：容器内 `cuInit`/`cudaGetDeviceCount` 均成功 |
+| **TEI embedding** (bge-m3) | ✅ `:8081` 运行中，**FlashBert on Cuda** |
+| **TEI rerank** (bge-reranker-v2-m3) | ✅ `:8082` 运行中，**FlashBert on Cuda** |
+| **Qdrant** 1.19.0 | ✅ `:6333` 运行中 |
+| 自动重启 | ✅ 三个容器均 `--restart unless-stopped` |
+| Windows 防火墙 | ✅ 无需配置，Docker Desktop 端口转发已生效 |
+| 冒烟测试 | ✅ 全部通过（维度 1024、rerank 区分度 4 个数量级） |
 
-完整命令（含下载、启动、防火墙）见 `00-SHARED-CONTEXT.md` §2.1。
+镜像：`ghcr.io/huggingface/text-embeddings-inference:120-1.9.3`（Blackwell sm_120 专用 tag）。
+完整命令与排障见 `00-SHARED-CONTEXT.md` §2.1。
 
-**用 llama.cpp 而不是 Ollama/Infinity 的理由见 §2.3** —— 简短版：
-Ollama 慢有具体根因（无批处理、模型卸载），但对本项目**速度根本不是瓶颈**；
-选 llama.cpp 是因为你已验证过、有官方 win-cuda binary、且台式机的 WSL 只有 `docker-desktop`
-（没有通用 Linux 发行版，跑 Ollama/Infinity 要凭空多一层）。
+**为什么是 TEI 而不是 llama.cpp/Ollama** —— 见 §2.3。简短版：llama.cpp 对 bge 系列
+（尤其 reranker）支持不完善；TEI 专为 embedding/rerank 设计，标准协议 + 动态 batching，
+实测 rerank 区分度达 4 个数量级。
 
-> ⚠️ 起好后**必须跑 §2.1(e) 的两个冒烟测试**：embedding 维度是否 1024、rerank 打分方向是否正确。
-> 这两项防的都是**静默失败** —— 服务照常运行但结果悄悄是错的。
-> 拿一个坏掉的 rerank 去跑评估会污染整张消融表，而你不会发现。
+> ⚠️ **踩过的坑，重启服务后请留意**：TEI 检测不到 CUDA 时**不报错，静默降级到 CPU**，
+> health 照样 200、API 照样返回 1024 维向量，但 14 核满载、GPU 空转。
+> 修复靠启动参数 `--tmpfs /usr/local/cuda-12.9/compat`（已加）。
+> 验证方式：`docker logs tei-embed | grep "model on"` 必须出现 **Cuda** 而非 Cpu。
 
 ### 3. SSH 免密 ✅ 已完成
 
