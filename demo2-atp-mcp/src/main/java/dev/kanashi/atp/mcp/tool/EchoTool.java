@@ -16,8 +16,18 @@ public class EchoTool {
 
     @McpTool(
             name = "atp_echo",
+            title = "连通性自检",
             description = "连通性自检：原样回显输入，并返回处理该请求的服务实例标识。"
-                        + "用于确认 MCP server 可达；不涉及任何业务逻辑。")
+                        + "用于确认 MCP server 可达；不涉及任何业务逻辑。",
+            // M0 时这里吃了 MCP 的默认值，结果本 tool 对外自称 destructive、非幂等 ——
+            // 一个纯回显的自检接口谎称自己有破坏性，会让调用方 agent 无谓地要求用户确认。
+            // 见 DECISIONS.md M0-D4。
+            annotations = @McpTool.McpAnnotations(
+                    title = "连通性自检",
+                    readOnlyHint = true,
+                    destructiveHint = false,
+                    idempotentHint = true,
+                    openWorldHint = false))
     public EchoResult echo(
             @McpToolParam(description = "任意文本，将被原样回显", required = true)
             String message) {

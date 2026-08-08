@@ -172,9 +172,141 @@ spring:
 
 ---
 
+## M0-D2 补记 ⚠️ Jackson 3 的注解包名**没有**跟着改
+
+M1 写序列化时踩到的后续坑，接在 M0-D2 后面记：
+
+```
+tools.jackson.core:jackson-databind:3.1.4          ← databind / core 是新包名
+  └── com.fasterxml.jackson.core:jackson-annotations ← 注解仍是旧 groupId、旧包名
+```
+
+即 Jackson 3 处于一个**混合状态**：
+
+| 用途 | 包名 |
+|---|---|
+| `ObjectMapper` / `JsonNode` | `tools.jackson.databind.*` |
+| `@JsonProperty` / `@JsonInclude` | **`com.fasterxml.jackson.annotation.*`**（没变） |
+
+同一个文件里两种 `com.fasterxml` / `tools.jackson` 前缀并存看着很怪，但这是对的。
+凭直觉把注解 import 也改成 `tools.jackson.*` 会直接编译不过。
+
+---
+
+## M1-D1 ⭐ 把 Action 契约表编码进枚举，而不是写进校验器的 if-else
+
+共享契约 §1.3 规定了每个 action 的 locator / input_data / expected 是否必填。
+这份信息有两个消费方：**L1 要据此填充**，**L4 要据此校验**。
+
+如果写成校验器里的 if-else，L1 和 L4 会各写一份，然后慢慢漂移 ——
+而漂移的表现是「校验通过但填充错了」这种最难查的不一致。
+
+所以做成 `Action` 枚举的常量声明：
+
+```java
+//                locator     input_data  expected    wait 策略                依据
+CLICK            (REQUIRED,   FORBIDDEN,  FORBIDDEN,  WaitStrategy.CLICKABLE, "STD-005"),
+ASSERT_TEXT      (REQUIRED,   FORBIDDEN,  REQUIRED,   WaitStrategy.VISIBLE,   "STD-006"),
+```
+
+两层读同一份声明，**想让它们对不上都做不到**。
+
+配套的 `ActionContractTableTest` 把 §1.3 的表格**独立誊写一遍**做逐行对照。
+这个重复是刻意的：期望值必须有独立于实现的来源，否则测试只能证明"枚举等于它自己"。
+
+**顺带的收益**：这张表通过 `atp_describe_schema` 的 `action_contracts` 字段
+直接暴露给调用方 agent，所以不存在"文档写的和服务执行的不一致"——
+它们本来就是同一个对象。
+
+---
+
+## M1-D2 ⭐ 规范与语义冲突时：显式偏离 + 诊断，而不是二选一
+
+实现 STD-006（`ASSERT_*` 的 wait_strategy 必须是 `VISIBLE`）时发现一处真实矛盾：
+
+> **`ASSERT_NOT_EXIST` 断言的是元素【不存在】。**
+> 若按字面填 `VISIBLE`，执行器会去等一个不该出现的元素变为可见 ——
+> 必然空耗到 `wait_timeout_sec` 超时。每条这样的用例都会白白慢十几秒，甚至被误判为失败。
+
+三个选项，选第三个：
+
+| 方案 | 问题 |
+|---|---|
+| 严格按字面填 `VISIBLE` | 产出一个**已知会超时**的配置，把问题丢给执行器 |
+| 悄悄改成 `NONE` | 服务擅自修改了平台规范，且无人知晓 —— 正是本项目最反对的静默行为 |
+| ✅ 填 `NONE` + 在契约里**显式标注偏离与理由** | 平台方看得到、可裁定；规范该不该改是他们的事 |
+
+落地为 `Action.waitStrategyDeviation()`，随 `describe_schema` 一起返回，
+并有测试断言**目前有且只有这一处偏离**（偏离越多，这个字段的警示作用越被稀释）。
+
+> 这是「失败不静默」在规范冲突场景下的形态：
+> 不假装规范没有漏洞，也不擅自替平台方改规范，而是把选择摊开。
+
+---
+
+## M1-D3 `PlatformProfile` 只声明当前有实现的方法
+
+交接文档 §5.3 给出的接口还包含 `aliases()` / `mappers()` / `validators()`，
+分别服务 L0 / L1 / L4 —— 而这三层要到 M2 才存在。
+
+M1 **刻意不提前声明**它们。提前声明一批只能返回空列表的方法，
+除了让 profile 看起来"完整"以外没有任何好处，反而掩盖了「哪些能力真的可用」。
+M2 落地 L0~L2 时按需扩展。
+
+---
+
+## M1-D4 JSON Schema 只管形状，三类约束**故意**不放进去
+
+`tc_case.schema.json` 里用 `x-validation-not-covered-here` 显式列出了它**不负责**的部分：
+
+| 约束 | 为什么不放进 schema |
+|---|---|
+| `module_id` 外键有效性 | 放进去等于把字典复制一份到 schema，两处维护必然漂移。字典是唯一真源 |
+| action ↔ locator 契约 | JSON Schema 要用 13 组 `if/then` 表达，可读性极差，且与 `Action` 枚举重复 |
+| STD-001/002/003 定位器写法 | 需要解析 XPath 语法，超出 schema 的表达能力 |
+| seq 连续性、STD-008 至少一个断言 | 跨数组元素的约束，schema 表达不了 |
+
+**把边界写进 schema 文件本身**，是为了让后来者一眼看到「schema 通过 ≠ 案例合法」，
+不会误以为跑完 `json-schema-validator` 就万事大吉。
+
+---
+
+## M1-D5 枚举字典由反射生成，不手写
+
+`describe_schema` 返回的 `enums` 从 Java 枚举反射导出。
+手写一份的话，改了枚举忘了改字典，调用方就会按字典生成一个服务其实不接受的值 ——
+而这种不一致在测试里很难发现，因为两边各自都"自洽"。
+
+对应测试直接断言 `enums.action` 的个数等于 `Action.values().length`。
+
+---
+
+## M1-D6 落实 M0-D4：`atp_echo` 的 annotations 一并修正
+
+M0 留下的 `atp_echo` 吃了 MCP 默认值，对外自称 `destructiveHint=true`。
+M1 顺手修正 —— 一个纯回显的自检接口谎称自己有破坏性，会让调用方 agent
+无谓地要求用户确认。
+
+现在三个 tool 全部显式声明，并由 `AtpSchemaToolsProtocolTest` 参数化断言守住。
+M1 实测对照（同一次 `tools/list`）：
+
+```
+atp_describe_schema  readOnly=True  destructive=False idempotent=True  openWorld=False
+atp_list_modules     readOnly=True  destructive=False idempotent=True  openWorld=False
+atp_echo（修正前）    readOnly=False destructive=True  idempotent=False openWorld=True
+```
+
+---
+
 ## 待决 / 下一步
 
-- **M1**：领域模型 + `AtpProfile`。tool annotations 按 M0-D4 显式声明。
-- **M2**：加 `json-schema-validator` 显式依赖时按 M0-D2 的警告复核版本线。
+- **M2**：L0/L1/L2 纯规则链路 + `validate_case` + `lint_locator`。
+  - 加 `json-schema-validator` 显式依赖时按 M0-D2 的警告复核版本线（传递进来的是 `3.0.0`）
+  - 按 M1-D3 扩展 `PlatformProfile`：`aliases()` / `mappers()` / `validators()`
+  - L1 填充 wait_strategy 时，对 `ASSERT_NOT_EXIST` 要产出 M1-D2 那条偏离诊断
+- **M3**：`LLM_API_KEY` 读不到时必须 fail-fast 并打印诊断，
+  **不能拿空 key 去调 API** —— 否则报 401，错误指向「key 无效」而非「配置没读到」。
+  同时把 `spring.config.import` 改成多候选路径（`./.env` 与 `../.env`），
+  因为相对路径锚定进程 cwd，换个目录启动就会静默跳过。
 - **M6**：起 2 副本验证 STATELESS —— `atp_echo` 已返回 `servedBy`（读 `HOSTNAME`，
   k8s 注入 pod 名），届时连续调用应能看到不同 pod 名，作为 STATELESS 生效的可视证据。
