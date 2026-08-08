@@ -54,3 +54,22 @@ llama.cpp 的 rerank 端点对部分模型有打分错误的已知缺陷。
 不要先写业务代码。先做 §2.2 的 **Java 8 链路 spike**：
 确认 JDK 8 能连通 Qdrant (gRPC) 和 llama.cpp 的 embedding 端点。不通就得按文档里的方案 B/C/D 降级，
 并把过程记进 `DECISIONS.md`。
+
+## Git 工作流
+
+仓库：`https://github.com/Kanash1i/atp-ai-demos`（private，monorepo，两个 demo 共存）
+
+**每个里程碑一个 PR，不要直接推 main。** 用户要逐步 review 和回溯。
+
+```bash
+git checkout -b demo1/m4-evaluation     # 分支名：demo1/{里程碑}-{简述}
+# ...开发...
+git commit -m "feat(demo1): 加入检索评估框架与 baseline 指标"
+gh pr create --fill                      # 自动套用 PR 模板
+```
+
+- commit 前缀：`feat` / `fix` / `docs` / `test` / `chore`，scope 用 `demo1`
+- PR 模板里的**「怎么验证的」必填** —— 没有验证方式的 PR 不该合
+- **PR 由用户 review 后 merge，不要自行 merge**
+- 改动共享契约（`00-SHARED-CONTEXT.md` 的领域模型 / Action 枚举）
+  必须在 PR 里显式说明，并通知 demo2 那边
