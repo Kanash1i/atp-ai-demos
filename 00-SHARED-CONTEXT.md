@@ -290,8 +290,28 @@ docker context use remote          # 确认当前 context
 docker run -d --name qdrant --restart unless-stopped \
   -p 6333:6333 -p 6334:6334 \
   -v qdrant_storage:/qdrant/storage \
-  qdrant/qdrant:latest
+  qdrant/qdrant:v1.11.5
 ```
+
+> ⚠️⚠️ **tag 必须钉死 `v1.11.5`，不要用 `latest`。**
+>
+> Qdrant **1.12 起**把 dense 向量从 `Vector.data`(field 1) 挪进了 oneof 的 `dense`(field 101)。
+> langchain4j-qdrant **0.35.0** 传递依赖的 qdrant-client 1.11.0 不认识 field 101，
+> 会把它当 unknown field 丢掉 → 检索时拿到**空向量**。
+>
+> 而这个故障**只坏一半**：命中、score、payload 全部正常，只有向量是空的。
+> langchain4j 又要拿召回向量在客户端重算 cosine，最终报的是
+> `Length of vector a (0) must be equal to the length of vector b (1024)`
+> —— 完全指不到「server 版本太新」这个根因上。
+>
+> 升级 client 也救不了：1.14.1 把 `ScoredPoint.getVectors()` 的返回类型
+> 改成了 `VectorsOutput`，langchain4j 编译期绑的旧签名会变成 `NoSuchMethodError`。
+> 而 0.35.0 是最后一个 Java 8 字节码版本（demo1 §2 的硬约束），不能升。
+>
+> 完整定位过程与三种组合的实测结果见 `demo1-atp-rag/DECISIONS.md` **D-002**。
+> demo1 的 M0 spike 里已加了 server 版本的前置检查，命中不兼容版本会直接报根因。
+>
+> **两个端口都要**：6333 是 REST / Web UI，**6334 是 gRPC** —— langchain4j 走的是后者。
 
 > ⚠️ **用 named volume（`qdrant_storage`），不要用 bind mount。**
 > 宿主是 Windows + Docker Desktop（WSL2 backend），
