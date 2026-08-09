@@ -58,19 +58,50 @@ public final class AtpQueryRouter {
         this.chatModel = chatModel;
     }
 
-    public QueryIntent route(String query) {
+    /**
+     * 路由决策，带来源。
+     *
+     * <p>记录来源不是为了好看 —— M4 分析路由错误时，「错的是规则还是 LLM」
+     * 决定了该去改信号词表还是改 prompt。只返回 intent 的话这两种情况无法区分。
+     */
+    public static final class Decision {
+        private final QueryIntent intent;
+        private final boolean byRule;
+
+        Decision(QueryIntent intent, boolean byRule) {
+            this.intent = intent;
+            this.byRule = byRule;
+        }
+
+        public QueryIntent intent() {
+            return intent;
+        }
+
+        /** true = 信号词规则判定，false = 走了 LLM（含 LLM 失败后的降级）。 */
+        public boolean byRule() {
+            return byRule;
+        }
+    }
+
+    public Decision decide(String query) {
         QueryIntent byRule = routeByRule(query);
         if (byRule != null) {
             log.debug("路由（规则）{} → {}", query, byRule);
-            return byRule;
+            return new Decision(byRule, true);
         }
         if (chatModel == null) {
-            // 没有 LLM 可用时，宁可都查
-            return QueryIntent.BOTH;
+            // 没有 LLM 可用时，宁可都查。这仍然算「非规则判定」——
+            // 是因为规则没判出来才落到这里的
+            return new Decision(QueryIntent.BOTH, false);
         }
         QueryIntent byLlm = routeByLlm(query);
         log.debug("路由（LLM）{} → {}", query, byLlm);
-        return byLlm;
+        return new Decision(byLlm, false);
+    }
+
+    /** 只要意图，不关心来源。 */
+    public QueryIntent route(String query) {
+        return decide(query).intent();
     }
 
     /**

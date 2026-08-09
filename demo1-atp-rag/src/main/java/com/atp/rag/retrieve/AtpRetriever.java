@@ -50,6 +50,7 @@ public final class AtpRetriever {
     private final int candidateTopK;
     private final int finalTopK;
     private final double minScore;
+    private final double relativeFloorRatio;
 
     /**
      * @param scoringModel 传 null 表示不做精排（消融表第 1~3 行）
@@ -64,10 +65,17 @@ public final class AtpRetriever {
         this.router = router;
         this.candidateTopK = Env.getInt("RETRIEVE_CANDIDATE_TOP_K", 20);
         this.finalTopK = Env.getInt("RETRIEVE_FINAL_TOP_K", 5);
-        // rerank 之后的低分片段与其塞进 prompt，不如不给 ——
-        // 无关上下文会诱导模型编造。阈值只在开了 rerank 时生效，
-        // 因为向量分的绝对值没有可比性（不同 query 的分布差很远）
-        this.minScore = Double.parseDouble(Env.get("RERANK_MIN_SCORE", "0.01"));
+        // ⚠️ 这里曾经用绝对阈值 0.01，是个会静默吃掉整类查询的 bug。
+        //
+        // reranker 对「自然语言 query vs 结构化步骤序列」的打分天然偏低：
+        // 实测文档类查询 top1 落在 0.59~0.99，案例类只有 0.008~0.38 —— 差 1~2 个数量级。
+        // 绝对阈值对两类不公平，「有没有涉及文件上传的案例」会被整片砍成 0 条召回，
+        // 而这恰好是交接文档 §5.1 点名的 B 类用例。
+        //
+        // 改成「相对 top1 的比例」+ 一个极低的绝对下限：前者对两类分布都成立，
+        // 后者只用来挡住分数趋近于 0 的纯噪音。
+        this.relativeFloorRatio = Double.parseDouble(Env.get("RERANK_RELATIVE_FLOOR", "0.02"));
+        this.minScore = Double.parseDouble(Env.get("RERANK_MIN_SCORE", "0.0005"));
     }
 
     public RetrievalResult retrieve(String query) {
@@ -84,8 +92,9 @@ public final class AtpRetriever {
             intent = QueryIntent.BOTH;
             routedByRule = true;
         } else {
-            intent = router.route(query);
-            routedByRule = true;    // 具体由 router 内部决定，这里只记录最终意图
+            AtpQueryRouter.Decision decision = router.decide(query);
+            intent = decision.intent();
+            routedByRule = decision.byRule();
         }
 
         // ── 3. 多路召回 ──
@@ -115,13 +124,18 @@ public final class AtpRetriever {
         }
 
         // ── 5. 截取 ──
+        // 阈值相对于 top1：文档类 top1≈0.95 时门槛约 0.019，案例类 top1≈0.008 时
+        // 退到绝对下限 0.0005。同一套规则对两种分布都成立
+        double threshold = candidates.isEmpty() ? 0
+                : Math.max(minScore, candidates.get(0).finalScore() * relativeFloorRatio);
+
         List<RetrievedItem> top = new ArrayList<RetrievedItem>();
         for (RetrievedItem item : candidates) {
             if (top.size() >= finalTopK) {
                 break;
             }
-            if (rerankApplied && item.rerankScore() < minScore) {
-                // 精排分数已经很低了，后面的只会更低
+            if (rerankApplied && item.rerankScore() < threshold) {
+                // 候选已按精排分降序，后面的只会更低
                 break;
             }
             top.add(item);

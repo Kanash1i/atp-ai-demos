@@ -147,6 +147,40 @@ class AtpRetrieverIntegrationTest {
     }
 
     @Test
+    @DisplayName("案例类查询不会被 rerank 阈值整片砍空")
+    void caseQueriesAreNotWipedOutByScoreThreshold() {
+        // 这是 M3 实测出来的真实 bug：曾用绝对阈值 0.01，而 reranker 对
+        // 「自然语言 query vs 结构化步骤序列」打分天然偏低（案例类 top1 只有 0.008~0.38，
+        // 文档类是 0.59~0.99）。结果「有没有涉及文件上传的案例」召回 0 条 ——
+        // 而那恰好是交接文档 §5.1 点名的 B 类用例，M4 的 B 类 Recall 会直接归零，
+        // 还会被误读成「检索能力差」。
+        AtpRetriever r = retriever(true);
+        for (String query : new String[]{
+                "有没有涉及文件上传的案例",
+                "帮我找几个购物车相关的案例参考",
+                "找几个支付失败的案例",
+                "报表导出的案例有哪些"}) {
+            RetrievalResult result = r.retrieve(query);
+            assertFalse(result.candidates().isEmpty(), query + "：候选为空");
+            assertFalse(result.isEmpty(),
+                    query + "：候选有 " + result.candidates().size()
+                            + " 条却一条都没采用 —— 阈值把整类查询砍空了");
+        }
+    }
+
+    @Test
+    @DisplayName("路由决策带来源，规则判定与 LLM 判定可区分")
+    void routingDecisionCarriesItsOrigin() {
+        // 曾经这个字段两个分支都写死 true，等于永远无法区分。
+        // M4 分析路由错误时，「错的是规则还是 LLM」决定该改信号词表还是改 prompt
+        AtpQueryRouter ruleOnly = new AtpQueryRouter(null);
+        assertTrue(ruleOnly.decide("帮我找几个购物车相关的案例参考").byRule(),
+                "命中信号词应标记为规则判定");
+        assertFalse(ruleOnly.decide("购物车").byRule(),
+                "规则判不出来时不该标记为规则判定");
+    }
+
+    @Test
     @DisplayName("跨语言：日文提问能召回中日文语料")
     void crossLingualRetrievalWorks() {
         RetrievalResult result = retriever(true)
