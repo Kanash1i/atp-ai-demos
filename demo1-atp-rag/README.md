@@ -16,7 +16,7 @@
 | **M0** Java 8 链路 spike | ✅ 已完成 |
 | **M1** 语料生成 | ✅ 已完成 |
 | **M2** 入库 pipeline | ✅ 已完成 |
-| M3 基础检索 + CLI | ⬜ |
+| **M3** 基础检索 + CLI | ✅ 已完成 |
 | M4 评估框架 + baseline | ⬜ |
 | M5 逐项优化 + 消融表 | ⬜ |
 | M6 演示脚本 | ⬜ |
@@ -103,6 +103,36 @@ mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.cli.SearchProbe
 
 > ⚠️ `mvn -q` 会抑制 `exec:java` 转发的应用日志。要看 INFO 日志就去掉 `-q`。
 > 关键结果一律走 `System.out`，不受影响。
+
+### 5. 问答演示
+
+```bash
+mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.cli.Main      # 交互式
+mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.cli.DemoRun   # 非交互跑批
+```
+
+CLI **默认展示召回详情**，这是刻意的 —— 一个只输出答案的 demo 说明不了检索做对了什么，
+而这个项目的重点全在检索。示例（`向量第 N 名` 那一列是 rerank 价值的直接体现）：
+
+```
+Q: 点击按钮之前应该用哪种等待策略
+路由 BOTH　候选 39 → 采用 5（精排）　898ms
+  [1] 0.9537（向量第 1 名）  Action 参考 > 交互类 > CLICK
+  [2] 0.7394（向量第 4 名）  STD-004〜006 待機戦略規約 > STD-005 CLICK の待機戦略 > 規定
+  [4] 0.6525（向量第 14 名） STD-004〜006 待機戦略規約 > STD-004 SLEEP の使用禁止 > 是正方法
+```
+
+贴一段 XPath 会走规则通道，直接给出规范判定：
+
+```
+Q: //div[3]/span[@id="ext-gen1234"] 这样写有问题吗
+lint 命中 [STD-002, STD-003]
+  · [STD-002] 依赖了自动生成的 id「ext-gen1234」…规范判定为 WARN
+  · [STD-003] 使用了位置下标。列表顺序会随排序规则、数据变化、分页而改变…
+```
+
+> 未配置 `LLM_API_KEY` 时 `DemoRun` 会自动降级成只跑检索。
+> 检索层本来就不需要 LLM —— M4 的检索指标同样不需要。
 
 ## 一条贯穿始终的主线：把静默失败变成显式检查
 
