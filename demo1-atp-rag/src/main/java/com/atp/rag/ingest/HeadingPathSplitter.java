@@ -50,16 +50,25 @@ public final class HeadingPathSplitter {
      */
     private List<Chunk> splitByHeading(MarkdownDocument doc) {
         List<Chunk> chunks = new ArrayList<Chunk>();
+
+        // 这一块在本篇文档里的序号，从 0 递增。存进 payload，调试时用来还原上下文
         int ordinal = 0;
 
+        // 遍历解析阶段切好的小节 —— 一个 section = 一段正文 + 它的标题路径
         for (MarkdownDocument.Section section : doc.sections()) {
             String body = section.body().trim();
+
             if (body.isEmpty()) {
                 // 只有标题没有正文的过渡性小节（比如 "## 常见错误" 下面直接是 "### 绝对路径"）。
                 // 切出来会是一段只有前缀的空 chunk，纯噪音
                 continue;
             }
+
+            // 小节本身可能超过 700 字符上限，所以还要再按大小拆一次。
+            // 拆出来的每一块**共用同一份标题路径** —— 它们本来就属于同一节
             for (String piece : sliceBySize(body)) {
+                // withHeadingPath 会把 [文档 > 章 > 节] 前缀拼进 embedText，
+                // 但 rawText 保持原样。这两份文本的分离就是消融表第 2 行的全部内容
                 chunks.add(Chunk.withHeadingPath(
                         doc.sourceId(), doc.title(), section.headingPath(), piece, ordinal++));
             }
@@ -73,7 +82,13 @@ public final class HeadingPathSplitter {
     private List<Chunk> splitFixed(MarkdownDocument doc) {
         List<Chunk> chunks = new ArrayList<Chunk>();
         int ordinal = 0;
+
+        // 注意这里用的是 fullText() 而不是 sections() —— 完全不看解析出来的标题结构，
+        // 把整篇 markdown（连 ## 符号一起）当成一条长字符串从头切到尾。
+        // 这就是 baseline：切点落在哪全看字数，可能把一句话劈成两半
         for (String piece : sliceBySize(doc.fullText().trim())) {
+            // plain 表示这一块不知道自己属于哪一节：headingPath 为空，
+            // embedText 就等于 rawText，没有前缀可加
             chunks.add(Chunk.plain(doc.sourceId(), doc.title(), piece, ordinal++));
         }
         return chunks;
@@ -89,9 +104,14 @@ public final class HeadingPathSplitter {
      */
     private List<String> sliceBySize(String text) {
         List<String> pieces = new ArrayList<String>();
+
+        // ⚠️ 单位是**字符**不是 token。两种策略共用这同一个上限 ——
+        // 不然「标题路径更好」可能只是「chunk 更小所以更容易命中」的假象，
+        // 那样消融表第 2 行就白做了。这条由 SplitterTest 钉死
         int size = config.chunkSizeChars();
         int overlap = config.chunkOverlapChars();
 
+        // 短于上限就整段返回，不用切。绝大多数小节走这条路
         if (text.length() <= size) {
             pieces.add(text);
             return pieces;
@@ -99,14 +119,22 @@ public final class HeadingPathSplitter {
 
         int start = 0;
         while (start < text.length()) {
+            // 本块的理论终点：起点 + 上限，但不能越过文本末尾
             int end = Math.min(start + size, text.length());
+
+            // 还没到末尾的话，往回找一个更自然的断点（段落 > 句末标点）。
+            // 已经是最后一块就不用找了，硬切到末尾即可
             if (end < text.length()) {
                 end = preferBoundary(text, start, end);
             }
+
             String piece = text.substring(start, end).trim();
+            // trim 后可能变空（整段都是空白），空块没有检索价值，丢掉
             if (!piece.isEmpty()) {
                 pieces.add(piece);
             }
+
+            // 已经切到末尾，收工
             if (end >= text.length()) {
                 break;
             }
