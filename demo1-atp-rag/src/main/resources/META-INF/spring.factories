@@ -1,0 +1,4 @@
+# EnvironmentPostProcessor 必须走 spring.factories 注册 —— 它在容器建立之前就要运行，
+# 那时组件扫描还没发生，@Component 是不起作用的。
+org.springframework.boot.env.EnvironmentPostProcessor=\
+com.atp.rag.config.ConfigSourceCheck

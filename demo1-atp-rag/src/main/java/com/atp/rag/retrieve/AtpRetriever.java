@@ -1,6 +1,6 @@
 package com.atp.rag.retrieve;
 
-import com.atp.rag.config.Env;
+import com.atp.rag.config.AtpProperties;
 import com.atp.rag.config.RagConfig;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -49,6 +49,8 @@ public final class AtpRetriever {
 
     private final int candidateTopK;
     private final int finalTopK;
+    /** 被路由判为「不相关」的那一侧仍然查这么多条，作为保底。 */
+    private final int fallbackTopK;
     private final double minScore;
     private final double relativeFloorRatio;
 
@@ -57,14 +59,17 @@ public final class AtpRetriever {
      * @param router       传 null 表示不做路由，一律查两边（消融表第 1~2 行）
      */
     public AtpRetriever(RagConfig config, EmbeddingModel embeddingModel,
-                        ScoringModel scoringModel, QdrantClient client, AtpQueryRouter router) {
+                        ScoringModel scoringModel, QdrantClient client,
+                        AtpQueryRouter router, AtpProperties props) {
         this.config = config;
         this.embeddingModel = embeddingModel;
         this.scoringModel = scoringModel;
         this.client = client;
         this.router = router;
-        this.candidateTopK = Env.getInt("RETRIEVE_CANDIDATE_TOP_K", 20);
-        this.finalTopK = Env.getInt("RETRIEVE_FINAL_TOP_K", 5);
+        // topK 跟着消融配置走（它俩本身就是可调项），阈值取自 atp.rerank.*
+        this.candidateTopK = config.candidateTopK();
+        this.finalTopK = config.finalTopK();
+        this.fallbackTopK = props.getRag().getFallbackTopK();
         // ⚠️ 这里曾经用绝对阈值 0.01，是个会静默吃掉整类查询的 bug。
         //
         // reranker 对「自然语言 query vs 结构化步骤序列」的打分天然偏低：
@@ -74,8 +79,8 @@ public final class AtpRetriever {
         //
         // 改成「相对 top1 的比例」+ 一个极低的绝对下限：前者对两类分布都成立，
         // 后者只用来挡住分数趋近于 0 的纯噪音。
-        this.relativeFloorRatio = Double.parseDouble(Env.get("RERANK_RELATIVE_FLOOR", "0.02"));
-        this.minScore = Double.parseDouble(Env.get("RERANK_MIN_SCORE", "0.0005"));
+        this.relativeFloorRatio = props.getRerank().getRelativeFloor();
+        this.minScore = props.getRerank().getMinScore();
     }
 
     public RetrievalResult retrieve(String query) {
@@ -124,45 +129,150 @@ public final class AtpRetriever {
         }
 
         // ── 5. 截取 ──
-        // 阈值相对于 top1：文档类 top1≈0.95 时门槛约 0.019，案例类 top1≈0.008 时
-        // 退到绝对下限 0.0005。同一套规则对两种分布都成立
-        double threshold = candidates.isEmpty() ? 0
-                : Math.max(minScore, candidates.get(0).finalScore() * relativeFloorRatio);
-
-        List<RetrievedItem> top = new ArrayList<RetrievedItem>();
-        for (RetrievedItem item : candidates) {
-            if (top.size() >= finalTopK) {
-                break;
-            }
-            if (rerankApplied && item.rerankScore() < threshold) {
-                // 候选已按精排分降序，后面的只会更低
-                break;
-            }
-            top.add(item);
-        }
+        List<RetrievedItem> top = selectTop(candidates, intent, rerankApplied);
 
         return new RetrievalResult(query, intent, routedByRule, findings,
                 candidates, top, rerankApplied);
     }
 
-    // ── 召回 ──────────────────────────────────────────────────
+    /**
+     * 选出最终结果。<b>分组配额，而不是全局按分数排。</b>
+     *
+     * <h4>为什么不能全局排</h4>
+     *
+     * 因为<b>rerank 分数在文档和案例之间不可比</b>：reranker 对
+     * 「自然语言 query vs 结构化步骤序列」的打分天然偏低，实测文档类 top1 落在 0.59~0.99，
+     * 案例类只有 0.008~0.38（见 D-013）。全局排序等于让案例和文档比绝对分 ——
+     * 案例必输。
+     *
+     * <p>实测后果：「帮我找几个购物车相关的案例参考」路由正确判成 CASES、
+     * 案例也正常召回了，但 top5 里只有 2 条案例，3 条文档凭高分挤了进来。
+     * <b>一个明确要案例的问题，返回的多数是文档。</b>
+     *
+     * <p>这是同一个根因（分数尺度不可比）在第三个位置咬人：
+     * D-013 是绝对阈值把案例砍空，D-016 是路由开关让案例查不到，这里是排序把案例挤掉。
+     * 前两次都是打补丁，这次直接改成按组分配名额 —— 让「哪一类该占多数」由<b>路由意图</b>
+     * 决定，而不是由两个不可比的分数决定。
+     */
+    private List<RetrievedItem> selectTop(List<RetrievedItem> candidates,
+                                          QueryIntent intent, boolean rerankApplied) {
+        // 阈值相对 top1：文档类 top1≈0.95 时门槛约 0.019，案例类 top1≈0.008 时
+        // 退到绝对下限 0.0005。同一套规则对两种分布都成立（D-013）
+        double threshold = candidates.isEmpty() ? 0
+                : Math.max(minScore, candidates.get(0).finalScore() * relativeFloorRatio);
 
-    private void collectInto(Map<String, RetrievedItem> target, String query, QueryIntent intent) {
-        Embedding vector = embeddingModel.embed(query).content();
-
-        if (intent == QueryIntent.DOCS || intent == QueryIntent.BOTH) {
-            search(target, config.docsCollection(), vector);
+        // 单 collection 下没有分组这回事，退回按分数取
+        if (config.collectionMode() == RagConfig.CollectionMode.SINGLE) {
+            return takeByScore(candidates, finalTopK, rerankApplied, threshold);
         }
-        if (intent == QueryIntent.CASES || intent == QueryIntent.BOTH) {
-            String cases = config.casesCollection();
-            // SINGLE 模式下两个名字相同，查两次等于白跑一趟
-            if (!cases.equals(config.docsCollection()) || intent == QueryIntent.CASES) {
-                search(target, cases, vector);
+
+        List<RetrievedItem> docs = new ArrayList<RetrievedItem>();
+        List<RetrievedItem> cases = new ArrayList<RetrievedItem>();
+        for (RetrievedItem item : candidates) {
+            (item.isCase() ? cases : docs).add(item);
+        }
+
+        // 主类占多数，次类留一席之地。
+        // BOTH 时给文档多一席 —— 「既要规范也要案例」的问法里，规范是判断依据，
+        // 案例是参考，判断依据优先
+        int caseQuota;
+        switch (intent) {
+            case CASES:
+                caseQuota = finalTopK - 2;
+                break;
+            case DOCS:
+                caseQuota = 1;
+                break;
+            default:
+                caseQuota = finalTopK / 2;
+                break;
+        }
+        int docQuota = finalTopK - caseQuota;
+
+        List<RetrievedItem> pickedCases = takeByScore(cases, caseQuota, rerankApplied, threshold);
+        List<RetrievedItem> pickedDocs = takeByScore(docs, docQuota, rerankApplied, threshold);
+
+        // 一侧配额用不满时，剩下的名额让给另一侧 —— 不能因为凑不够配额就少给结果
+        int spare = finalTopK - pickedCases.size() - pickedDocs.size();
+        if (spare > 0) {
+            pickedCases.addAll(takeByScore(
+                    cases.subList(Math.min(pickedCases.size(), cases.size()), cases.size()),
+                    spare, rerankApplied, threshold));
+            spare = finalTopK - pickedCases.size() - pickedDocs.size();
+        }
+        if (spare > 0) {
+            pickedDocs.addAll(takeByScore(
+                    docs.subList(Math.min(pickedDocs.size(), docs.size()), docs.size()),
+                    spare, rerankApplied, threshold));
+        }
+
+        // 合并后按分数排一次，让引用编号的顺序看起来合理。
+        // 组内相对顺序不受影响，因为配额已经决定了各组进来几条
+        List<RetrievedItem> top = new ArrayList<RetrievedItem>(pickedCases);
+        top.addAll(pickedDocs);
+        Collections.sort(top, new Comparator<RetrievedItem>() {
+            public int compare(RetrievedItem a, RetrievedItem b) {
+                return Double.compare(b.finalScore(), a.finalScore());
             }
-        }
+        });
+        return top;
     }
 
-    private void search(Map<String, RetrievedItem> target, String collection, Embedding vector) {
+    /** 从已按分数降序的列表里取前 n 条，跳过低于阈值的。 */
+    private List<RetrievedItem> takeByScore(List<RetrievedItem> from, int n,
+                                            boolean rerankApplied, double threshold) {
+        List<RetrievedItem> picked = new ArrayList<RetrievedItem>();
+        for (RetrievedItem item : from) {
+            if (picked.size() >= n) {
+                break;
+            }
+            if (rerankApplied && item.rerankScore() < threshold) {
+                // 已按精排分降序，后面的只会更低
+                break;
+            }
+            picked.add(item);
+        }
+        return picked;
+    }
+
+    // ── 召回 ──────────────────────────────────────────────────
+
+    /**
+     * 多路召回。<b>路由决定配额，不决定开关。</b>
+     *
+     * <p>原先的实现是开关式的：判成 {@code CASES} 就完全不查文档库。
+     * 这违背了 {@link AtpQueryRouter} 自己写下的原则 —— 既然「路由错误的代价不对称」，
+     * 就不该给任何一次路由错误留下「彻底召回不到」的可能。
+     *
+     * <p>实测撞到了：「点击按钮之前应该用哪种等待策略」是典型的知识问答，
+     * 但这种问法没命中信号词表，落到 LLM 路由后<b>偶尔被判成 CASES</b>，
+     * 于是 top5 全是案例、一条文档都没有。表现为集成测试<b>间歇性失败</b>，
+     * 而在评估里会表现为某几行 Recall 的随机跳水 —— 那种波动最容易被误读成「优化有效/无效」。
+     *
+     * <p>改成配额制之后，路由判错的后果从「召回不到」降级为「配额不理想」，
+     * 而配额不理想由 rerank 兜住：真正相关的内容仍会被精排提到前面。
+     */
+    private void collectInto(Map<String, RetrievedItem> target, String query, QueryIntent intent) {
+        Embedding vector = embeddingModel.embed(query).content();
+        String docs = config.docsCollection();
+        String cases = config.casesCollection();
+
+        // SINGLE 模式下两个名字相同，查两次等于白跑一趟
+        if (docs.equals(cases)) {
+            search(target, docs, vector, candidateTopK);
+            return;
+        }
+        // 被路由判为「不相关」的那一侧仍然查，只是配额小 —— 这是保底，不是浪费：
+        // 案例库只有 80 条，多一次 Qdrant 查询的开销远小于一次彻底召回失败的代价。
+        // 而 embedding 只算了一次，没有额外的模型调用
+        search(target, docs, vector,
+                intent == QueryIntent.CASES ? fallbackTopK : candidateTopK);
+        search(target, cases, vector,
+                intent == QueryIntent.DOCS ? fallbackTopK : candidateTopK);
+    }
+
+    private void search(Map<String, RetrievedItem> target, String collection,
+                        Embedding vector, int topK) {
         EmbeddingStore<TextSegment> store = QdrantEmbeddingStore.builder()
                 .client(client)
                 .collectionName(collection)
@@ -170,7 +280,7 @@ public final class AtpRetriever {
 
         List<EmbeddingMatch<TextSegment>> matches = store.search(EmbeddingSearchRequest.builder()
                 .queryEmbedding(vector)
-                .maxResults(candidateTopK)
+                .maxResults(topK)
                 .build()).matches();
 
         int rank = 1;

@@ -1,21 +1,18 @@
 package com.atp.rag.config;
 
 /**
- * 消融实验的开关集合。
+ * 消融实验的开关集合 —— 一个不可变值对象。
  *
  * <p><b>这个类的存在本身就是设计意图</b>：交接文档 §5.3 的消融表要逐项叠加优化，
  * 一条命令跑完全部配置。如果每组配置靠改代码来切换，面试官现场说「加一组试试」就没法演示了。
  *
- * <p>所以每一项优化都是一个开关，配置对象决定：
- * <ul>
- *   <li>语料怎么切（{@link ChunkStrategy}）</li>
- *   <li>存进哪个 / 哪几个 collection（{@link CollectionMode}）</li>
- *   <li>检索时开哪些增强（rerank、query 改写、拒答约束）</li>
- * </ul>
+ * <p>它<b>不是</b> Spring bean，而是从 {@link AtpProperties} 派生出来的值对象。
+ * 原因是消融实验要在一次进程里造出六七个不同的配置轮流跑，
+ * 而容器里的 bean 是单例 —— 配置必须能自由复制和修改，不能被容器托管。
  *
- * <p><b>collection 名由配置派生</b>，不是写死在 .env 里的。原因是切分策略和 embedding 模型
- * 一变，向量就不能复用了 —— 如果所有配置共用一个 collection，跑第 2 组会覆盖第 1 组的数据，
- * 消融表就只剩最后一行是真的。让配置决定名字，各组数据天然隔离，也能反复重跑。
+ * <p>collection 名由配置派生而不是写死：切分策略和 embedding 模型一变，向量就不能复用了。
+ * 若所有配置共用一个 collection，跑第 2 组会覆盖第 1 组的数据，
+ * 消融表就只剩最后一行是真的 —— 而且不会报错。
  */
 public final class RagConfig {
 
@@ -52,6 +49,9 @@ public final class RagConfig {
     private final boolean rerankEnabled;
     private final boolean queryRewriteEnabled;
     private final boolean refusalPromptEnabled;
+    private final int candidateTopK;
+    private final int finalTopK;
+    private final String collectionPrefix;
     private final String embeddingTag;
 
     private RagConfig(Builder b) {
@@ -62,28 +62,38 @@ public final class RagConfig {
         this.rerankEnabled = b.rerankEnabled;
         this.queryRewriteEnabled = b.queryRewriteEnabled;
         this.refusalPromptEnabled = b.refusalPromptEnabled;
+        this.candidateTopK = b.candidateTopK;
+        this.finalTopK = b.finalTopK;
+        this.collectionPrefix = b.collectionPrefix;
         this.embeddingTag = b.embeddingTag;
     }
 
-    /** 消融表第 1 行：什么优化都不开。 */
-    public static RagConfig baseline() {
+    /** 按 {@code application.yml} 里 {@code atp.rag.*} 的值构造。也就是「全部优化都开」。 */
+    public static RagConfig from(AtpProperties props) {
+        AtpProperties.Rag rag = props.getRag();
         return builder()
+                .chunkStrategy(rag.getChunkStrategy())
+                .collectionMode(rag.getCollectionMode())
+                .chunkSizeChars(rag.getChunkSizeChars())
+                .chunkOverlapChars(rag.getChunkOverlapChars())
+                .rerankEnabled(props.getRerank().isEnabled())
+                .queryRewriteEnabled(rag.isQueryRewriteEnabled())
+                .refusalPromptEnabled(rag.isRefusalPromptEnabled())
+                .candidateTopK(rag.getCandidateTopK())
+                .finalTopK(rag.getFinalTopK())
+                .collectionPrefix(props.getQdrant().getCollectionPrefix())
+                .embeddingTag(props.getEmbedding().getTag())
+                .build();
+    }
+
+    /** 消融表第 1 行：什么优化都不开。 */
+    public static RagConfig baseline(AtpProperties props) {
+        return from(props).toBuilder()
                 .chunkStrategy(ChunkStrategy.FIXED)
                 .collectionMode(CollectionMode.SINGLE)
                 .rerankEnabled(false)
                 .queryRewriteEnabled(false)
                 .refusalPromptEnabled(false)
-                .build();
-    }
-
-    /** 消融表最后一行：全部优化都开。也是 CLI 演示用的配置。 */
-    public static RagConfig full() {
-        return builder()
-                .chunkStrategy(ChunkStrategy.HEADING_PATH)
-                .collectionMode(CollectionMode.DUAL)
-                .rerankEnabled(Env.getBoolean("RERANK_ENABLED", true))
-                .queryRewriteEnabled(true)
-                .refusalPromptEnabled(true)
                 .build();
     }
 
@@ -101,6 +111,9 @@ public final class RagConfig {
                 .rerankEnabled(rerankEnabled)
                 .queryRewriteEnabled(queryRewriteEnabled)
                 .refusalPromptEnabled(refusalPromptEnabled)
+                .candidateTopK(candidateTopK)
+                .finalTopK(finalTopK)
+                .collectionPrefix(collectionPrefix)
                 .embeddingTag(embeddingTag);
     }
 
@@ -122,8 +135,7 @@ public final class RagConfig {
     }
 
     private String collectionName(String scope) {
-        String prefix = Env.get("QDRANT_COLLECTION_PREFIX", "atp");
-        StringBuilder name = new StringBuilder(prefix)
+        StringBuilder name = new StringBuilder(collectionPrefix)
                 .append('_').append(scope)
                 .append('_').append(chunkStrategy.tag());
         // embedding 模型换了，向量空间就变了，旧 collection 里的向量不能混用。
@@ -164,6 +176,14 @@ public final class RagConfig {
         return refusalPromptEnabled;
     }
 
+    public int candidateTopK() {
+        return candidateTopK;
+    }
+
+    public int finalTopK() {
+        return finalTopK;
+    }
+
     public String embeddingTag() {
         return embeddingTag;
     }
@@ -186,23 +206,15 @@ public final class RagConfig {
     public static final class Builder {
         private ChunkStrategy chunkStrategy = ChunkStrategy.HEADING_PATH;
         private CollectionMode collectionMode = CollectionMode.DUAL;
-
-        /**
-         * 用字符数而非 token 数。
-         *
-         * <p>Java 8 这边没有 bge-m3 的 tokenizer，硬凑一个（比如借 tiktoken）反而会给出
-         * 一个精确但错误的数字。而 bge-m3 的上限是 8192 token，我们的 chunk 离它很远，
-         * 所以精确 token 数在这里并不重要 —— 重要的是两种切分策略之间的对比是公平的。
-         *
-         * <p>700 字符对中日文约合 500~700 token，接近交接文档说的 512。
-         */
-        private int chunkSizeChars = Env.getInt("CHUNK_SIZE_CHARS", 700);
-        private int chunkOverlapChars = Env.getInt("CHUNK_OVERLAP_CHARS", 80);
-
-        private boolean rerankEnabled = Env.getBoolean("RERANK_ENABLED", true);
+        private int chunkSizeChars = 700;
+        private int chunkOverlapChars = 80;
+        private boolean rerankEnabled = true;
         private boolean queryRewriteEnabled = true;
         private boolean refusalPromptEnabled = true;
-        private String embeddingTag = Env.get("EMBEDDING_TAG", "");
+        private int candidateTopK = 20;
+        private int finalTopK = 5;
+        private String collectionPrefix = "atp";
+        private String embeddingTag = "";
 
         public Builder chunkStrategy(ChunkStrategy v) {
             this.chunkStrategy = v;
@@ -239,8 +251,23 @@ public final class RagConfig {
             return this;
         }
 
+        public Builder candidateTopK(int v) {
+            this.candidateTopK = v;
+            return this;
+        }
+
+        public Builder finalTopK(int v) {
+            this.finalTopK = v;
+            return this;
+        }
+
+        public Builder collectionPrefix(String v) {
+            this.collectionPrefix = v;
+            return this;
+        }
+
         public Builder embeddingTag(String v) {
-            this.embeddingTag = v;
+            this.embeddingTag = v == null ? "" : v;
             return this;
         }
 

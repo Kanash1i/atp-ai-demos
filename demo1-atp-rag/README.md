@@ -1,4 +1,4 @@
-# demo1 — ATP 知识助手（Java 8 + langchain4j RAG）
+# demo1 — ATP 知识助手（Spring Boot 2.7 + Java 8 + langchain4j RAG）
 
 一个面向遗留 Web UI 自动化测试平台（虚构的 **ATP**）的 RAG 知识助手。
 
@@ -28,6 +28,7 @@
 | 组件 | 选型 | 说明 |
 |---|---|---|
 | JDK | **8** | 遗留平台的现实约束，不是偷懒 |
+| Spring Boot | **2.7.18** | 最后一个支持 Java 8 的系列，见 `DECISIONS.md` D-014 |
 | langchain4j | **0.35.0** | 最后一个 Java 8 字节码版本，见 `DECISIONS.md` D-001 |
 | 向量库 | Qdrant **v1.11.5** | tag 钉死，原因见 D-002 |
 | Embedding | bge-m3 @ TEI | 本地 GPU，1024 维，中日英均衡 |
@@ -60,7 +61,7 @@ java -version   # 必须是 1.8.0_xxx
 ### 3. 链路自检
 
 ```bash
-mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.spike.LinkageSpike
+mvn spring-boot:run -Dspring-boot.run.arguments=--atp.task=spike
 ```
 
 四项检查，任何一项失败都会打印根因和降级方案：
@@ -80,8 +81,8 @@ mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.spike.LinkageSpike
 ### 4. 语料入库
 
 ```bash
-python3 tools/gen_cases.py                                             # 重新生成案例（可选，已提交）
-mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.ingest.IngestMain
+python3 tools/gen_cases.py     # 重新生成案例（可选，已提交）
+mvn spring-boot:run -Dspring-boot.run.arguments=--atp.task=ingest
 ```
 
 一次建好消融实验需要的全部 collection：
@@ -98,17 +99,21 @@ collection 名由 `RagConfig` 按配置派生，不写死在 `.env` —— 否�
 **看看检索现在什么样**：
 
 ```bash
-mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.cli.SearchProbe
+mvn spring-boot:run -Dspring-boot.run.arguments=--atp.task=probe
 ```
-
-> ⚠️ `mvn -q` 会抑制 `exec:java` 转发的应用日志。要看 INFO 日志就去掉 `-q`。
-> 关键结果一律走 `System.out`，不受影响。
 
 ### 5. 问答演示
 
 ```bash
-mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.cli.Main      # 交互式
-mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.cli.DemoRun   # 非交互跑批
+mvn spring-boot:run -Dspring-boot.run.arguments=--atp.task=cli    # 交互式
+mvn spring-boot:run -Dspring-boot.run.arguments=--atp.task=demo   # 非交互跑批
+```
+
+不带 `--atp.task` 会打印全部可用任务。消融开关可从命令行覆盖：
+
+```bash
+mvn spring-boot:run -Dspring-boot.run.arguments="--atp.task=demo \
+  --atp.rag.chunk-strategy=FIXED --atp.rag.collection-mode=SINGLE --atp.rerank.enabled=false"
 ```
 
 CLI **默认展示召回详情**，这是刻意的 —— 一个只输出答案的 demo 说明不了检索做对了什么，
@@ -142,8 +147,10 @@ lint 命中 [STD-002, STD-003]
 |---|---|---|
 | TEI 退化到 CPU | 容器正常、`/health` 200、正常返回 1024 维向量 | 14 核满载，GPU 利用率 0%，**靠 CPU 风扇声才发现** |
 | Qdrant proto 字段迁移 | 命中、score、payload 全对，只有向量是空的 | 报错指向「向量长度不一致」，根因却在 server 版本 |
-| slf4j provider 版本错配 | 不报错 | 日志**全部消失**，等要排查检索问题时才付出代价 |
+| slf4j provider 版本错配 | 不报错 | 日志**全部消失**（改用 Spring Boot 的 BOM 后已消除，见 D-014） |
 | rerank 打分坏掉 | 照常返回分数 | 消融表整张被污染，**比没有 rerank 严重得多** |
+| rerank 阈值用绝对值 | 案例检索**静默返回 0 条** | B 类指标归零，且看起来像「检索能力差」（D-013） |
+| `optional:` 配置源缺失 | 不报错，占位符当字面值传下去 | 报错出现在完全无关的地方（D-015） |
 
 所以 spike 里的每项检查都不是走过场，而是把上面这些变成 fail-fast。
 被问「你怎么保证检索质量」时，这比罗列技术栈有力。

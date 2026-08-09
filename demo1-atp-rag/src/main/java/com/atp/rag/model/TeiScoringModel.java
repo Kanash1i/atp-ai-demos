@@ -1,6 +1,6 @@
 package com.atp.rag.model;
 
-import com.atp.rag.config.Env;
+import com.atp.rag.config.AtpProperties;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -52,23 +52,20 @@ public final class TeiScoringModel implements ScoringModel {
     /** TEI 服务端的 batch 上限，默认 32（对应 TEI 的 --max-batch-requests）。 */
     private final int maxBatchSize;
 
-    public TeiScoringModel() {
-        this(Env.require("RERANK_BASE_URL"));
+    public TeiScoringModel(AtpProperties.Rerank cfg) {
+        this(cfg.getRerankEndpoint(), cfg.getMaxBatch(), cfg.getTimeoutSeconds());
     }
 
-    public TeiScoringModel(String baseUrl) {
-        this.maxBatchSize = Env.getInt("RERANK_MAX_BATCH", 32);
-        String trimmed = baseUrl;
-        while (trimmed.endsWith("/")) {
-            trimmed = trimmed.substring(0, trimmed.length() - 1);
-        }
-        this.endpoint = trimmed + "/rerank";
+    /** 供测试直接指定端点用。 */
+    public TeiScoringModel(String endpoint, int maxBatchSize, int timeoutSeconds) {
+        this.maxBatchSize = maxBatchSize;
+        this.endpoint = endpoint;
         // 用 okhttp 而不是 HttpURLConnection：它已经在 classpath 上
         // （langchain4j-open-ai 的传递依赖），且评估阶段要跑
         // 40 query × 6 配置 × 40 pair 的量，连接复用是有意义的
         this.http = new OkHttpClient.Builder()
                 .connectTimeout(5, TimeUnit.SECONDS)
-                .readTimeout(Env.getInt("RERANK_TIMEOUT_SEC", 60), TimeUnit.SECONDS)
+                .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
                 .build();
     }
 

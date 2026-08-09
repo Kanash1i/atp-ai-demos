@@ -1,0 +1,86 @@
+spring:
+  application:
+    name: atp-rag
+  main:
+    banner-mode: "off"
+    # 这是个 CLI / 批处理应用，跑完 Runner 就该退出，不要挂着等
+    web-application-type: none
+
+  # 仓库根目录的 .env 直接当 properties 读进来。
+  # optional: 前缀是必要的 —— CI / 容器里没有 .env，配置从环境变量注入。
+  # ⚠️ 代价是文件缺失时零提示，所以下面每个必填项都不给默认值，
+  #    让它在启动绑定阶段就失败，而不是拿着空值去打服务。
+  config:
+    import: "optional:file:${ATP_DOTENV_DIR:../}.env[.properties]"
+
+logging:
+  level:
+    root: warn
+    com.atp.rag: info
+
+# ─────────────────────────────────────────────────────────────
+#  外部配置（.env / 环境变量）→ 内部配置模型的映射层。
+#
+#  为什么要这一层，而不是让代码直接读 EMBEDDING_BASE_URL：
+#   - .env 是两个 demo 共用的，键名由共享契约定，不该渗进 demo1 的代码
+#   - 默认值集中在这里，一眼能看全，不必去翻各个类的构造函数
+#   - 换配置来源（比如上 k8s 用 ConfigMap）时只改这一层
+# ─────────────────────────────────────────────────────────────
+atp:
+  embedding:
+    # 不给默认值 —— 缺了就该启动失败，而不是连到一个猜的地址上
+    base-url: ${EMBEDDING_BASE_URL}
+    model: ${EMBEDDING_MODEL:bge-m3}
+    dimension: ${EMBEDDING_DIM:1024}
+    timeout-seconds: ${EMBEDDING_TIMEOUT_SEC:60}
+    max-retries: ${EMBEDDING_MAX_RETRIES:2}
+    # 换 embedding 模型时填，作为 collection 名后缀隔离不同向量空间
+    tag: ${EMBEDDING_TAG:}
+
+  rerank:
+    base-url: ${RERANK_BASE_URL}
+    model: ${RERANK_MODEL:bge-reranker-v2-m3}
+    enabled: ${RERANK_ENABLED:true}
+    timeout-seconds: ${RERANK_TIMEOUT_SEC:60}
+    # TEI 服务端的 batch 上限，超了会返回 422
+    max-batch: ${RERANK_MAX_BATCH:32}
+    # ⚠️ 截断阈值必须相对 top1，不能用绝对值：文档类 rerank 分数 0.59~0.99，
+    #    案例类只有 0.008~0.38，差 1~2 个数量级。见 DECISIONS.md D-013
+    relative-floor: ${RERANK_RELATIVE_FLOOR:0.02}
+    min-score: ${RERANK_MIN_SCORE:0.0005}
+
+  llm:
+    base-url: ${LLM_BASE_URL:https://api.deepseek.com/v1}
+    model: ${LLM_MODEL:deepseek-v4-flash}
+    # 允许为空 —— 只跑检索时不需要它。取用时才校验，见 LlmProperties
+    api-key: ${LLM_API_KEY:}
+    temperature: ${LLM_TEMPERATURE:0}
+    timeout-seconds: ${LLM_TIMEOUT_SEC:120}
+
+  qdrant:
+    host: ${QDRANT_HOST}
+    # REST，用于建 collection、查点数、校验版本
+    rest-port: ${QDRANT_PORT:6333}
+    # ⚠️ langchain4j-qdrant 走 gRPC，是 6334 不是 6333
+    grpc-port: ${QDRANT_GRPC_PORT:6334}
+    collection-prefix: ${QDRANT_COLLECTION_PREFIX:atp}
+
+  corpus:
+    dir: ${CORPUS_DIR:corpus}
+
+  # 消融实验的开关。命令行可覆盖任意一项，例如
+  #   --atp.rag.chunk-strategy=FIXED --atp.rag.collection-mode=SINGLE
+  rag:
+    chunk-strategy: HEADING_PATH
+    collection-mode: DUAL
+    # ⚠️ 单位是**字符**不是 token：Java 8 侧没有 bge-m3 的 tokenizer，
+    #    硬凑一个只会得到「精确但错误」的数字。见 DECISIONS.md D-006
+    chunk-size-chars: ${CHUNK_SIZE_CHARS:700}
+    chunk-overlap-chars: ${CHUNK_OVERLAP_CHARS:80}
+    query-rewrite-enabled: true
+    refusal-prompt-enabled: true
+    candidate-top-k: ${RETRIEVE_CANDIDATE_TOP_K:20}
+    final-top-k: ${RETRIEVE_FINAL_TOP_K:5}
+    # 路由判为「不相关」的那一侧仍然召回这么多条作保底。
+    # 路由决定配额不决定开关 —— 判错了只是配额不理想，不会彻底召回不到。见 D-016
+    fallback-top-k: ${RETRIEVE_FALLBACK_TOP_K:5}
