@@ -61,10 +61,12 @@ public final class AtpCase {
     public String renderForEmbedding() {
         StringBuilder sb = new StringBuilder();
         sb.append('[').append(caseCode()).append("] ").append(node.path("title").asText()).append('\n');
+        // 模块和优先级放第二行 —— 「购物车相关的案例」这类查询靠模块名命中
         sb.append("模块：").append(moduleCode())
                 .append("　优先级：").append(node.path("priority").asText())
                 .append("　状态：").append(node.path("status").asText()).append('\n');
 
+        // 前置条件是可空字段，空的就不占一行 —— 空标签会稀释向量
         String precondition = node.path("precondition").asText("");
         if (!precondition.isEmpty()) {
             sb.append("前置条件：").append(precondition).append('\n');
@@ -72,29 +74,47 @@ public final class AtpCase {
 
         sb.append("测试步骤：\n");
         for (JsonNode step : node.path("steps")) {
+            // 序号 + 动作，例如 "  3. CLICK"。
+            // action 名直接写进文本，所以「有没有涉及文件上传的案例」能靠 UPLOAD 这个词命中，
+            // 不必依赖 metadata 过滤
             sb.append("  ").append(step.path("seq").asInt()).append(". ")
                     .append(step.path("action").asText());
 
+            // 下面四个字段都是**可空**的，取决于 action 类型：
+            // OPEN_URL 没有定位器，CLICK 没有输入数据，只有 ASSERT_TEXT 有期望值。
+            // 逐个判空再拼，避免出现 "定位器=null" 这种污染向量的字符串
+
             String locator = step.path("locator_value").asText("");
             if (!locator.isEmpty()) {
+                // 连 locator_type 一起写，因为 XPATH 和 CSS 的写法差异本身就是检索信号
                 sb.append(' ').append(step.path("locator_type").asText()).append('=').append(locator);
             }
+
             String input = step.path("input_data").asText("");
             if (!input.isEmpty()) {
                 sb.append("　输入：").append(input);
             }
+
             String expected = step.path("expected").asText("");
             if (!expected.isEmpty()) {
                 sb.append("　期望：").append(expected);
             }
+
+            // 等待策略一律写出来（它是必填字段）。
+            // 这让「点击按钮该用哪种等待策略」这类问题也能召回到案例作为佐证
             sb.append("　等待：").append(step.path("wait_strategy").asText());
 
+            // 步骤说明另起一行缩进，它往往是整条案例里信息量最大的部分 ——
+            // 历史案例的「※ 规范建立前编写，待改造」就写在这里
             String description = step.path("description").asText("");
             if (!description.isEmpty()) {
                 sb.append("\n     说明：").append(description);
             }
             sb.append('\n');
         }
+
+        // trim 掉末尾换行。最长的案例渲染出来约 711 字符 / 322 token，
+        // 离 bge-m3 的 8192 上限很远，所以不切分也不会被截断
         return sb.toString().trim();
     }
 
