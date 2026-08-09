@@ -1,16 +1,14 @@
 package com.atp.rag.retrieve;
 
-import com.atp.rag.config.Env;
+import com.atp.rag.config.AtpProperties;
 import com.atp.rag.config.RagConfig;
-import com.atp.rag.model.ModelFactory;
-import com.atp.rag.model.TeiScoringModel;
-import dev.langchain4j.model.embedding.EmbeddingModel;
-import io.qdrant.client.QdrantClient;
-import org.junit.jupiter.api.AfterAll;
+import com.atp.rag.support.RequiresServices;
 import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -23,44 +21,34 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 检索链路的集成测试，需要 Qdrant 与 TEI，<b>但不需要 LLM</b>。
+ * 检索链路的集成测试。需要 Qdrant 与 TEI，<b>但不需要 LLM</b>。
  *
- * <p>不需要 LLM 这一点是刻意的：检索指标和生成无关，M4 跑 40 条评估集也不该烧 token。
- * 这里的测试跑得通，就说明 M4 的评估能在没有 LLM key 的情况下先跑起来。
+ * <p>不需要 LLM 是刻意的：检索指标和生成无关，M4 跑 40 条评估集也不该烧 token。
+ * 这里能跑通，就说明 M4 的评估可以在没有 LLM key 的情况下先跑起来。
  *
- * <p>服务不可用时跳过而非失败 —— 没连服务机时 {@code mvn test} 仍要能过。
+ * <p>用 {@code @SpringBootTest} 而不是手工 new 各个依赖，顺带把
+ * <b>容器装配是否正确</b>也一起验了 —— bean 之间的连接错了，这些测试就起不来。
  */
+@SpringBootTest
+@RequiresServices
 class AtpRetrieverIntegrationTest {
 
-    private static RagConfig config;
-    private static EmbeddingModel embeddingModel;
-    private static QdrantClient client;
+    @Autowired
+    private RetrieverFactory retrieverFactory;
 
-    @BeforeAll
-    static void setUp() {
-        Assumptions.assumeTrue(healthy(Env.get("EMBEDDING_BASE_URL", "") + "/health"),
-                "TEI embedding 不可用，跳过");
-        Assumptions.assumeTrue(qdrantReachable(), "Qdrant 不可用，跳过");
+    @Autowired
+    private AtpProperties props;
 
-        config = RagConfig.full();
-        embeddingModel = ModelFactory.embeddingModel();
-        client = ModelFactory.qdrantClient();
-
-        Assumptions.assumeTrue(collectionExists(config.docsCollection()),
-                "collection " + config.docsCollection() + " 不存在，先跑 IngestMain");
-    }
-
-    @AfterAll
-    static void tearDown() {
-        if (client != null) {
-            client.close();
-        }
+    @BeforeEach
+    void requireIngestedData() {
+        String collection = RagConfig.from(props).docsCollection();
+        Assumptions.assumeTrue(collectionExists(collection),
+                "collection " + collection + " 不存在，先跑 --atp.task=ingest");
     }
 
     private AtpRetriever retriever(boolean rerank) {
-        RagConfig c = config.toBuilder().rerankEnabled(rerank).build();
-        return new AtpRetriever(c, embeddingModel,
-                rerank ? new TeiScoringModel() : null, client, new AtpQueryRouter(null));
+        return retrieverFactory.create(
+                RagConfig.from(props).toBuilder().rerankEnabled(rerank).build());
     }
 
     @Test
@@ -102,19 +90,19 @@ class AtpRetrieverIntegrationTest {
                 .retrieve("/html/body/div[3]/span[@id=\"ext-gen1234\"] 这样写有问题吗");
 
         List<String> identities = result.topIdentities();
-        Set<String> unique = new HashSet<String>(identities);
-        assertEquals(identities.size(), unique.size(), "top 结果有重复：" + identities);
+        assertEquals(identities.size(), new HashSet<String>(identities).size(),
+                "top 结果有重复：" + identities);
 
         List<String> candidates = result.candidateIdentities();
-        assertEquals(candidates.size(), new HashSet<String>(candidates).size(),
-                "候选集有重复");
+        assertEquals(candidates.size(), new HashSet<String>(candidates).size(), "候选集有重复");
     }
 
     @Test
     @DisplayName("lint 通道命中时会补充召回，候选集明显变大")
     void lintChannelWidensCandidatePool() {
         AtpRetriever r = retriever(true);
-        RetrievalResult withLint = r.retrieve("/html/body/div[3]/span[@id=\"ext-gen1234\"] 这样写有问题吗");
+        RetrievalResult withLint =
+                r.retrieve("/html/body/div[3]/span[@id=\"ext-gen1234\"] 这样写有问题吗");
         RetrievalResult plain = r.retrieve("这样写有问题吗");
 
         assertFalse(withLint.lintFindings().isEmpty(), "应命中 lint 规则");
@@ -149,11 +137,11 @@ class AtpRetrieverIntegrationTest {
     @Test
     @DisplayName("案例类查询不会被 rerank 阈值整片砍空")
     void caseQueriesAreNotWipedOutByScoreThreshold() {
-        // 这是 M3 实测出来的真实 bug：曾用绝对阈值 0.01，而 reranker 对
+        // M3 实测出来的真实 bug：曾用绝对阈值 0.01，而 reranker 对
         // 「自然语言 query vs 结构化步骤序列」打分天然偏低（案例类 top1 只有 0.008~0.38，
         // 文档类是 0.59~0.99）。结果「有没有涉及文件上传的案例」召回 0 条 ——
         // 而那恰好是交接文档 §5.1 点名的 B 类用例，M4 的 B 类 Recall 会直接归零，
-        // 还会被误读成「检索能力差」。
+        // 还会被误读成「检索能力差」。见 DECISIONS.md D-013
         AtpRetriever r = retriever(true);
         for (String query : new String[]{
                 "有没有涉及文件上传的案例",
@@ -203,22 +191,15 @@ class AtpRetrieverIntegrationTest {
                         item.identity() + " 标了 has_violation 却没有违规码");
             }
         }
-        assertTrue(foundViolating, "候选里应该出现违规案例，实际 " + result.candidateIdentities());
+        assertTrue(foundViolating,
+                "候选里应该出现违规案例，实际 " + result.candidateIdentities());
     }
 
-    private static boolean qdrantReachable() {
-        return healthy("http://" + Env.get("QDRANT_HOST", "") + ":"
-                + Env.getInt("QDRANT_PORT", 6333) + "/");
-    }
-
-    private static boolean collectionExists(String name) {
-        return healthy(ModelFactory.qdrantRestBaseUrl() + "/collections/" + name);
-    }
-
-    private static boolean healthy(String url) {
+    private boolean collectionExists(String name) {
         HttpURLConnection conn = null;
         try {
-            conn = (HttpURLConnection) new URL(url).openConnection();
+            conn = (HttpURLConnection) new URL(
+                    props.getQdrant().getRestBaseUrl() + "/collections/" + name).openConnection();
             conn.setConnectTimeout(2000);
             conn.setReadTimeout(3000);
             return conn.getResponseCode() == 200;

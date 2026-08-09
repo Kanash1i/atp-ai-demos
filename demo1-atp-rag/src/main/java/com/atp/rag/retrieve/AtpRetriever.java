@@ -1,6 +1,6 @@
 package com.atp.rag.retrieve;
 
-import com.atp.rag.config.Env;
+import com.atp.rag.config.AtpProperties;
 import com.atp.rag.config.RagConfig;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -57,14 +57,16 @@ public final class AtpRetriever {
      * @param router       传 null 表示不做路由，一律查两边（消融表第 1~2 行）
      */
     public AtpRetriever(RagConfig config, EmbeddingModel embeddingModel,
-                        ScoringModel scoringModel, QdrantClient client, AtpQueryRouter router) {
+                        ScoringModel scoringModel, QdrantClient client,
+                        AtpQueryRouter router, AtpProperties props) {
         this.config = config;
         this.embeddingModel = embeddingModel;
         this.scoringModel = scoringModel;
         this.client = client;
         this.router = router;
-        this.candidateTopK = Env.getInt("RETRIEVE_CANDIDATE_TOP_K", 20);
-        this.finalTopK = Env.getInt("RETRIEVE_FINAL_TOP_K", 5);
+        // topK 跟着消融配置走（它俩本身就是可调项），阈值取自 atp.rerank.*
+        this.candidateTopK = config.candidateTopK();
+        this.finalTopK = config.finalTopK();
         // ⚠️ 这里曾经用绝对阈值 0.01，是个会静默吃掉整类查询的 bug。
         //
         // reranker 对「自然语言 query vs 结构化步骤序列」的打分天然偏低：
@@ -74,8 +76,8 @@ public final class AtpRetriever {
         //
         // 改成「相对 top1 的比例」+ 一个极低的绝对下限：前者对两类分布都成立，
         // 后者只用来挡住分数趋近于 0 的纯噪音。
-        this.relativeFloorRatio = Double.parseDouble(Env.get("RERANK_RELATIVE_FLOOR", "0.02"));
-        this.minScore = Double.parseDouble(Env.get("RERANK_MIN_SCORE", "0.0005"));
+        this.relativeFloorRatio = props.getRerank().getRelativeFloor();
+        this.minScore = props.getRerank().getMinScore();
     }
 
     public RetrievalResult retrieve(String query) {

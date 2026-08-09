@@ -1,6 +1,6 @@
 package com.atp.rag.ingest;
 
-import com.atp.rag.config.Env;
+import com.atp.rag.config.AtpProperties;
 import com.atp.rag.config.RagConfig;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
@@ -49,17 +49,19 @@ public final class CorpusIngestor {
     private final EmbeddingModel embeddingModel;
     private final QdrantClient client;
     private final Path corpusRoot;
+    private final int dimension;
 
-    public CorpusIngestor(RagConfig config, EmbeddingModel embeddingModel, QdrantClient client) {
+    public CorpusIngestor(RagConfig config, EmbeddingModel embeddingModel,
+                          QdrantClient client, AtpProperties props) {
         this.config = config;
         this.embeddingModel = embeddingModel;
         this.client = client;
-        this.corpusRoot = Paths.get(Env.get("CORPUS_DIR", "corpus"));
+        this.corpusRoot = Paths.get(props.getCorpus().getDir());
+        this.dimension = props.getEmbedding().getDimension();
     }
 
     /** 建 collection 并灌入全部语料。返回各 collection 的实际点数，供调用方核对。 */
     public Result ingestAll() {
-        int dimension = Env.getInt("EMBEDDING_DIM", 1024);
         String docsCollection = config.docsCollection();
         String casesCollection = config.casesCollection();
 
