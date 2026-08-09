@@ -23,8 +23,12 @@ class AtpSchemaToolsProtocolTest extends McpProtocolTestSupport {
     // 这种错误没有任何报错，只能靠断言下发到线上的元数据来防。
 
     @ParameterizedTest(name = "{0} 必须对外声明为只读、幂等、无副作用")
-    @ValueSource(strings = {"atp_describe_schema", "atp_list_modules", "atp_echo"})
-    @DisplayName("所有只读 tool 的 annotations 不得吃 MCP 默认值")
+    @ValueSource(strings = {
+            "atp_describe_schema", "atp_list_modules", "atp_echo",
+            // M2 新增的三个。本服务不碰 DB，所以它们全都是只读且无副作用的 ——
+            // 包括 normalize：它只是把输入算成另一种形态返回，不改变任何外部状态。
+            "atp_lint_locator", "atp_validate_case", "atp_normalize_case"})
+    @DisplayName("所有 tool 的 annotations 不得吃 MCP 默认值")
     void readOnlyToolsDeclareCorrectAnnotations(String toolName) {
         JsonNode annotations = findTool(toolName).path("annotations");
 

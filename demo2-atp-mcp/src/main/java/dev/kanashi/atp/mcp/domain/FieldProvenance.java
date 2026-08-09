@@ -8,11 +8,13 @@ package dev.kanashi.atp.mcp.domain;
  * @param confidence {@link ProvenanceSource#MODEL} 时的置信度 0..1
  * @param reason     {@link ProvenanceSource#MODEL} 时模型给出的推断理由，供人工复核时判断
  */
+@com.fasterxml.jackson.annotation.JsonInclude(
+        com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
 public record FieldProvenance(
-        ProvenanceSource source,
-        String rule,
-        Double confidence,
-        String reason) {
+        @com.fasterxml.jackson.annotation.JsonProperty("source") ProvenanceSource source,
+        @com.fasterxml.jackson.annotation.JsonProperty("rule") String rule,
+        @com.fasterxml.jackson.annotation.JsonProperty("confidence") Double confidence,
+        @com.fasterxml.jackson.annotation.JsonProperty("reason") String reason) {
 
     public static FieldProvenance fromInput() {
         return new FieldProvenance(ProvenanceSource.INPUT, null, null, null);

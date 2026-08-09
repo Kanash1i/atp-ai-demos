@@ -14,11 +14,11 @@ package dev.kanashi.atp.mcp.domain;
  * @param standardRef 触发的规范编号，如 {@code STD-001}；非规范类问题为 {@code null}
  */
 public record Diagnostic(
-        Severity severity,
-        String code,
-        String path,
-        String message,
-        String standardRef) {
+        @com.fasterxml.jackson.annotation.JsonProperty("severity") Severity severity,
+        @com.fasterxml.jackson.annotation.JsonProperty("code") String code,
+        @com.fasterxml.jackson.annotation.JsonProperty("path") String path,
+        @com.fasterxml.jackson.annotation.JsonProperty("message") String message,
+        @com.fasterxml.jackson.annotation.JsonProperty("standard_ref") String standardRef) {
 
     public static Diagnostic error(String code, String path, String message, String standardRef) {
         return new Diagnostic(Severity.ERROR, code, path, message, standardRef);

@@ -4,6 +4,7 @@ import tools.jackson.databind.JsonNode;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 /**
  * 目标平台的描述。<b>这是本 demo 的可扩展性支点</b>（交接文档 §5.3）。
@@ -34,12 +35,27 @@ public interface PlatformProfile {
     List<ModuleEntry> modules();
 
     /**
-     * 外键校验。
+     * 外键校验（L4 用）。<b>只认 {@code module_id}</b>，不接受 code。
      * <p>
      * 单独作为方法而不是让调用方自己遍历 {@link #modules()}，是为了让
      * "外键必须对照字典校验"成为接口层面的强制动作，而不是一句写在文档里的约定。
      */
     boolean isKnownModuleId(String moduleId);
+
+    /**
+     * 宽松解析（L1 用）：按 {@code module_id} <b>或</b> {@code module_code} 查模块。
+     * <p>
+     * 与 {@link #isKnownModuleId(String)} 的区分是刻意的，体现「L1 宽进、L4 严出」：
+     * 请求方写 {@code "module": "CART"} 是很自然的写法，L1 能确定性地把它换成 {@code M003}
+     * 就不该劳烦模型；而 L4 到了守门这一步只认最终形态，不再做任何善意解释。
+     */
+    Optional<ModuleEntry> resolveModule(String idOrCode);
+
+    /** 字段别名字典，L0 用。 */
+    AliasDictionary aliases();
+
+    /** 枚举值归一化，L1 用。 */
+    EnumNormalizer enumNormalizer();
 
     /** 平台规范摘要，随 describe_schema 返回，供调用方在生成阶段就对齐。 */
     List<StandardRule> standards();

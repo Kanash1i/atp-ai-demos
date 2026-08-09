@@ -1,5 +1,8 @@
 package dev.kanashi.atp.mcp.domain;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 /**
@@ -16,17 +19,18 @@ import java.util.List;
  * @param timeoutSec   范围 5..300，默认 30
  * @param steps        seq 从 1 连续；STD-008 要求其中至少一个是断言步骤
  */
+@JsonInclude(JsonInclude.Include.NON_NULL)
 public record NormalizedCase(
-        String caseCode,
-        String title,
-        String moduleId,
-        Priority priority,
-        String author,
-        String precondition,
-        CaseStatus status,
-        Browser browser,
-        Integer timeoutSec,
-        List<TestStep> steps) {
+        @JsonProperty("case_code") String caseCode,
+        @JsonProperty("title") String title,
+        @JsonProperty("module_id") String moduleId,
+        @JsonProperty("priority") Priority priority,
+        @JsonProperty("author") String author,
+        @JsonProperty("precondition") String precondition,
+        @JsonProperty("status") CaseStatus status,
+        @JsonProperty("browser") Browser browser,
+        @JsonProperty("timeout_sec") Integer timeoutSec,
+        @JsonProperty("steps") List<TestStep> steps) {
 
     public static final int DEFAULT_TIMEOUT_SEC = 30;
     public static final int MIN_TIMEOUT_SEC = 5;

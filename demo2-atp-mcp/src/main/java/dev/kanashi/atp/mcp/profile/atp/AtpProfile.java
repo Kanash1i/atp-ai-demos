@@ -7,7 +7,9 @@ import dev.kanashi.atp.mcp.domain.LocatorType;
 import dev.kanashi.atp.mcp.domain.OnFailure;
 import dev.kanashi.atp.mcp.domain.Priority;
 import dev.kanashi.atp.mcp.domain.WaitStrategy;
+import dev.kanashi.atp.mcp.profile.AliasDictionary;
 import dev.kanashi.atp.mcp.profile.Enforcement;
+import dev.kanashi.atp.mcp.profile.EnumNormalizer;
 import dev.kanashi.atp.mcp.profile.ModuleEntry;
 import dev.kanashi.atp.mcp.profile.PlatformProfile;
 import dev.kanashi.atp.mcp.profile.StandardRule;
@@ -22,6 +24,7 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -78,11 +81,17 @@ public class AtpProfile implements PlatformProfile {
 
     private final JsonNode targetSchema;
     private final Map<String, ModuleEntry> modulesById;
+    private final Map<String, ModuleEntry> modulesByCode;
+    private final AliasDictionary aliases = new AtpAliasDictionary();
+    private final EnumNormalizer enumNormalizer = new AtpEnumNormalizer();
 
     public AtpProfile(ObjectMapper objectMapper) {
         this.targetSchema = loadSchema(objectMapper);
         this.modulesById = MODULES.stream()
                 .collect(Collectors.toMap(ModuleEntry::moduleId, Function.identity(),
+                        (a, b) -> a, LinkedHashMap::new));
+        this.modulesByCode = MODULES.stream()
+                .collect(Collectors.toMap(m -> m.moduleCode().toUpperCase(), Function.identity(),
                         (a, b) -> a, LinkedHashMap::new));
     }
 
@@ -127,6 +136,30 @@ public class AtpProfile implements PlatformProfile {
     @Override
     public boolean isKnownModuleId(String moduleId) {
         return moduleId != null && modulesById.containsKey(moduleId);
+    }
+
+    @Override
+    public Optional<ModuleEntry> resolveModule(String idOrCode) {
+        if (idOrCode == null || idOrCode.isBlank()) {
+            return Optional.empty();
+        }
+        String trimmed = idOrCode.trim();
+        ModuleEntry byId = modulesById.get(trimmed);
+        if (byId != null) {
+            return Optional.of(byId);
+        }
+        // module_code 在案例里常被大小写混写（cart / Cart / CART），统一后再查
+        return Optional.ofNullable(modulesByCode.get(trimmed.toUpperCase()));
+    }
+
+    @Override
+    public AliasDictionary aliases() {
+        return aliases;
+    }
+
+    @Override
+    public EnumNormalizer enumNormalizer() {
+        return enumNormalizer;
     }
 
     @Override

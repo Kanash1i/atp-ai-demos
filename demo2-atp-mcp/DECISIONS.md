@@ -298,13 +298,124 @@ atp_echo（修正前）    readOnly=False destructive=True  idempotent=False ope
 
 ---
 
+## M2-D1 ⭐⭐ 缺口分析不只回答"缺什么"，还要回答"该找谁补"
+
+**这是 M2 最重要的设计判断，也是「让模型少做事」被忽略的另一半。**
+
+通常的理解是"能用规则做的别给模型"。但还有一条同样关键：
+> **有些字段模型根本没有信息来源，让它补就是让它编。**
+
+最典型的是 `locator_value`。模型**从未见过被测页面**。让它补一个 XPath，
+它一定能写出语法正确、看起来很合理的表达式 —— 而那个表达式指向的元素可能根本不存在。
+schema 校验会通过（是字符串），`atp_lint_locator` 也可能通过（用了 `data-testid`），
+一路绿灯进库，直到执行器报"元素未找到"。**那时没人会想到根因是模型编了个选择器。**
+
+所以引入 `GapFillability`：
+
+| 值 | 含义 | 举例 | 处理 |
+|---|---|---|---|
+| `MODEL` | 答案已在案例里，只是需要理解 | `module_id` 语义匹配、`priority` 推断、`locator_type` 判断 | 交给 L3 |
+| `REQUESTER` | 模型没有信息来源，补即编造 | `locator_value`、`expected`、`input_data`、`author` | **直接 REJECTED** |
+| `PLATFORM` | 需要全局状态，本服务无状态 | `case_code` 的 4 位序号 | 标注后交给平台 |
+
+`REQUESTER` 那一行**在 M3 接入模型之后依然是 REJECTED** —— 它不是"暂时没能力"，
+而是"本来就不该由模型做"。
+
+> 面试点：被问"缺字段你怎么补"时，"看情况，有些字段我绝不补"比"我用模型补"更有说服力。
+> **找错人比不找更糟。**
+
+---
+
+## M2-D2 ⚠️ networknt json-schema-validator 3.x 的 API 完全重写了
+
+M0-D2 只验证了它的 Jackson 版本线，没料到 3.x 连类名都换了一遍：
+
+| 2.x / 旧教程 | 3.0.6 |
+|---|---|
+| `JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V202012)` | `SchemaRegistry.withDefaultDialect(SpecificationVersion.DRAFT_2020_12)` |
+| `JsonSchema` | `Schema` |
+| `ValidationMessage` | `Error` |
+| `Set<ValidationMessage> validate(...)` | `List<Error> validate(...)` |
+
+网上能搜到的示例几乎全是 2.x 写法，**一行都编译不过**。
+
+**⚠️ 另一个坑**：`com.networknt.schema.Error` 会遮蔽 `java.lang.Error`。
+`import` 进来虽然能编译，但读代码的人在 catch/throw 附近看到 `Error` 会瞬间误解。
+本项目一律用全限定名 `com.networknt.schema.Error`。
+
+---
+
+## M2-D3 L4 的输入是 JSON，不是领域对象
+
+`ValidationEngine.validate(JsonNode)` 而非 `validate(NormalizedCase)`。这保证了两件事：
+
+1. **契约测试才有意义**。`atp_validate_case` 校验的东西，和 `normalize` 最终输出的东西，
+   是**同一份字节**。若这边校验领域对象、那边输出序列化结果，两者之间就留了一道缝 ——
+   而"normalize 说 ACCEPTED、validate 说 REJECTED"正是本服务承诺不会发生的事。
+2. 平台方可以拿任意来源的 JSON 来校验，不必先构造我们的对象。
+
+配套地，`NormalizedCase` / `TestStep` 用 `@JsonInclude(NON_NULL)` —— 这不只是让输出好看：
+- `step_id` 恒为 null（平台生成），排除后才不会撞上 schema 的 `additionalProperties:false`
+- 必填字段若为 null，字段直接消失 → schema 报 required 缺失，**正是我们想要的判定**
+
+若改成输出 null，前者会变成"多了个不认识的字段"，后者会变成"类型不对"，两种诊断都指不到真问题上。
+
+---
+
+## M2-D4 两个「诊断本身静默失效」的 bug —— 都由测试抓到
+
+本项目反复强调"把会静默失败的地方变成显式检查"。M2 撞上了这个主题的一个变种：
+**诊断机制自己坏掉了，而服务照常返回结果。**
+
+**bug 1：L0 的诊断在 L1 之后凭空消失。**
+`RuleMapper` 只返回了自己产生的诊断，没带上 `ParsedEnvelope` 里的。
+后果是"字段名拼错了""同一字段给了两遍"这类提示全部丢失 —— 没有任何报错，
+请求方以为一切正常。被 `RuleMappingTest` 的两个用例抓到。
+
+**bug 2：REJECTED 的响应里写着"输入足够完整"。**
+`buildNote` 把「没调模型」等同于「输入完整」。但一条缺了 `locator_value` 的案例
+同样是 `model_calls=0` —— 因为那个字段本来就不该由模型补（见 M2-D1）。
+**自相矛盾的说明比没有说明更糟**，它会让请求方怀疑整个诊断的可信度。
+
+顺带修了第三处：schema 的 required 缺失类错误，`instanceLocation` 指向父对象，
+缺失的字段名只在 `getProperty()` 里 —— 只取前者会让一堆诊断的 path 全是 null，
+agent 拿到"某处缺了必填字段"根本没法定位。现在两者拼接，输出 `case_code` / `author`。
+
+---
+
+## M2-D5 L1 的三条自我约束
+
+1. **不猜。** 推断不出就留 null 交给 L2。规则猜错和模型猜错一样有害，而且更隐蔽 ——
+   规则的错会稳定地重复出现。具体体现：`locator_type` 只认 `/`→XPATH、`#`/`.`→CSS 两条形状规则；
+   `ID` / `NAME` / `LINK_TEXT` 的值都是普通字符串，没有任何特征能区分，一律不猜。
+2. **不截断。** 超长字段原样保留并判 ERROR。截断能让 schema 通过，
+   但那是把语义损坏藏起来 —— 一条被截断的断言文本会让用例静默地测错东西。
+3. **纠正要出声。** 请求方给的 `wait_strategy` 与规范强制值冲突时纠正并 WARN。
+   静默纠正等于让请求方永远学不会正确写法；而让规范可被覆盖，规范就变成了建议。
+
+---
+
+## M2-D6 信封解包用结构判据，不维护词表
+
+剥 `{"testCase": {...}}` / `{"payload": {...}}` 这类外层包装时，判据是：
+**顶层只有一个字段、其值是对象、且这个字段名不是我们认识的任何东西** → 那它只可能是包装层。
+
+不用 `case/data/payload/案例/ケース/...` 的词表，因为词表永远列不全，
+而这个结构特征对所有包装形式都成立（实测 `{"payload":{"wrapper":{...}}}` 两层也能剥）。
+
+同理，别名字典**只收无歧义的别名**：`id` 不映射到 `case_code`（它同样可能指 `case_id`），
+`name` 不作为 locator 提示（可能是步骤名称）。猜错一个字段名的后果是
+把 A 字段的值填进 B 字段，**而两边都是字符串时校验还发现不了**。
+
+---
+
 ## 待决 / 下一步
 
-- **M2**：L0/L1/L2 纯规则链路 + `validate_case` + `lint_locator`。
-  - 加 `json-schema-validator` 显式依赖时按 M0-D2 的警告复核版本线（传递进来的是 `3.0.0`）
-  - 按 M1-D3 扩展 `PlatformProfile`：`aliases()` / `mappers()` / `validators()`
-  - L1 填充 wait_strategy 时，对 `ASSERT_NOT_EXIST` 要产出 M1-D2 那条偏离诊断
-- **M3**：`LLM_API_KEY` 读不到时必须 fail-fast 并打印诊断，
+- **M3**：LLM 策略层 + L3 补全。
+  - `atp_normalize_case` 的 `openWorldHint` 需从 `false` 改为 `true` —— 届时会真的出网
+  - `model_calls` 要真实计数（目前恒为 0），Mock LLM 需支持计数以验证零模型路径
+  - L4 判断错误源自"模型填的字段"才回 L3 重试一次；源自输入本身直接 REJECTED，不白烧钱
+  - `LLM_API_KEY` 读不到时必须 fail-fast 并打印诊断，
   **不能拿空 key 去调 API** —— 否则报 401，错误指向「key 无效」而非「配置没读到」。
   同时把 `spring.config.import` 改成多候选路径（`./.env` 与 `../.env`），
   因为相对路径锚定进程 cwd，换个目录启动就会静默跳过。
