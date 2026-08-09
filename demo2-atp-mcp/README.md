@@ -235,16 +235,20 @@ k8s 多副本下请求被负载均衡打到不同 pod，第二个请求找不到
 |---|---|---|
 | M0 | 版本矩阵核实 + Streamable HTTP 打通 | ✅ 完成 |
 | M1 | 领域模型 + AtpProfile + `describe_schema` / `list_modules` | ✅ 完成 |
-| M2 | L0/L1/L2 纯规则链路 + `validate_case` + `lint_locator` | ⬜ 下一步 |
-| M3 | LLM 策略层 + L3 字段补全 | ⬜ |
+| M2 | L0/L1/L2/L4 纯规则链路 + `normalize_case` / `validate_case` / `lint_locator` | ✅ 完成 |
+| M3 | LLM 策略层 + L3 字段补全 | ⬜ 下一步 |
 | M4 | Provenance + 分级诊断 + LLM 故障降级 | ⬜ |
 | M5 | 六类测试（属性测试与策略对拍是重点） | ⬜ |
 | M6 | Dockerfile + k8s manifest + 2 副本验证 | ⬜ |
 | M7 | `GenericJUnitProfile`（可扩展性证明） | ⬜ |
 
-**上文描述的设计中，尚未落地的部分**：L0~L5 流水线、provenance 输出、
-LLM 策略层、属性测试。它们的设计已确定（见 `../02-HANDOFF-demo2-mcp.md`），
-但代码要到对应里程碑才存在 —— 本 README 不把计划写成既成事实。
+**上文描述的设计中，尚未落地的部分**：L3 模型补全与策略层、LLM 故障降级、
+属性测试、k8s 部署清单、`GenericJUnitProfile`。它们的设计已确定
+（见 `../02-HANDOFF-demo2-mcp.md`），但代码要到对应里程碑才存在 ——
+本 README 不把计划写成既成事实。
+
+当前 `atp_normalize_case` 是**纯规则版本**：输入完整时走完全程（这是终态，不是过渡），
+存在需要推断的字段时返回 `REJECTED` 并标注 `GAP_COMPLETION_UNAVAILABLE`，M3 会把这条路接上。
 
 ---
 
@@ -255,9 +259,46 @@ LLM 策略层、属性测试。它们的设计已确定（见 `../02-HANDOFF-dem
 
 | Tool | 调模型 | 幂等 | 说明 |
 |---|---|---|---|
+| `atp_normalize_case` | 尚未 | ✓ | **主入口**：任意形状 → 规范形态 + 诊断 + provenance + gaps |
+| `atp_validate_case` | ✗ | ✓ | 只校验不修改，供平台方入库前守门 |
+| `atp_lint_locator` | ✗ | ✓ | 单个定位器的规范检查，写案例时可随时调 |
 | `atp_describe_schema` | ✗ | ✓ | 目标 schema、枚举字典、**每个 action 的字段契约**、规范摘要 |
 | `atp_list_modules` | ✗ | ✓ | `module_id` 全集（外键取值范围） |
 | `atp_echo` | ✗ | ✓ | 连通性自检，返回处理该请求的实例标识 |
+
+### 实测：一次完整的规范化
+
+输入是一条**纯日文、字段名和动作名都不符合 schema** 的案例：
+
+```json
+{"テストケース":{"タイトル":"カートに商品を追加できる","モジュール":"CART",
+  "優先度":"P1","担当者":"yamada","手順":[
+    {"操作":"打开","入力値":"https://example.test/cart"},
+    {"操作":"クリック","xpath":"//*[@data-testid='add-to-cart']"},
+    {"操作":"断言文本","css":"[data-testid='cart-count']","期待値":"1"}]}}
+```
+
+输出（节选）：
+
+```
+status = ACCEPTED     model_calls = 0     zero_model_path = true
+
+case_code = ATP-CART-0000  module_id = M003  priority = P1
+  seq=1 OPEN_URL     wait=NONE       -      https://example.test/cart
+  seq=2 CLICK        wait=CLICKABLE  XPATH  //*[@data-testid='add-to-cart']
+  seq=3 ASSERT_TEXT  wait=VISIBLE    CSS    [data-testid='cart-count']
+
+provenance: title→INPUT   module_id→RULE   browser→DEFAULT
+            case_code→RULE(STD-007)   steps[1].wait_strategy→RULE(STD-005)
+requires_platform_assignment: ["case_code"]
+```
+
+外层信封被剥掉、三语字段名与动作名归一、`module_code` 查表换成 `module_id`、
+`wait_strategy` 按 action 强制填充、`locator_type` 由字段名判定、`seq` 重排 ——
+**整个过程 0 次模型调用**，毫秒级，结果完全可复现。
+
+在当前 15 条黄金用例中，**13 条无需任何模型参与**（数字由 `GoldenCasesTest` 实测打印，
+随用例集演进）。
 
 > **调用方应当先调 `atp_describe_schema`。** 它把 action 契约
 > （CLICK 必须带 locator、ASSERT_TEXT 必须带 expected……）直接给出来，
