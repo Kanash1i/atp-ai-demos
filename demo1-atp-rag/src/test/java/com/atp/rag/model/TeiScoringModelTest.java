@@ -1,16 +1,17 @@
 package com.atp.rag.model;
 
-import com.atp.rag.config.Env;
+import com.atp.rag.config.AtpProperties;
+import com.atp.rag.support.RequiresServices;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.data.segment.TextSegment;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
 
 import java.io.IOException;
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.Arrays;
 import java.util.List;
 
@@ -22,8 +23,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * rerank 适配器的测试。
  *
  * <p>纯逻辑部分（按 index 回填）不依赖服务，一定会跑；
- * 需要真实 TEI 的部分在服务不可用时{@link Assumptions 跳过}而不是失败 ——
- * 否则没连服务机的时候连 {@code mvn test} 都过不了。
+ * 需要真实 TEI 的部分放在 {@link WithRealService} 里，靠 {@link RequiresServices}
+ * 在服务不可用时跳过而不是失败 —— 否则没连服务机的时候连 {@code mvn test} 都过不了。
  */
 class TeiScoringModelTest {
 
@@ -73,13 +74,33 @@ class TeiScoringModelTest {
                 () -> TeiScoringModel.reorderByIndex(response, 2));
     }
 
-    // ── 需要真实 TEI ─────────────────────────────────────────
-
     @Test
-    @DisplayName("真实服务：相关文档排在中间时，分数仍落在它自己的位置上")
-    void realServiceKeepsScoreAlignedWithInput() {
-        assumeRerankAvailable();
+    @DisplayName("空输入短路，不打服务")
+    void emptyInputIsShortCircuited() {
+        // 召回为空是正常情况（比如 D 类应拒答的问题），不该炸。
+        // 这条不需要服务：正确实现会在发请求之前就返回
+        List<Double> scores = new TeiScoringModel("http://127.0.0.1:1/rerank", 32, 1)
+                .scoreAll(java.util.Collections.<TextSegment>emptyList(), "任意问题")
+                .content();
+        assertTrue(scores.isEmpty());
+    }
 
+    /** 需要真实 TEI 的部分。用注入的 bean，顺带验证 ModelConfig 装配正确。 */
+    @Nested
+    @SpringBootTest
+    @RequiresServices
+    class WithRealService {
+
+        @Autowired
+        private AtpProperties props;
+
+        private TeiScoringModel model() {
+            return new TeiScoringModel(props.getRerank());
+        }
+
+        @Test
+        @DisplayName("真实服务：相关文档排在中间时，分数仍落在它自己的位置上")
+        void realServiceKeepsScoreAlignedWithInput() {
         // 相关的那条刻意放在 index 1。
         // 如果回填逻辑写错，最高分会跑到 index 0 上 —— 这个测试就是为了抓那种错位
         List<TextSegment> segments = Arrays.asList(
@@ -87,7 +108,7 @@ class TeiScoringModelTest {
                 TextSegment.from("XPath 应优先使用 data-testid 等稳定属性，避免绝对路径"),
                 TextSegment.from("今天的天气非常好，适合出门散步"));
 
-        List<Double> scores = new TeiScoringModel()
+        List<Double> scores = model()
                 .scoreAll(segments, "如何编写稳定的 XPath 定位器").content();
 
         assertEquals(3, scores.size());
@@ -97,11 +118,9 @@ class TeiScoringModelTest {
                 "index 1 才是相关文档，分数应高于 index 2，实际 " + scores);
     }
 
-    @Test
-    @DisplayName("真实服务：超过 batch 上限时分批，且分数仍与输入对齐")
-    void oversizedInputIsBatchedAndStaysAligned() {
-        assumeRerankAvailable();
-
+        @Test
+        @DisplayName("真实服务：超过 batch 上限时分批，且分数仍与输入对齐")
+        void oversizedInputIsBatchedAndStaysAligned() {
         // TEI 默认 batch 上限 32。双 collection 各召回 20 条、去重后常常正好超过，
         // 所以这条路径在真实查询里是会走到的
         int size = 39;
@@ -113,7 +132,7 @@ class TeiScoringModelTest {
                     : "第 " + i + " 段与提问无关的填充文本，讲的是购物车结算流程"));
         }
 
-        List<Double> scores = new TeiScoringModel()
+        List<Double> scores = model()
                 .scoreAll(segments, "如何编写稳定的 XPath 定位器").content();
 
         assertEquals(size, scores.size(), "分批后总数应保持不变");
@@ -128,12 +147,10 @@ class TeiScoringModelTest {
                         + " 条 —— 说明跨批回填时下标错位了");
     }
 
-    @Test
-    @DisplayName("真实服务：区分度自检达到基线量级")
-    void selfCheckMeetsBaseline() {
-        assumeRerankAvailable();
-
-        double ratio = new TeiScoringModel().selfCheck();
+        @Test
+        @DisplayName("真实服务：区分度自检达到基线量级")
+        void selfCheckMeetsBaseline() {
+        double ratio = model().selfCheck();
         // 实测基线约 4 个数量级（0.735 vs 1.6e-5）。放宽到 100 倍是为了容忍模型小版本差异，
         // 但仍然能挡住「三个分数挤在一起」这种坏掉的情况
         assertTrue(ratio > 100,
@@ -142,37 +159,5 @@ class TeiScoringModelTest {
                         + "绝不能拿坏掉的 rerank 去跑评估");
     }
 
-    @Test
-    @DisplayName("空输入短路，不打服务")
-    void emptyInputIsShortCircuited() {
-        // 召回为空是正常情况（比如 D 类应拒答的问题），不该炸。
-        // 这条不需要服务：正确实现会在发请求之前就返回
-        List<Double> scores = new TeiScoringModel("http://127.0.0.1:1")
-                .scoreAll(java.util.Collections.<TextSegment>emptyList(), "任意问题")
-                .content();
-        assertTrue(scores.isEmpty());
-    }
-
-    private static void assumeRerankAvailable() {
-        Assumptions.assumeTrue(Env.getBoolean("RERANK_ENABLED", true),
-                "RERANK_ENABLED=false，跳过");
-        Assumptions.assumeTrue(healthy(Env.get("RERANK_BASE_URL", "") + "/health"),
-                "TEI rerank 服务不可用，跳过");
-    }
-
-    private static boolean healthy(String url) {
-        HttpURLConnection conn = null;
-        try {
-            conn = (HttpURLConnection) new URL(url).openConnection();
-            conn.setConnectTimeout(2000);
-            conn.setReadTimeout(2000);
-            return conn.getResponseCode() == 200;
-        } catch (Exception e) {
-            return false;
-        } finally {
-            if (conn != null) {
-                conn.disconnect();
-            }
-        }
     }
 }

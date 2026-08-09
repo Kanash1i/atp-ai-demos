@@ -4,16 +4,32 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
+  <!-- ⚠️ Spring Boot 2.7.18 是硬约束，不要升级。
+       2.7.x 是**最后一个支持 Java 8** 的 Spring Boot 系列（3.0 起要求 Java 17），
+       2.7.18 是 2.7 系列的最后一个版本。
+
+       这和 langchain4j 锁 0.35.0 是同一类约束：ATP 平台是 Java 8 + Spring 4 的
+       遗留系统，给它做的模块只能停在各个生态最后一个支持 Java 8 的版本上。
+       详见 DECISIONS.md D-014。 -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>2.7.18</version>
+    <relativePath/>
+  </parent>
+
   <groupId>com.atp</groupId>
   <artifactId>atp-rag</artifactId>
   <version>0.1.0-SNAPSHOT</version>
   <packaging>jar</packaging>
 
   <name>ATP 知识助手 (demo1)</name>
-  <description>Java 8 + langchain4j 的 RAG demo，核心交付物是检索优化的消融实验表</description>
+  <description>Spring Boot 2.7 + Java 8 + langchain4j 的 RAG demo，核心交付物是检索优化的消融实验表</description>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <!-- java.version 是 spring-boot-starter-parent 认的属性，它会据此设置编译器 -->
+    <java.version>1.8</java.version>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
 
@@ -22,18 +38,23 @@
          0.36.0 起为 major=61 (Java 17)，升了就编译不过。
          验证方式见 DECISIONS.md D-001。 -->
     <langchain4j.version>0.35.0</langchain4j.version>
-
-    <jackson.version>2.17.2</jackson.version>
-
-    <!-- ⚠️ 必须是 2.x。langchain4j 0.35.0 依赖 slf4j-api 2.0.7，
-         而 slf4j 1.7 的 provider 走 StaticLoggerBinder、2.x 走 ServiceLoader ——
-         版本混用不会报错，只会静默降级成 NOP logger（日志全部消失）。
-         slf4j 2.0.x 的 baseline 仍是 Java 8。 -->
-    <slf4j.version>2.0.13</slf4j.version>
-    <junit.version>5.10.2</junit.version>
   </properties>
 
   <dependencies>
+    <!-- 不用 web starter：这是个 CLI / 批处理应用，不对外提供 HTTP 端点。
+         需要的只是 IoC 容器、配置绑定和日志 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+
+    <!-- @ConfigurationProperties 的 IDE 提示与元数据 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-configuration-processor</artifactId>
+      <optional>true</optional>
+    </dependency>
+
     <dependency>
       <groupId>dev.langchain4j</groupId>
       <artifactId>langchain4j</artifactId>
@@ -41,44 +62,31 @@
     </dependency>
 
     <!-- OpenAI 兼容客户端。一份依赖两处用：
-         DeepSeek 的生成，和 TEI 的 /v1/embeddings。 -->
+         DeepSeek 的生成，和 TEI 的 /v1/embeddings -->
     <dependency>
       <groupId>dev.langchain4j</groupId>
       <artifactId>langchain4j-open-ai</artifactId>
       <version>${langchain4j.version}</version>
     </dependency>
 
-    <!-- 走 gRPC (6334)，Java 8 兼容性是 M0 spike 的主要验证目标 -->
+    <!-- 走 gRPC (6334)。⚠️ Qdrant server 必须是 1.11.x，见 DECISIONS.md D-002 -->
     <dependency>
       <groupId>dev.langchain4j</groupId>
       <artifactId>langchain4j-qdrant</artifactId>
       <version>${langchain4j.version}</version>
     </dependency>
 
-    <!-- 解析案例 JSON、TEI /rerank 的响应 -->
+    <!-- jackson 与 slf4j 的版本交给 spring-boot-starter-parent 统一管理。
+         M0 那次 slf4j-api 2.x 配 slf4j-simple 1.7 的静默 NOP 问题（D-003），
+         换成 starter 之后不复存在 —— 版本一致性由 BOM 保证，不再靠手工 pin -->
     <dependency>
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
-      <version>${jackson.version}</version>
-    </dependency>
-
-    <!-- api 与 provider 显式对齐版本，避免 langchain4j 的传递依赖把 api 拖回 2.0.7 -->
-    <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-api</artifactId>
-      <version>${slf4j.version}</version>
     </dependency>
 
     <dependency>
-      <groupId>org.slf4j</groupId>
-      <artifactId>slf4j-simple</artifactId>
-      <version>${slf4j.version}</version>
-    </dependency>
-
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <version>${junit.version}</version>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -86,22 +94,8 @@
   <build>
     <plugins>
       <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.13.0</version>
-      </plugin>
-
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <version>3.2.5</version>
-      </plugin>
-
-      <!-- mvn exec:java -Dexec.mainClass=... -->
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>exec-maven-plugin</artifactId>
-        <version>3.2.0</version>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
       </plugin>
     </plugins>
   </build>

@@ -1,19 +1,17 @@
-package com.atp.rag.cli;
+package com.atp.rag.task;
 
 import com.atp.rag.assistant.AtpAssistant;
-import com.atp.rag.config.Env;
 import com.atp.rag.config.RagConfig;
-import com.atp.rag.model.ModelFactory;
 import com.atp.rag.model.TeiScoringModel;
-import com.atp.rag.retrieve.AtpQueryRouter;
-import com.atp.rag.retrieve.AtpRetriever;
 import com.atp.rag.retrieve.RetrievalResult;
 import com.atp.rag.retrieve.RetrievedItem;
+import com.atp.rag.retrieve.RetrieverFactory;
 import com.atp.rag.retrieve.XPathLintChannel;
-import dev.langchain4j.model.chat.ChatLanguageModel;
-import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.scoring.ScoringModel;
-import io.qdrant.client.QdrantClient;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -21,46 +19,52 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 
 /**
- * 交互式 CLI —— 面试演示用。
+ * 交互式问答 —— 面试演示用。
  *
  * <p>刻意把<b>召回详情默认展示出来</b>：一个只输出答案的 demo 无法说明检索做对了什么，
- * 而这个项目的全部重点恰恰在检索。演示时先让面试官看到召回了哪几条、
+ * 而这个项目的重点恰恰全在检索。演示时先让面试官看到召回了哪几条、
  * rerank 把哪条从第几名提到了第几名，再看最终回答，叙事才立得住。
  *
- * <pre>mvn -q compile exec:java -Dexec.mainClass=com.atp.rag.cli.Main</pre>
+ * <pre>mvn spring-boot:run -Dspring-boot.run.arguments=--atp.task=cli</pre>
  */
-public final class Main {
+@Component
+@ConditionalOnProperty(name = "atp.task", havingValue = "cli")
+public class CliTask implements ApplicationRunner {
 
     private static final String PROMPT = "\n[36m你问>[0m ";
 
-    private Main() {
+    private final RetrieverFactory retrieverFactory;
+
+    public CliTask(RetrieverFactory retrieverFactory) {
+        this.retrieverFactory = retrieverFactory;
     }
 
-    public static void main(String[] args) throws IOException {
-        RagConfig config = RagConfig.full();
+    @Override
+    public void run(ApplicationArguments args) throws IOException {
+        RagConfig config = RagConfig.from(retrieverFactory.properties());
 
         System.out.println("ATP 知识助手  ——  " + config.describe());
-        System.out.println("collection：" + config.docsCollection() + " / " + config.casesCollection());
+        System.out.println("collection：" + config.docsCollection()
+                + " / " + config.casesCollection());
 
-        EmbeddingModel embeddingModel = ModelFactory.embeddingModel();
-        ChatLanguageModel chatModel = ModelFactory.chatModel();
-        QdrantClient client = ModelFactory.qdrantClient();
-
-        ScoringModel scoringModel = null;
-        if (config.rerankEnabled()) {
-            TeiScoringModel tei = new TeiScoringModel();
-            // rerank 坏了不会报错，只会让检索悄悄变差。启动时先验一次，
-            // 别等演示到一半才发现精排是乱的
-            double ratio = tei.selfCheck();
-            System.out.println("rerank 自检：区分度 " + String.format("%.0f", ratio) + " 倍 ✓");
-            scoringModel = tei;
-        } else {
-            System.out.println("⚠️ rerank 已关闭（RERANK_ENABLED=false）");
+        if (!retrieverFactory.isGenerationAvailable()) {
+            System.out.println("⚠️ 未配置 atp.llm.api-key，无法生成回答。"
+                    + "请在仓库根目录的 .env 里填 LLM_API_KEY。");
+            return;
         }
 
-        AtpRetriever retriever = new AtpRetriever(config, embeddingModel, scoringModel,
-                client, new AtpQueryRouter(chatModel));
-        AtpAssistant assistant = new AtpAssistant(config, retriever, chatModel);
+        ScoringModel scoringModel = retrieverFactory.scoringModelOrNull();
+        if (scoringModel instanceof TeiScoringModel) {
+            // rerank 坏了不会报错，只会让检索悄悄变差。启动时先验一次，
+            // 别等演示到一半才发现精排是乱的
+            double ratio = ((TeiScoringModel) scoringModel).selfCheck();
+            System.out.println("rerank 自检：区分度 " + String.format("%.0f", ratio) + " 倍 ✓");
+        } else {
+            System.out.println("⚠️ rerank 已关闭");
+        }
+
+        AtpAssistant assistant = new AtpAssistant(config,
+                retrieverFactory.create(config), retrieverFactory.chatModelOrNull());
 
         System.out.println("\n输入问题开始提问。命令：:detail 切换召回详情，:quit 退出");
         printExamples();
@@ -68,32 +72,28 @@ public final class Main {
         boolean showDetail = true;
         BufferedReader reader = new BufferedReader(
                 new InputStreamReader(System.in, StandardCharsets.UTF_8));
-        try {
-            while (true) {
-                System.out.print(PROMPT);
-                System.out.flush();
-                String line = reader.readLine();
-                if (line == null || ":quit".equals(line.trim()) || ":q".equals(line.trim())) {
-                    break;
-                }
-                String query = line.trim();
-                if (query.isEmpty()) {
-                    continue;
-                }
-                if (":detail".equals(query)) {
-                    showDetail = !showDetail;
-                    System.out.println("召回详情：" + (showDetail ? "开" : "关"));
-                    continue;
-                }
-                handle(assistant, query, showDetail);
+        while (true) {
+            System.out.print(PROMPT);
+            System.out.flush();
+            String line = reader.readLine();
+            if (line == null || ":quit".equals(line.trim()) || ":q".equals(line.trim())) {
+                break;
             }
-        } finally {
-            client.close();
+            String query = line.trim();
+            if (query.isEmpty()) {
+                continue;
+            }
+            if (":detail".equals(query)) {
+                showDetail = !showDetail;
+                System.out.println("召回详情：" + (showDetail ? "开" : "关"));
+                continue;
+            }
+            handle(assistant, query, showDetail);
         }
         System.out.println("再见。");
     }
 
-    private static void handle(AtpAssistant assistant, String query, boolean showDetail) {
+    private void handle(AtpAssistant assistant, String query, boolean showDetail) {
         long startedAt = System.currentTimeMillis();
         AtpAssistant.Answer answer;
         try {
@@ -107,31 +107,28 @@ public final class Main {
         if (showDetail) {
             printRetrievalDetail(answer.retrieval());
         }
-
         System.out.println("\n[32m助手>[0m " + answer.text());
-
         printCitations(answer);
         System.out.println("\n[90m耗时 " + elapsed + "ms"
-                + (answer.refused() ? "　· 已拒答" : "")
-                + "[0m");
+                + (answer.refused() ? "　· 已拒答" : "") + "[0m");
     }
 
-    private static void printRetrievalDetail(RetrievalResult retrieval) {
+    private void printRetrievalDetail(RetrievalResult retrieval) {
         System.out.println("\n[90m── 召回详情 ──[0m");
         System.out.println("[90m路由：" + retrieval.intent()
+                + (retrieval.routedByRule() ? "（规则）" : "（LLM）")
                 + "　候选 " + retrieval.candidates().size()
                 + " 条 → 采用 " + retrieval.topItems().size() + " 条"
                 + (retrieval.rerankApplied() ? "（已精排）" : "（未精排）") + "[0m");
 
         if (!retrieval.lintFindings().isEmpty()) {
-            System.out.println("[33m" + XPathLintChannel.summarize(retrieval.lintFindings())
-                    + "[0m");
+            System.out.println("[33m"
+                    + XPathLintChannel.summarize(retrieval.lintFindings()) + "[0m");
         }
 
         int index = 1;
         for (RetrievedItem item : retrieval.topItems()) {
-            StringBuilder line = new StringBuilder("[90m  [")
-                    .append(index++).append("] ");
+            StringBuilder line = new StringBuilder("[90m  [").append(index++).append("] ");
             if (item.reranked()) {
                 line.append(String.format("%.4f", item.rerankScore()))
                         // 向量检索里排第几 —— 这一列是 rerank 价值的直接体现
@@ -148,7 +145,7 @@ public final class Main {
         }
     }
 
-    private static void printCitations(AtpAssistant.Answer answer) {
+    private void printCitations(AtpAssistant.Answer answer) {
         if (answer.citedIndices().isEmpty()) {
             return;
         }
@@ -163,7 +160,7 @@ public final class Main {
         }
     }
 
-    private static void printExamples() {
+    private void printExamples() {
         System.out.println("\n[90m可以试试：");
         System.out.println("  点击按钮之前应该用哪种等待策略");
         System.out.println("  //div[3]/span[@id=\"ext-gen1234\"] 这样写有问题吗");
