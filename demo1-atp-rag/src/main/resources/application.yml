@@ -81,3 +81,6 @@ atp:
     refusal-prompt-enabled: true
     candidate-top-k: ${RETRIEVE_CANDIDATE_TOP_K:20}
     final-top-k: ${RETRIEVE_FINAL_TOP_K:5}
+    # 路由判为「不相关」的那一侧仍然召回这么多条作保底。
+    # 路由决定配额不决定开关 —— 判错了只是配额不理想，不会彻底召回不到。见 D-016
+    fallback-top-k: ${RETRIEVE_FALLBACK_TOP_K:5}

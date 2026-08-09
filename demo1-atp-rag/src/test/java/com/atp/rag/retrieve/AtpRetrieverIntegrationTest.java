@@ -68,17 +68,48 @@ class AtpRetrieverIntegrationTest {
     }
 
     @Test
-    @DisplayName("案例检索走 CASES，召回的全是案例")
-    void caseQueryRoutesToCaseCollection() {
+    @DisplayName("案例检索路由到 CASES，案例占据 top 的多数")
+    void caseQueryFavoursCaseCollection() {
         RetrievalResult result = retriever(true).retrieve("帮我找几个购物车相关的案例参考");
 
         assertEquals(QueryIntent.CASES, result.intent());
         assertFalse(result.isEmpty());
+
+        // 不再断言「全是案例」—— 路由现在决定配额而不是开关，文档侧仍会保底召回几条（D-016）。
+        // 该断言的是配额倾斜确实起了作用：案例占多数
+        int cases = 0;
         for (RetrievedItem item : result.topItems()) {
-            assertTrue(item.isCase(), "路由到 CASES 却召回了非案例：" + item.identity());
-            assertTrue(item.identity().startsWith("ATP-"),
-                    "案例的 identity 应是 case_code，实际 " + item.identity());
+            if (item.isCase()) {
+                cases++;
+                assertTrue(item.identity().startsWith("ATP-"),
+                        "案例的 identity 应是 case_code，实际 " + item.identity());
+            }
         }
+        assertTrue(cases * 2 > result.topItems().size(),
+                "案例应占 top 的多数，实际 " + cases + "/" + result.topItems().size()
+                        + "：" + result.topIdentities());
+    }
+
+    @Test
+    @DisplayName("路由判错也不会让某一类彻底召回不到（配额制而非开关）")
+    void routingMistakeNeverWipesOutACollection() {
+        // 这是 M3 那个 flaky 测试的根因所在：LLM 路由偶尔把知识问答判成 CASES，
+        // 开关式实现下文档库就完全不查了，top5 全是案例。
+        // 配额制之后，被判为「不相关」的那一侧仍有保底召回。
+        // 这里直接构造最坏情况：强行按 CASES 走一个纯知识问答
+        AtpRetriever r = retrieverFactory.create(
+                RagConfig.from(props).toBuilder().rerankEnabled(true).build());
+
+        RetrievalResult result = r.retrieve("点击按钮之前应该用哪种等待策略");
+        boolean hasDoc = false;
+        for (RetrievedItem item : result.candidates()) {
+            if (!item.isCase()) {
+                hasDoc = true;
+                break;
+            }
+        }
+        assertTrue(hasDoc, "候选里必须有文档，不管路由判成什么。实际路由 "
+                + result.intent() + "，候选 " + result.candidateIdentities());
     }
 
     @Test

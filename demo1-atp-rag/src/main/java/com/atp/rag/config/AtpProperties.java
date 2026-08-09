@@ -300,10 +300,12 @@ public class AtpProperties {
         private final boolean refusalPromptEnabled;
         private final int candidateTopK;
         private final int finalTopK;
+        private final int fallbackTopK;
 
         public Rag(RagConfig.ChunkStrategy chunkStrategy, RagConfig.CollectionMode collectionMode,
                    int chunkSizeChars, int chunkOverlapChars, boolean queryRewriteEnabled,
-                   boolean refusalPromptEnabled, int candidateTopK, int finalTopK) {
+                   boolean refusalPromptEnabled, int candidateTopK, int finalTopK,
+                   int fallbackTopK) {
             this.chunkStrategy = chunkStrategy;
             this.collectionMode = collectionMode;
             this.chunkSizeChars = chunkSizeChars;
@@ -312,6 +314,7 @@ public class AtpProperties {
             this.refusalPromptEnabled = refusalPromptEnabled;
             this.candidateTopK = candidateTopK;
             this.finalTopK = finalTopK;
+            this.fallbackTopK = fallbackTopK;
         }
 
         public RagConfig.ChunkStrategy getChunkStrategy() {
@@ -344,6 +347,16 @@ public class AtpProperties {
 
         public int getFinalTopK() {
             return finalTopK;
+        }
+
+        /**
+         * 路由判为「不相关」的那一侧的保底召回条数。
+         *
+         * <p>路由决定配额而不是开关 —— 判错了只是配额不理想，不会彻底召回不到。
+         * 见 DECISIONS.md D-016。
+         */
+        public int getFallbackTopK() {
+            return fallbackTopK;
         }
     }
 }

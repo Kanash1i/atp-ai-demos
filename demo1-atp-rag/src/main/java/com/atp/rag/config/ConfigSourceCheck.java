@@ -39,20 +39,34 @@ import java.util.List;
  */
 public class ConfigSourceCheck implements EnvironmentPostProcessor, Ordered {
 
-    /**
-     * 缺了就一定跑不起来的键。
-     *
-     * <p>只列<b>没有默认值</b>的那几个 —— 有默认值的项缺失是可接受的，
-     * 而这几个缺失就意味着连不上任何服务。
-     */
-    private static final List<String> REQUIRED = Arrays.asList(
-            "EMBEDDING_BASE_URL", "RERANK_BASE_URL", "QDRANT_HOST");
+    /** 任何任务都要用到的，缺了必定跑不起来。 */
+    private static final List<String> ALWAYS_REQUIRED = Arrays.asList(
+            "EMBEDDING_BASE_URL", "QDRANT_HOST");
 
+    /**
+     * 判据是<b>「值最终拿不到，<i>并且</i>这个值是必需的」</b>。
+     *
+     * <p>后半句不能省。只判「值拿不到」会把<b>本来就可选</b>的配置项也报成错 ——
+     * {@code RERANK_BASE_URL} 就是例子：{@code atp.rerank.enabled=false} 时根本不需要它，
+     * 而<b>消融表第 1~3 行全是 rerank 关闭的</b>。无条件要求它，
+     * 等于让 baseline 配置在没有该变量的环境里跑不起来。
+     *
+     * <p>这个精确化来自 demo2 的提醒 —— 它那边有一批带合理默认值的配置项
+     * （端口、protocol），缺失时静默回落是<b>特性</b>而不是 bug。
+     * 判据要能区分「静默回落」和「静默失败」。
+     */
     @Override
     public void postProcessEnvironment(ConfigurableEnvironment environment,
                                        SpringApplication application) {
+        List<String> required = new ArrayList<String>(ALWAYS_REQUIRED);
+        // rerank 开着才需要它的地址。这里读的是 Spring 的属性（命令行 / yml / 环境变量都算），
+        // 所以 --atp.rerank.enabled=false 能正确地把这一项排除掉
+        if (!"false".equalsIgnoreCase(environment.getProperty("atp.rerank.enabled", "true"))) {
+            required.add("RERANK_BASE_URL");
+        }
+
         List<String> missing = new ArrayList<String>();
-        for (String key : REQUIRED) {
+        for (String key : required) {
             String value = environment.getProperty(key);
             // 未解析的占位符会以字面形式留下来（"${SERVICE_HOST}"），那和缺失是一样的后果
             if (value == null || value.trim().isEmpty() || value.contains("${")) {

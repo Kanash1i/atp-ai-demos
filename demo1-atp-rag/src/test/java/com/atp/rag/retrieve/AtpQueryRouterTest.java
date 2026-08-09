@@ -33,6 +33,17 @@ class AtpQueryRouterTest {
     }
 
     @Test
+    @DisplayName("「选哪一个」类问法也走 DOCS，不落到 LLM")
+    void choiceStyleQuestionsRouteToDocs() {
+        // 实测漏了这类词的后果：这句话落到 LLM 路由后被稳定判成 CASES，
+        // 一个典型知识问答被送去查案例库
+        assertEquals(QueryIntent.DOCS, router.route("点击按钮之前应该用哪种等待策略"));
+        assertEquals(QueryIntent.DOCS, router.route("wait_strategy 有几种"));
+        assertEquals(QueryIntent.DOCS, router.route("定位器有哪些类型"));
+        assertEquals(QueryIntent.DOCS, router.route("什么时候该用 PRESENCE"));
+    }
+
+    @Test
     @DisplayName("两类信号都有时走 BOTH")
     void mixedSignalsRouteToBoth() {
         // 「购物车的案例怎么写」既要看已有案例，也要看规范
