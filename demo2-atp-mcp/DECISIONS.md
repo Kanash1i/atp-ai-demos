@@ -441,9 +441,52 @@ agent 拿到"某处缺了必填字段"根本没法定位。现在两者拼接，
   - `atp_normalize_case` 的 `openWorldHint` 需从 `false` 改为 `true` —— 届时会真的出网
   - `model_calls` 要真实计数（目前恒为 0），Mock LLM 需支持计数以验证零模型路径
   - L4 判断错误源自"模型填的字段"才回 L3 重试一次；源自输入本身直接 REJECTED，不白烧钱
-  - `LLM_API_KEY` 读不到时必须 fail-fast 并打印诊断，
-  **不能拿空 key 去调 API** —— 否则报 401，错误指向「key 无效」而非「配置没读到」。
-  同时把 `spring.config.import` 改成多候选路径（`./.env` 与 `../.env`），
-  因为相对路径锚定进程 cwd，换个目录启动就会静默跳过。
+  - ⭐ **配置缺失必须 fail-fast，且判据是「这个值缺了还能不能工作」，不是「文件在不在」**（见下）
+  - 把 `spring.config.import` 改成多候选路径（`./.env` 与 `../.env`），
+    因为相对路径锚定进程 cwd，换个目录启动就会静默跳过
+
+### M3 的配置加固：一个现在还不是问题、到 M3 就会变成问题的东西
+
+`spring.config.import` 用了 `optional:` 前缀，所以 `.env` 缺席时服务照常启动。
+**实测确认**（从一个 `../.env` 不存在的目录启动 jar）：
+
+```
+Registered tools: 6
+Started McpServerApplication in 3.5 seconds
+走的是 McpServerStatelessAutoConfiguration   ← protocol 默认值正确生效
+```
+
+这个"安静"目前是**正确行为**，因为 M2 依赖 `.env` 的只有两项，且都有合理默认值：
+
+```yaml
+server.port:                    ${MCP_SERVER_PORT:8090}
+spring.ai.mcp.server.protocol:  ${MCP_PROTOCOL:STATELESS}
+```
+
+CI 与容器里本来就没有 `.env`，靠环境变量注入，不该因此启动失败。
+
+**但 M3 会引入 `LLM_API_KEY` / `LLM_BASE_URL` —— 那是"缺了就没法工作"的配置项。**
+同样的安静到那时就变成 bug：拿空 key 去打 API 会返回 401，
+错误指向「key 无效」而非「配置根本没读到」，排查方向从一开始就是错的。
+
+所以判据要写清楚：
+
+| 配置项类型 | 缺失时 |
+|---|---|
+| 有合理默认值（端口、protocol） | 静默回落 —— 这是特性 |
+| 缺了就无法工作（API key、base url） | **启动期 fail-fast**，并打印「找过哪些路径、环境变量在不在」 |
+
+判据是**「值最终拿不到，且这个值是必需的」**，而不是「`.env` 文件不存在」——
+后者会在 CI 和容器里误报。
+
+> 这条来自 demo1 的实战教训：它把手写的 `Env` 换成框架原生能力时，
+> **只对齐了功能，没对齐加固**。结果 `.env` 路径配错时，未解析的占位符被当字面值
+> 一路传下去，最后在 okhttp 构造客户端时炸成
+> `Expected URL scheme 'http' or 'https'` —— 人会去查 URL 拼接、查服务、查 okhttp 版本，
+> 唯独想不到是 `.env` 没找到。
+>
+> 它总结的教训值得照抄：**替换实现时，除了对齐功能，要专门过一遍
+> 「上一版为了防什么而写的代码」——那部分往往没有测试覆盖，
+> 因为它防的是环境问题而不是逻辑问题。**
 - **M6**：起 2 副本验证 STATELESS —— `atp_echo` 已返回 `servedBy`（读 `HOSTNAME`，
   k8s 注入 pod 名），届时连续调用应能看到不同 pod 名，作为 STATELESS 生效的可视证据。
