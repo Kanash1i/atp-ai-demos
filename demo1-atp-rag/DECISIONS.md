@@ -809,7 +809,148 @@ D-017 量出来的数字：**小节中位数只有 174 字符**。
 
 ---
 
+## D-020 — 框架能力调研：langchain4j 1.18.1 的切分能力与 0.35 完全一样
+
+**日期**：2026-08-12
+
+**背景**：被问「这两个切分策略是框架自带的还是手搓的」。答案是手搓，
+顺手查了最新版有没有补上。
+
+### 版本事实
+
+`maven-metadata.xml` 的 `<latest>` = **1.18.1**（2026-08-11 更新）。
+
+> ⚠️ 查版本要看 `maven-metadata.xml`，**不要用 search.maven.org 的 solrsearch 接口**
+> —— 它的返回顺序不保证按版本排，我因此误报过「最新是 1.0.0」。
+
+### 切分能力：从 0.35 到 1.18.1，零变化
+
+两个版本的 splitter 完全相同，就六个：
+
+```
+DocumentByCharacter / ByLine / ByParagraph / ByRegex / BySentence / ByWord
++ HierarchicalDocumentSplitter（抽象基类）
+```
+
+搜 `markdown` / `heading` / `parent` 只匹配到那个抽象基类。
+**跨越一年多的迭代，按标题切和父子切块依然没有。**
+
+所以 `HeadingPathSplitter` 手搓是必要的，不是没找现成的。
+根本原因是 `DocumentSplitter` 接口一进一出（`List<TextSegment> split(Document)`），
+而这两个策略都要求**一块携带两份文本**（算向量的 vs 交给模型的），接口表达不了。
+
+### 生态对比（回答「Python 那边多什么」）
+
+| | Python LangChain | langchain4j 1.18.1 | Spring AI 1.1 |
+|---|---|---|---|
+| 按 Markdown 标题切 | ✅ | ❌ | ❌ |
+| 语义切分 | ✅ | ❌ | ❌ |
+| 父子 / small-to-big | ✅ | ❌ | ❌ |
+| 多路融合 + **RRF** | ✅ `EnsembleRetriever` | ❌ | ❌ |
+| 自查询（NL→filter） | ✅ | ❌ | ❌ |
+| 有状态图编排 | ✅ LangGraph | 社区移植 LangGraph4j | 不成熟 |
+| 评估平台 | ✅ LangSmith | ❌ | ❌ |
+
+**Java 生态在检索组件上整体落后。** 但这不全是劣势：langchain4j 的 provider /
+vectorstore 覆盖更广（20+ / 30+），Spring AI 的 Micrometer 可观测性更深。
+
+面试讲法：不是「Java 不行」，而是「我知道这些组件在 Python 生态叫什么、
+解决什么问题，并在没有现成实现的情况下自己落地了」。
+
+### 0.35 的工具调用是完整的
+
+顺带查证：**0.35 完整支持 tool calling**，不缺。
+`@Tool` / `@P` / `ToolSpecification` / `DefaultToolExecutor` / `ToolProvider` 都有，
+`AiServices.tools(...)` 跑完整的「调模型 → 执行工具 → 结果喂回 → 再调」循环，
+`ChatLanguageModel.generate(messages, toolSpecifications)` 也支持。
+
+1.18.1 新增的是**规模化之后的工程问题**，不是基础能力：
+
+| 新增 | 解决什么 |
+|---|---|
+| `VectorToolSearchStrategy` | 工具几十上百个时，先用向量检索挑候选再给模型 |
+| `ToolAwareRepromptExecutor` | 模型填错参数时的重试 |
+| `guardrail.*` | 输入输出护栏 |
+
+**这些对本项目都不构成损失** —— demo1 是纯 RAG 不调工具，demo2 用 Spring AI 2.0 不受 0.35 约束。
+被问「锁 0.35 的代价」时要说清这一点，别笼统地说「拿不到新特性」。
+
+---
+
+## D-021 — overlap 的机制，以及我一度理解错的地方
+
+**日期**：2026-08-12
+
+**背景**：给切分细节文档举例时，我画了一张「第 1 块结尾的 XPath 被切坏」的图。
+**那张图是编的**，被指出后回到原文验证。
+
+### 实测：overlap 不改变切点
+
+同一篇文档，只改 overlap：
+
+```
+overlap=80  第1块 677 字符，结尾 …- 按位置取第 n 个兄弟节点
+overlap=0   第1块 677 字符，结尾 …- 按位置取第 n 个兄弟节点   ← 完全相同
+```
+
+**切点由 `preferBoundary()` 找的换行边界决定，与 overlap 无关。**
+overlap 只决定「下一块从哪开始读」= `end1 - overlap`，而这个位置是**纯算术回退**，
+不过 `preferBoundary`。
+
+原文标注（`raw[560:760]`）：
+
+```
+- 按文本内容查找元素（`//button[te
+⟪第2块从这里开始⟫   ← 597 = 677-80，落在 text() 中间
+xt()="提交"]`）
+- 从子元素向上找父元素（…）
+- 按位置取第 n 个兄弟节点
+⟪第1块到这里结束⟫   ← 677，落在换行处
+```
+
+### 所以 overlap 的真实代价
+
+1. **冗余** —— 实测相邻块重叠正好 80 字符，同一段存两份（Chroma 扣 IoU 的原因）
+2. **块首碎片** —— `xt()="提交"]` 这 11 个字符进 embedding，不是有效 XPath 也不是完整句子
+
+### 一个更关键的发现：preferBoundary 和 overlap 功能重叠
+
+在这个切点上，overlap 拉回来的 80 字符**恰好是第 1 块已经完整包含的三行列表** ——
+零收益，纯冗余。
+
+因为 `preferBoundary` 已经让切点落在自然边界、语义已经完整，
+而 overlap 是为「切点可能落在句中」准备的保险。**有了前者，后者的收益被大幅削弱。**
+
+这解释了为什么 Chroma 实测 overlap=0 更好，也说明**这个取舍取决于有没有边界感知的切分**：
+纯字符硬切（无 preferBoundary）时 overlap 有价值，有边界感知时基本是纯成本。
+
+---
+
 ## 待决 / 下一步
+
+> 最后更新 2026-08-12。M0~M3 已合入 main，PR #14（父子切块 + 图片）待 review。
+
+**主线（核心交付物，尚未开始）**
+
+- **M4 评估框架** —— `eval/questions.jsonl` 40 条评估集 + Recall@5 / MRR@10 / nDCG@10。
+  这是交接文档 §5 说的核心交付物，目前 `eval/` 是空目录，README 的消融表 7 行全是空
+- **M5 消融表** —— 跑满 6~7 行真实数字
+
+**已知待修（按优先级）**
+
+1. **overlap 让 baseline 不公平** —— overlap 在 HEADING_PATH 下不触发、在 FIXED 下生效，
+   导致消融表第 1 行背着一个 Chroma 实测会掉 1.4pt recall 的负担，
+   「标题路径前缀」的提升会被高估。建议两边都设 0（见 D-017 / D-021）
+2. **手册与规范不区别处理** —— `doc_group` 字段已存但检索时没用。零成本可改
+3. **payload 存两份正文** —— `embed_text` 与 `text_segment` 内容重复
+4. **两条链路未实现** —— 链路 A（多格式文本：PDF/docx/md）与链路 B（图表：VLM + 表格模型）
+   的设计见切分文档，代码只做了图片描述的抽象
+
+**留给 M5 的**
+
+- hybrid 检索 + RRF —— langchain4j 不支持 sparse vector，需自实现 EmbeddingStore（D-002 方案 B）。
+  注意 RRF 正好能优雅解决 D-013/D-016 那个「分数尺度不可比」的问题
+- Qwen3-Embedding 对比（消融表第 7 行）—— 非对称模型，需处理 instruction prefix
 
 - **hybrid search（sparse + dense）** — langchain4j 0.35 不支持，必须自己实现。
   计划在 M5 连同 D-002 的方案 B 一起做，作为消融表的一行。
