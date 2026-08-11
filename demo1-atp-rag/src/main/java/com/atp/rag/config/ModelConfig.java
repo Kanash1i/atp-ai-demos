@@ -1,5 +1,8 @@
 package com.atp.rag.config;
 
+import com.atp.rag.ingest.image.AltTextImageDescriber;
+import com.atp.rag.ingest.image.ImageDescriber;
+import com.atp.rag.ingest.image.VlmImageDescriber;
 import com.atp.rag.model.TeiScoringModel;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.model.chat.ChatLanguageModel;
@@ -78,6 +81,27 @@ public class ModelConfig {
         AtpProperties.Rerank cfg = props.getRerank();
         log.info("rerank: {} @ {}", cfg.getModel(), cfg.getBaseUrl());
         return new TeiScoringModel(cfg);
+    }
+
+    /**
+     * 图片转文字描述的实现。
+     *
+     * <p><b>配了 VLM 就用 VLM，没配就降级成 alt 文本</b> —— 后者永远可用。
+     * 这个选择在启动时做一次并打进日志，避免入库到一半才发现用的是哪种。
+     *
+     * <p>为什么降级而不是报错：没有 VLM 时图片信息弱一些，但入库该继续。
+     * 让一个可选增强项阻塞整条主流程是不合理的。
+     */
+    @Bean
+    public ImageDescriber imageDescriber(AtpProperties props) {
+        AtpProperties.Vlm cfg = props.getVlm();
+        if (!cfg.isEnabled()) {
+            log.info("图片描述：alt-text 降级模式（未配置 atp.vlm.base-url）");
+            return new AltTextImageDescriber();
+        }
+        log.info("图片描述：VLM {} @ {}", cfg.getModel(), cfg.getBaseUrl());
+        return new VlmImageDescriber(cfg.getBaseUrl(), cfg.getApiKey(), cfg.getModel(),
+                props.getCorpus().getDir(), cfg.getTimeoutSeconds());
     }
 
     /**

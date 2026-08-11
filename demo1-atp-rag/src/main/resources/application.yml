@@ -68,6 +68,21 @@ atp:
   corpus:
     dir: ${CORPUS_DIR:corpus}
 
+  # 视觉模型 —— 把文档里的截图转成文字描述，好让图里的信息也能被检索到。
+  # base-url 留空则整个功能降级成「只用 alt 文本 + 文件名关键词」，不影响入库。
+  #
+  # ⚠️ 合规提醒：图片以 base64 进请求体。用云端 VLM 等于内部文档截图出网，
+  #    和本项目「只有生成走 API」的前提冲突（截图里可能有账号、内网地址）。
+  #    真要上应优先本地部署，例如服务机上起 Qwen2.5-VL：
+  #      docker run -d --gpus all -p 8083:8000 vllm/vllm-openai \
+  #        --model Qwen/Qwen2.5-VL-3B-Instruct
+  #    然后设 ATP_VLM_BASE_URL=http://${SERVICE_HOST}:8083
+  vlm:
+    base-url: ${ATP_VLM_BASE_URL:}
+    api-key: ${ATP_VLM_API_KEY:}
+    model: ${ATP_VLM_MODEL:Qwen/Qwen2.5-VL-3B-Instruct}
+    timeout-seconds: ${ATP_VLM_TIMEOUT_SEC:120}
+
   # 消融实验的开关。命令行可覆盖任意一项，例如
   #   --atp.rag.chunk-strategy=FIXED --atp.rag.collection-mode=SINGLE
   rag:

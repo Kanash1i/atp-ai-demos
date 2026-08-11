@@ -129,6 +129,59 @@ class SplitterTest {
     }
 
     @Test
+    @DisplayName("PARENT_CHILD：索引用子块，交出的是父块")
+    void parentChildIndexesSmallServesBig(@TempDir Path dir) throws IOException {
+        MarkdownDocument doc = parse(dir, SAMPLE);
+        List<Chunk> chunks = new HeadingPathSplitter(parentChild()).split(doc);
+
+        Chunk target = null;
+        for (Chunk c : chunks) {
+            if (c.embedText().contains("data-testid")) {
+                target = c;
+            }
+        }
+        assertTrue(target != null, "没有切出含 data-testid 的块");
+
+        // 这是 small-to-big 的全部意义：向量算的是那一小段，交出去的是整章
+        assertTrue(target.embedText().contains("data-testid"),
+                "embedText 应该是子块，含被命中的那句话");
+        assertTrue(target.rawText().length() > target.embedText().length(),
+                "rawText（父块）必须比 embedText（子块）长，实际 "
+                        + target.rawText().length() + " vs " + target.embedText().length());
+        // 父块要包含同章节的兄弟小节 —— 那正是子块缺失的上下文
+        assertTrue(target.rawText().contains("不要依赖 class"),
+                "父块应含同章节的兄弟小节，实际：" + target.rawText());
+        assertTrue(target.hasParent() && target.parentAnchor() != null);
+    }
+
+    @Test
+    @DisplayName("PARENT_CHILD：同章节的子块共用同一个父块标识，供检索层去重")
+    void siblingChunksShareParentAnchor(@TempDir Path dir) throws IOException {
+        MarkdownDocument doc = parse(dir, SAMPLE);
+
+        // 「属性选择的优先级」这一章下有两个小节，它们该指向同一个父块 ——
+        // 否则检索同时命中两个子块时，同一段父块正文会被喂给模型两遍
+        java.util.Map<String, Integer> byParent = new java.util.HashMap<String, Integer>();
+        for (Chunk c : new HeadingPathSplitter(parentChild()).split(doc)) {
+            byParent.merge(c.parentAnchor(), 1, Integer::sum);
+        }
+        assertTrue(byParent.containsValue(2) || byParent.containsValue(3),
+                "应有父块被多个子块共享，实际分布 " + byParent);
+    }
+
+    @Test
+    @DisplayName("HEADING_PATH 不产生父块，两种策略的差异只在交出什么")
+    void headingPathHasNoParent(@TempDir Path dir) throws IOException {
+        MarkdownDocument doc = parse(dir, SAMPLE);
+        for (Chunk c : new HeadingPathSplitter(heading()).split(doc)) {
+            assertFalse(c.hasParent(), "HEADING_PATH 不该有父块");
+            // 对照组：这里 rawText 就是子块本身，没有额外上下文
+            assertTrue(c.rawText().length() <= c.embedText().length(),
+                    "HEADING_PATH 的 rawText 应不长于带前缀的 embedText");
+        }
+    }
+
+    @Test
     @DisplayName("两种策略共用同一个大小上限，比较才公平")
     void bothStrategiesRespectSameSizeLimit(@TempDir Path dir) throws IOException {
         StringBuilder longDoc = new StringBuilder("# 长文档\n\n## 章节\n\n");
@@ -209,6 +262,10 @@ class SplitterTest {
 
     private static RagConfig fixed() {
         return RagConfig.builder().chunkStrategy(RagConfig.ChunkStrategy.FIXED).build();
+    }
+
+    private static RagConfig parentChild() {
+        return RagConfig.builder().chunkStrategy(RagConfig.ChunkStrategy.PARENT_CHILD).build();
     }
 
     private static List<Path> listMarkdown(Path dir) {

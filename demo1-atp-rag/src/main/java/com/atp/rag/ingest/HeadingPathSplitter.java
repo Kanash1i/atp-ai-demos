@@ -1,9 +1,13 @@
 package com.atp.rag.ingest;
 
 import com.atp.rag.config.RagConfig;
+import com.atp.rag.ingest.image.AltTextImageDescriber;
+import com.atp.rag.ingest.image.ImageDescriber;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Markdown 切分器，两种策略共存 —— 消融表第 1 行和第 2 行的差别全在这里。
@@ -32,15 +36,114 @@ public final class HeadingPathSplitter {
 
     private final RagConfig config;
 
+    /**
+     * 图片转文字描述的实现。默认用永远可用的 alt 降级版 ——
+     * 配了 VLM 的话由调用方注入，切分器本身不关心用的是哪种。
+     */
+    private final ImageDescriber imageDescriber;
+
     public HeadingPathSplitter(RagConfig config) {
+        this(config, new AltTextImageDescriber());
+    }
+
+    public HeadingPathSplitter(RagConfig config, ImageDescriber imageDescriber) {
         this.config = config;
+        this.imageDescriber = imageDescriber;
+    }
+
+    /**
+     * 把小节正文里的图片引用换成文字描述。
+     *
+     * <p>在切分之前做，而不是切完再做 —— 因为描述会改变文本长度，
+     * 先替换才能保证「一块不超过 size 字符」这个约束算的是最终文本。
+     */
+    private String withImagesDescribed(MarkdownDocument.Section section) {
+        String body = section.body().trim();
+        if (!MarkdownDocument.hasImage(body)) {
+            return body;    // 绝大多数小节没有图，直接返回省掉正则
+        }
+        return MarkdownDocument.replaceImages(
+                body, imageDescriber, String.join(" > ", section.headingPath())).trim();
     }
 
     public List<Chunk> split(MarkdownDocument doc) {
-        if (config.chunkStrategy() == RagConfig.ChunkStrategy.FIXED) {
-            return splitFixed(doc);
+        switch (config.chunkStrategy()) {
+            case FIXED:
+                return splitFixed(doc);
+            case PARENT_CHILD:
+                return splitParentChild(doc);
+            default:
+                return splitByHeading(doc);
         }
-        return splitByHeading(doc);
+    }
+
+    // ── PARENT_CHILD ─────────────────────────────────────────
+
+    /**
+     * 父子切块：<b>子块进向量，父块进上下文</b>。
+     *
+     * <p>为什么这个策略在本项目上有理由存在 —— 语料的实测数据：
+     *
+     * <pre>
+     *   小节长度：中位数 174、p95 = 407 字符
+     * </pre>
+     *
+     * 小节<b>非常短</b>。短对检索是好事（语义集中、命中精准），
+     * 对回答却是坏事：命中「优先使用 data-testid 属性，其次是 name」这一句，
+     * 模型看不到同章节里的反例、理由和适用边界。
+     *
+     * <p>{@link RagConfig.ChunkStrategy#HEADING_PATH} 用标题前缀缓解了这个问题，
+     * 但前缀只告诉模型「这段在讲什么」，没给出「完整的论述」。
+     * 父子切块给的是后者。
+     *
+     * <p>父块取<b>二级章节</b>（{@code ## } 那一层）而不是整篇文档：
+     * 整篇太长会把无关内容一起塞进 prompt，二级章节是「一个完整论点」的天然边界。
+     */
+    private List<Chunk> splitParentChild(MarkdownDocument doc) {
+        // 先按二级标题分组，把同一章节下的所有小节正文拼成父块。
+        // LinkedHashMap 保持文档原本的章节顺序，拼出来的父块读起来才是连贯的
+        Map<String, StringBuilder> parents = new LinkedHashMap<String, StringBuilder>();
+        for (MarkdownDocument.Section section : doc.sections()) {
+            String key = parentKeyOf(section);
+            if (!parents.containsKey(key)) {
+                parents.put(key, new StringBuilder());
+            }
+            // 拼进父块时带上小节标题，否则父块会变成一大坨没有结构的文字
+            StringBuilder parent = parents.get(key);
+            if (parent.length() > 0) {
+                parent.append("\n\n");
+            }
+            List<String> path = section.headingPath();
+            if (path.size() > 1) {
+                parent.append("### ").append(path.get(path.size() - 1)).append('\n');
+            }
+            parent.append(withImagesDescribed(section));
+        }
+
+        List<Chunk> chunks = new ArrayList<Chunk>();
+        int ordinal = 0;
+        for (MarkdownDocument.Section section : doc.sections()) {
+            String body = withImagesDescribed(section);
+            if (body.isEmpty()) {
+                continue;
+            }
+            String key = parentKeyOf(section);
+            String parentText = parents.get(key).toString();
+
+            // 子块仍然按大小上限切 —— 虽然本项目语料下几乎切不开，
+            // 但换一份长文档语料时这一层要顶得住
+            for (String piece : sliceBySize(body)) {
+                chunks.add(Chunk.withParent(doc.sourceId(), doc.title(), section.headingPath(),
+                        piece, ordinal++, doc.sourceId() + "#" + key, parentText));
+            }
+        }
+        return chunks;
+    }
+
+    /** 父块的分组键 = 二级标题。没有二级标题的（文档开头引言）自成一组。 */
+    private static String parentKeyOf(MarkdownDocument.Section section) {
+        List<String> path = section.headingPath();
+        return path.isEmpty() ? "(前言)" : path.get(0);
     }
 
     // ── HEADING_PATH ─────────────────────────────────────────
@@ -56,7 +159,8 @@ public final class HeadingPathSplitter {
 
         // 遍历解析阶段切好的小节 —— 一个 section = 一段正文 + 它的标题路径
         for (MarkdownDocument.Section section : doc.sections()) {
-            String body = section.body().trim();
+            // 图片引用在这一步变成文字描述，之后的切分只面对纯文本
+            String body = withImagesDescribed(section);
 
             if (body.isEmpty()) {
                 // 只有标题没有正文的过渡性小节（比如 "## 常见错误" 下面直接是 "### 绝对路径"）。
@@ -108,6 +212,21 @@ public final class HeadingPathSplitter {
         // ⚠️ 单位是**字符**不是 token。两种策略共用这同一个上限 ——
         // 不然「标题路径更好」可能只是「chunk 更小所以更容易命中」的假象，
         // 那样消融表第 2 行就白做了。这条由 SplitterTest 钉死
+        //
+        // ⚠️⚠️ 但要清楚它在两种策略下的作用完全不同（实测数据，见 DECISIONS.md D-017）：
+        //
+        //   本项目语料的小节长度：中位数 174、p95 = 407、最长 610 字符
+        //
+        //   size 从 700 加到 1200：
+        //     HEADING_PATH → 89 块 → 89 块   （纹丝不动）
+        //     FIXED        → 41 块 → 25 块   （直接减半）
+        //
+        // 也就是说 HEADING_PATH 下 **size 和 overlap 基本是死参数** ——
+        // 所有小节都短于上限，下面那个 `length() <= size` 分支直接 return，
+        // 连 overlap 那段循环都进不去。
+        //
+        // 这不是 bug，而是这个策略的**本意**：让 chunk 边界由文档的语义结构决定，
+        // 而不是由一个拍出来的数字决定。参数只在 baseline（FIXED）那一行真正生效。
         int size = config.chunkSizeChars();
         int overlap = config.chunkOverlapChars();
 

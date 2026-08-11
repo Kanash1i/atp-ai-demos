@@ -21,7 +21,22 @@ public final class RagConfig {
         /** baseline：固定大小硬切，不管标题结构。 */
         FIXED("fixed"),
         /** 按 Markdown 标题层级切，并给每个 chunk 加 {@code [文档 > 章 > 节]} 前缀。 */
-        HEADING_PATH("heading");
+        HEADING_PATH("heading"),
+        /**
+         * 父子切块（small-to-big）：<b>用小块检索，用大块回答</b>。
+         *
+         * <p>子块是标题路径切出来的小节（本项目中位数 174 字符），
+         * 父块是它所属的整个二级章节。检索命中子块，但喂给模型的是父块。
+         *
+         * <p>解决的问题：小节短、语义精准，所以检索命中率高；
+         * 但只有那一小段的话，模型缺少回答所需的上下文
+         * （比如命中「优先使用 data-testid」，却看不到同章节里的反例和理由）。
+         *
+         * <p>与 {@link #HEADING_PATH} 的关系：那个用<b>标题前缀</b>给小块补上下文，
+         * 只补了「它在讲什么」；这个用<b>父块正文</b>补，补的是「完整的论述」。
+         * 两者解决同一个问题，深度不同 —— 所以它们该是消融表相邻的两行。
+         */
+        PARENT_CHILD("parent");
 
         private final String tag;
 

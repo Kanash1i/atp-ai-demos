@@ -4,10 +4,14 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import com.atp.rag.ingest.image.ImageDescriber;
+
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 解析后的 Markdown 文档：一级标题当文档标题，其余标题切成带层级路径的小节。
@@ -133,6 +137,45 @@ public final class MarkdownDocument {
         // 循环结束时手上还攒着最后一段正文，收掉
         flush(sections, stack, body);
         return sections;
+    }
+
+    /**
+     * markdown 图片语法 {@code ![alt](path)}。
+     *
+     * <p>只匹配这一种。HTML 的 {@code <img>} 标签不管 —— 语料是自己生成的 markdown，
+     * 不会混 HTML；真遇到了也是漏掉一张图，不是错误。
+     */
+    private static final Pattern IMAGE = Pattern.compile("!\\[([^\\]]*)]\\(([^)\\s]+)[^)]*\\)");
+
+    /**
+     * 把正文里的图片引用替换成文字描述，让图里的信息也能被检索到。
+     *
+     * <p>纯文本 embedding 模型（bge-m3）喂不进图片，所以一张截图不转文字就等于不存在。
+     * 而 ATP 的手册里图往往<b>就是答案</b>（报错长什么样、字段填在哪）。
+     *
+     * <p>替换而不是追加：图片语法 {@code ![](img/x.png)} 本身对检索是纯噪音，
+     * 路径里的斜杠和扩展名会被分词器切成一堆无意义的 token。
+     *
+     * @param describer 转描述的实现。返回空串时该图片引用被整个删掉
+     * @param context   当前小节的标题路径，传给 VLM 当提示
+     */
+    static String replaceImages(String body, ImageDescriber describer, String context) {
+        Matcher matcher = IMAGE.matcher(body);
+        StringBuffer out = new StringBuffer();
+        while (matcher.find()) {
+            String alt = matcher.group(1);
+            String path = matcher.group(2);
+            String description = describer.describe(path, alt, context);
+            // 描述不出来就把这段图片语法删掉（替换成空），别留下 ![](…) 污染向量
+            matcher.appendReplacement(out, Matcher.quoteReplacement(description));
+        }
+        matcher.appendTail(out);
+        return out.toString();
+    }
+
+    /** 正文里有没有图片引用 —— 用来决定要不要走描述流程，省掉无谓的正则替换。 */
+    static boolean hasImage(String body) {
+        return IMAGE.matcher(body).find();
     }
 
     /** 把攒着的正文连同当前标题路径存成一个 section，然后清空缓冲。 */

@@ -25,15 +25,17 @@ public class AtpProperties {
     private final Qdrant qdrant;
     private final Corpus corpus;
     private final Rag rag;
+    private final Vlm vlm;
 
     public AtpProperties(Embedding embedding, Rerank rerank, Llm llm,
-                         Qdrant qdrant, Corpus corpus, Rag rag) {
+                         Qdrant qdrant, Corpus corpus, Rag rag, Vlm vlm) {
         this.embedding = embedding;
         this.rerank = rerank;
         this.llm = llm;
         this.qdrant = qdrant;
         this.corpus = corpus;
         this.rag = rag;
+        this.vlm = vlm;
     }
 
     public Embedding getEmbedding() {
@@ -58,6 +60,48 @@ public class AtpProperties {
 
     public Rag getRag() {
         return rag;
+    }
+
+    public Vlm getVlm() {
+        return vlm;
+    }
+
+    // ── vlm（图片转文字描述）─────────────────────────────────
+
+    /** 视觉模型配置。{@code baseUrl} 为空表示不启用，图片描述降级成 alt 文本。 */
+    public static class Vlm {
+        private final String baseUrl;
+        private final String apiKey;
+        private final String model;
+        private final int timeoutSeconds;
+
+        public Vlm(String baseUrl, String apiKey, String model, int timeoutSeconds) {
+            this.baseUrl = baseUrl == null ? "" : baseUrl;
+            this.apiKey = apiKey == null ? "" : apiKey;
+            this.model = model;
+            this.timeoutSeconds = timeoutSeconds;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public int getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        /** 没配 base-url 就是没启用 —— 这是正常状态，不是错误。 */
+        public boolean isEnabled() {
+            return !baseUrl.trim().isEmpty();
+        }
     }
 
     // ── embedding ────────────────────────────────────────────

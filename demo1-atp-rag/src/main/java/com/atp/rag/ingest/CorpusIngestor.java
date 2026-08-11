@@ -2,6 +2,8 @@ package com.atp.rag.ingest;
 
 import com.atp.rag.config.AtpProperties;
 import com.atp.rag.config.RagConfig;
+import com.atp.rag.ingest.image.AltTextImageDescriber;
+import com.atp.rag.ingest.image.ImageDescriber;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -50,14 +52,23 @@ public final class CorpusIngestor {
     private final QdrantClient client;
     private final Path corpusRoot;
     private final int dimension;
+    /** 图片转文字描述。默认降级实现，Spring 装配时会注入配置好的那个 */
+    private final ImageDescriber imageDescriber;
 
     public CorpusIngestor(RagConfig config, EmbeddingModel embeddingModel,
                           QdrantClient client, AtpProperties props) {
+        this(config, embeddingModel, client, props, new AltTextImageDescriber());
+    }
+
+    public CorpusIngestor(RagConfig config, EmbeddingModel embeddingModel,
+                          QdrantClient client, AtpProperties props,
+                          ImageDescriber imageDescriber) {
         this.config = config;
         this.embeddingModel = embeddingModel;
         this.client = client;
         this.corpusRoot = Paths.get(props.getCorpus().getDir());
         this.dimension = props.getEmbedding().getDimension();
+        this.imageDescriber = imageDescriber;
     }
 
     /**
@@ -175,7 +186,7 @@ public final class CorpusIngestor {
     private int ingestDocuments(String collection) {
         // splitter 持有 config，所以它知道该用 FIXED 还是 HEADING_PATH。
         // 同一批文档，两种策略切出来的块数差一倍多（78 vs 184）
-        HeadingPathSplitter splitter = new HeadingPathSplitter(config);
+        HeadingPathSplitter splitter = new HeadingPathSplitter(config, imageDescriber);
 
         // 先全部攒进内存再统一写。15 篇文档最多 184 块，量很小；
         // 攒起来的好处是能一次性批量算向量，比逐篇调 TEI 少很多次往返
@@ -221,6 +232,13 @@ public final class CorpusIngestor {
                     // ⚠️ 存进 payload 的是 rawText（给人看的），送去算向量的是 embedText（带标题前缀）。
                     // 两者的分离正是这一行消融的全部内容
                     metadata.put("embed_text", chunk.embedText());
+
+                    // 父子切块时，rawText 已经是父块正文了（见 Chunk.withParent）。
+                    // 这里额外存父块标识，供检索层去重 —— 同一章节下的多个子块常常一起被召回，
+                    // 但父块正文只该交给模型一次
+                    if (chunk.hasParent()) {
+                        metadata.put("parent_anchor", chunk.parentAnchor());
+                    }
 
                     // TextSegment 的正文用 rawText —— 它会成为 payload 里的展示文本，
                     // 也是最终喂给 LLM 的上下文。带前缀的那份只用来算向量
