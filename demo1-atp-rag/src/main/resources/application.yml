@@ -83,10 +83,23 @@ atp:
     model: ${ATP_VLM_MODEL:Qwen/Qwen2.5-VL-3B-Instruct}
     timeout-seconds: ${ATP_VLM_TIMEOUT_SEC:120}
 
+  # 从 PDF / DOCX 抽出来的原图存哪。
+  # 图转文字之后仍要留原图：描述是有损的，用户点开引用时想看的是界面本身。
+  # base-url 留空则用 root 的 file:// 绝对地址；换成 OSS 时只改这两行。
+  storage:
+    root: ${IMAGE_STORAGE_ROOT:corpus/extracted}
+    base-url: ${IMAGE_STORAGE_BASE_URL:}
+
   # 消融实验的开关。命令行可覆盖任意一项，例如
   #   --atp.rag.chunk-strategy=FIXED --atp.rag.collection-mode=SINGLE
   rag:
     chunk-strategy: HEADING_PATH
+
+    # 语料来源格式：MARKDOWN / PDF / DOCX。
+    # 企业里手册规范是 PDF/DOCX，md 只有开发者看 —— 三种格式是同一份内容
+    # （gen-corpus 生成），所以能做「只换格式」的单变量对照。
+    # collection 名会带上格式段（md 除外，保持原名）
+    corpus-format: ${CORPUS_FORMAT:MARKDOWN}
     collection-mode: DUAL
     # ⚠️ 单位是**字符**不是 token：Java 8 侧没有 bge-m3 的 tokenizer，
     #    硬凑一个只会得到「精确但错误」的数字。见 DECISIONS.md D-006

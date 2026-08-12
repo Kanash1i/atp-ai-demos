@@ -7,6 +7,7 @@ import dev.langchain4j.model.embedding.EmbeddingModel;
 import dev.langchain4j.model.scoring.ScoringModel;
 import io.qdrant.client.QdrantClient;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 /**
@@ -31,8 +32,21 @@ public class RetrieverFactory {
     private final ObjectProvider<ChatLanguageModel> chatModelProvider;
     private final AtpProperties props;
 
+    /**
+     * ⚠️ {@code qdrantClient} 上的 {@code @Lazy} 不能省。
+     *
+     * <p>这个工厂是无条件的 {@code @Component}，所以它在<b>每个</b>任务下都会被创建 ——
+     * 包括根本不碰向量库的 {@code gen-corpus}（造 PDF/DOCX 语料）。
+     * 而 {@code qdrantClient} 的构造函数要连 Qdrant 做版本校验，
+     * 于是「Qdrant 没起」会让造语料这种纯本地的活也起不来，
+     * 报的还是一长串 {@code UnsatisfiedDependencyException}。
+     *
+     * <p>光在 {@code @Bean} 方法上标 {@code @Lazy} 是不够的 —— 只要有一个非 lazy 的
+     * bean 通过构造注入它，就会立刻触发创建。注入点这一侧也得标，
+     * Spring 才会注入代理、把真正的连接推迟到 {@link #create} 里第一次用的时候。
+     */
     public RetrieverFactory(EmbeddingModel embeddingModel,
-                            QdrantClient qdrantClient,
+                            @Lazy QdrantClient qdrantClient,
                             ObjectProvider<ScoringModel> scoringModelProvider,
                             ObjectProvider<ChatLanguageModel> chatModelProvider,
                             AtpProperties props) {

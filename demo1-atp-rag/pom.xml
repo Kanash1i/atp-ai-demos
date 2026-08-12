@@ -84,6 +84,33 @@
       <artifactId>jackson-databind</artifactId>
     </dependency>
 
+    <!-- ── 多格式语料解析 ────────────────────────────────────────
+         企业里手册和规范是 PDF / DOCX，markdown 只有开发者看。
+         这两个依赖让 ingest 链路能直接吃这两种格式，而不是只能吃 md。
+
+         ⚠️ 版本不由 spring-boot-starter-parent 管，必须显式钉。
+            两个都实测过字节码（见 DECISIONS.md D-022）：
+              pdfbox    2.0.30 → major=50 (Java 6)
+              poi-ooxml 5.4.1  → major=52 (Java 8)
+            PDFBox **不能升 3.x** —— 3.x 要求 Java 8 但 API 全变了
+            （PDDocument.load 换成 PDFParser + RandomAccessRead），
+            而 Spring AI 那套 outline 代码就是按 3.x 写的，移植时要改回来。 -->
+    <dependency>
+      <groupId>org.apache.pdfbox</groupId>
+      <artifactId>pdfbox</artifactId>
+      <version>2.0.30</version>
+    </dependency>
+
+    <!-- DOCX。⚠️ 用 POI 而不是 Tika：Tika 把 docx 抽成一坨扁平文本，
+         Heading 1/2/3 样式全丢，标题层级就没了 —— 而层级正是
+         HEADING_PATH / PARENT_CHILD 两个策略的立身之本。
+         POI 的 XWPFParagraph.getStyle() 能直接读到 w:pStyle。 -->
+    <dependency>
+      <groupId>org.apache.poi</groupId>
+      <artifactId>poi-ooxml</artifactId>
+      <version>5.4.1</version>
+    </dependency>
+
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-test</artifactId>

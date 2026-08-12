@@ -41,6 +41,18 @@ public final class AltTextImageDescriber implements ImageDescriber {
     }
 
     /**
+     * 字节版直接委托给路径版 —— 这个实现<b>本来就不看图片内容</b>，
+     * 只从名字和 alt 里榨关键词，所以字节参数用不上。
+     *
+     * <p>这不是偷懒：降级实现的意义就是「零成本、永远可用」。
+     * 它给出的信息量本来就只有名字和 alt 这么多。
+     */
+    @Override
+    public String describeBytes(byte[] content, String nameHint, String altText, String context) {
+        return describe(nameHint, altText, context);
+    }
+
+    /**
      * 从文件名里榨出关键词：{@code img/case-edit-wait.png} → {@code case edit wait}。
      *
      * <p>去掉目录、扩展名，把连字符下划线换成空格。纯数字的名字（{@code 001.png}）

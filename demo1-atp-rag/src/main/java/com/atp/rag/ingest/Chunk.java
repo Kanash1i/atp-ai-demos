@@ -22,9 +22,18 @@ public final class Chunk {
     private final String parentAnchor;
     private final String parentText;
 
+    /**
+     * 本块引用的原图地址。
+     *
+     * <p><b>不参与 embedding</b> —— 图片的可检索形式是它的文字描述（已经在
+     * {@link #embedText} 里）。URL 只进 payload，供引用展示时让人点开看原图。
+     * 描述是有损的，用户想确认「界面到底长什么样」时需要原件。
+     */
+    private final List<String> imageUrls;
+
     private Chunk(String sourceId, String docTitle, List<String> headingPath,
                   String rawText, String embedText, int ordinal,
-                  String parentAnchor, String parentText) {
+                  String parentAnchor, String parentText, List<String> imageUrls) {
         this.sourceId = sourceId;
         this.docTitle = docTitle;
         this.headingPath = headingPath;
@@ -33,14 +42,24 @@ public final class Chunk {
         this.ordinal = ordinal;
         this.parentAnchor = parentAnchor;
         this.parentText = parentText;
+        this.imageUrls = imageUrls == null
+                ? java.util.Collections.<String>emptyList()
+                : java.util.Collections.unmodifiableList(new ArrayList<String>(imageUrls));
     }
 
     /** 带标题路径前缀 —— {@code [ATP平台手册 > 定位器指南 > XPath 编写建议]\n正文…} */
     public static Chunk withHeadingPath(String sourceId, String docTitle,
                                         List<String> headingPath, String rawText, int ordinal) {
+        return withHeadingPath(sourceId, docTitle, headingPath, rawText, ordinal, null);
+    }
+
+    /** 带原图地址的版本 —— PDF / DOCX 里抽出图片时用。 */
+    public static Chunk withHeadingPath(String sourceId, String docTitle,
+                                        List<String> headingPath, String rawText, int ordinal,
+                                        List<String> imageUrls) {
         return new Chunk(sourceId, docTitle, new ArrayList<String>(headingPath),
                 rawText, buildPrefix(docTitle, headingPath) + "\n" + rawText, ordinal,
-                null, null);
+                null, null, imageUrls);
     }
 
     /**
@@ -53,18 +72,27 @@ public final class Chunk {
     public static Chunk withParent(String sourceId, String docTitle, List<String> headingPath,
                                    String childText, int ordinal,
                                    String parentAnchor, String parentText) {
+        return withParent(sourceId, docTitle, headingPath, childText, ordinal,
+                parentAnchor, parentText, null);
+    }
+
+    /** 带原图地址的版本。 */
+    public static Chunk withParent(String sourceId, String docTitle, List<String> headingPath,
+                                   String childText, int ordinal,
+                                   String parentAnchor, String parentText,
+                                   List<String> imageUrls) {
         return new Chunk(sourceId, docTitle, new ArrayList<String>(headingPath),
                 // rawText 存父块 —— 它是最终展示、最终喂给模型的那份
                 parentText,
                 // embedText 存子块（带前缀）—— 只用来算向量，追求检索精度
                 buildPrefix(docTitle, headingPath) + "\n" + childText,
-                ordinal, parentAnchor, parentText);
+                ordinal, parentAnchor, parentText, imageUrls);
     }
 
     /** baseline 用：正文即全部，不知道自己在哪一章。 */
     public static Chunk plain(String sourceId, String docTitle, String rawText, int ordinal) {
         return new Chunk(sourceId, docTitle, new ArrayList<String>(), rawText, rawText, ordinal,
-                null, null);
+                null, null, null);
     }
 
     private static String buildPrefix(String docTitle, List<String> headingPath) {
@@ -109,6 +137,20 @@ public final class Chunk {
      */
     public String parentAnchor() {
         return parentAnchor;
+    }
+
+    /**
+     * 本块引用的原图地址，可能为空。
+     *
+     * <p>存进 payload 供引用展示 —— 不参与 embedding。
+     */
+    public List<String> imageUrls() {
+        return imageUrls;
+    }
+
+    /** 有没有原图，用来省掉无谓的 payload 字段。 */
+    public boolean hasImages() {
+        return !imageUrls.isEmpty();
     }
 
     /** 是否走了父子切块。 */

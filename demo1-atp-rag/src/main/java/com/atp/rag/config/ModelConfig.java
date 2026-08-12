@@ -4,6 +4,8 @@ import com.atp.rag.ingest.image.AltTextImageDescriber;
 import com.atp.rag.ingest.image.ImageDescriber;
 import com.atp.rag.ingest.image.VlmImageDescriber;
 import com.atp.rag.model.TeiScoringModel;
+import com.atp.rag.storage.LocalFileStorage;
+import com.atp.rag.storage.ObjectStorage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
@@ -17,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Configuration;
 
 import java.io.ByteArrayOutputStream;
@@ -105,6 +108,23 @@ public class ModelConfig {
     }
 
     /**
+     * 原图的对象存储。
+     *
+     * <p>默认落本地文件系统 —— demo 够用。生产该换成 OSS/S3 实现，
+     * 因为入库进程和查询进程通常不在一台机器上，本地路径在另一端打不开。
+     *
+     * <p>换实现只需要换这个 bean：解析器、切分、入库全都只认
+     * {@link ObjectStorage} 接口，不知道图片存在哪。
+     */
+    @Bean
+    public ObjectStorage objectStorage(AtpProperties props) {
+        AtpProperties.Storage cfg = props.getStorage();
+        LocalFileStorage storage = new LocalFileStorage(cfg.getRoot(), cfg.getBaseUrl());
+        storage.logConfiguration();
+        return storage;
+    }
+
+    /**
      * Qdrant 的 gRPC 客户端。
      *
      * <p>{@code destroyMethod} 让容器负责关闭，不再依赖调用方的 try-finally。
@@ -115,6 +135,19 @@ public class ModelConfig {
      * （写入走 upsert，proto 没变），问题要到检索时才暴露。
      * 放在 bean 构造这一步，入库、检索、评估就都绕不过去了。见 DECISIONS.md D-002。
      */
+    /*
+     * ⚠️ @Lazy 不是性能优化，是可用性问题。
+     *
+     * 这个 bean 在构造时就要连 Qdrant 做版本校验（见下方注释），而它默认是
+     * eager singleton —— 于是 **Qdrant 一停，整个应用就起不来**，
+     * 连根本不碰向量库的任务（gen-corpus 造语料、纯解析的调试）也一起挂掉，
+     * 报的还是一长串 BeanCreationException，指不到「你只是想造个语料」这件事上。
+     *
+     * 加 @Lazy 之后，只有真正注入它的 bean 被创建时才会连 —— 而那些 bean
+     * （IngestTask 等）本来就带 @ConditionalOnProperty，只在对应任务下存在。
+     * 版本校验该守的场景一个没少，不该被守的场景也不再被拖累。
+     */
+    @Lazy
     @Bean(destroyMethod = "close")
     public QdrantClient qdrantClient(AtpProperties props) {
         AtpProperties.Qdrant cfg = props.getQdrant();

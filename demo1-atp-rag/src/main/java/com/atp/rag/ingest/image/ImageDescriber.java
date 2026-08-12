@@ -40,6 +40,26 @@ public interface ImageDescriber {
      */
     String describe(String imagePath, String altText, String context);
 
+    /**
+     * 直接描述一段图片字节 —— 给 <b>PDF / DOCX 内嵌图片</b>用的。
+     *
+     * <p>为什么需要这个重载：上面那个方法接的是「相对语料根的路径」，
+     * 适用于 markdown（图片本来就是磁盘上的独立文件）。
+     * 但 PDF 和 DOCX 里的图是<b>嵌在容器里的字节流</b>，没有文件路径。
+     *
+     * <p>更要紧的是：原图会被存到 {@code ObjectStorage}，而那可能是 OSS ——
+     * 图片根本不在本地文件系统上。如果只有路径版接口，就被迫先把图片落一份到本地
+     * 才能描述，等于把「存储在哪」这个实现细节泄漏进了描述环节。
+     *
+     * @param content  图片字节
+     * @param nameHint 用于日志和降级描述的名字，如 {@code 05-等待策略-img-1.png}。
+     *                 降级实现会从它里面榨关键词，所以最好带点语义
+     * @param altText  文档里带的替代文本，通常为空（PDF 基本没有，DOCX 看有没有设 descr）
+     * @param context  图片所在小节的标题路径
+     * @return 可直接拼进 chunk 的描述；无法描述时返回空串
+     */
+    String describeBytes(byte[] content, String nameHint, String altText, String context);
+
     /** 这个实现当前是否真的可用。不可用时调用方应退回降级实现。 */
     boolean isAvailable();
 

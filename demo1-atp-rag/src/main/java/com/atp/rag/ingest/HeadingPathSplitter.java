@@ -57,7 +57,7 @@ public final class HeadingPathSplitter {
      * <p>在切分之前做，而不是切完再做 —— 因为描述会改变文本长度，
      * 先替换才能保证「一块不超过 size 字符」这个约束算的是最终文本。
      */
-    private String withImagesDescribed(MarkdownDocument.Section section) {
+    private String withImagesDescribed(DocSection section) {
         String body = section.body().trim();
         if (!MarkdownDocument.hasImage(body)) {
             return body;    // 绝大多数小节没有图，直接返回省掉正则
@@ -66,7 +66,7 @@ public final class HeadingPathSplitter {
                 body, imageDescriber, String.join(" > ", section.headingPath())).trim();
     }
 
-    public List<Chunk> split(MarkdownDocument doc) {
+    public List<Chunk> split(ParsedDocument doc) {
         switch (config.chunkStrategy()) {
             case FIXED:
                 return splitFixed(doc);
@@ -99,15 +99,22 @@ public final class HeadingPathSplitter {
      * <p>父块取<b>二级章节</b>（{@code ## } 那一层）而不是整篇文档：
      * 整篇太长会把无关内容一起塞进 prompt，二级章节是「一个完整论点」的天然边界。
      */
-    private List<Chunk> splitParentChild(MarkdownDocument doc) {
+    private List<Chunk> splitParentChild(ParsedDocument doc) {
         // 先按二级标题分组，把同一章节下的所有小节正文拼成父块。
         // LinkedHashMap 保持文档原本的章节顺序，拼出来的父块读起来才是连贯的
         Map<String, StringBuilder> parents = new LinkedHashMap<String, StringBuilder>();
-        for (MarkdownDocument.Section section : doc.sections()) {
+
+        // 父块的图片地址 = 它下面所有子小节的图片地址之和。
+        // 因为交出去的正文是整个父块，里面所有图都该能点开
+        Map<String, List<String>> parentImages = new LinkedHashMap<String, List<String>>();
+
+        for (DocSection section : doc.sections()) {
             String key = parentKeyOf(section);
             if (!parents.containsKey(key)) {
                 parents.put(key, new StringBuilder());
+                parentImages.put(key, new ArrayList<String>());
             }
+            parentImages.get(key).addAll(section.imageUrls());
             // 拼进父块时带上小节标题，否则父块会变成一大坨没有结构的文字
             StringBuilder parent = parents.get(key);
             if (parent.length() > 0) {
@@ -122,7 +129,7 @@ public final class HeadingPathSplitter {
 
         List<Chunk> chunks = new ArrayList<Chunk>();
         int ordinal = 0;
-        for (MarkdownDocument.Section section : doc.sections()) {
+        for (DocSection section : doc.sections()) {
             String body = withImagesDescribed(section);
             if (body.isEmpty()) {
                 continue;
@@ -134,14 +141,15 @@ public final class HeadingPathSplitter {
             // 但换一份长文档语料时这一层要顶得住
             for (String piece : sliceBySize(body)) {
                 chunks.add(Chunk.withParent(doc.sourceId(), doc.title(), section.headingPath(),
-                        piece, ordinal++, doc.sourceId() + "#" + key, parentText));
+                        piece, ordinal++, doc.sourceId() + "#" + key, parentText,
+                        parentImages.get(key)));
             }
         }
         return chunks;
     }
 
     /** 父块的分组键 = 二级标题。没有二级标题的（文档开头引言）自成一组。 */
-    private static String parentKeyOf(MarkdownDocument.Section section) {
+    private static String parentKeyOf(DocSection section) {
         List<String> path = section.headingPath();
         return path.isEmpty() ? "(前言)" : path.get(0);
     }
@@ -151,14 +159,14 @@ public final class HeadingPathSplitter {
     /**
      * 按标题层级切：每个最深层小节自成一块，过长的再按大小拆开（拆出来的每块都保留同一份标题路径）。
      */
-    private List<Chunk> splitByHeading(MarkdownDocument doc) {
+    private List<Chunk> splitByHeading(ParsedDocument doc) {
         List<Chunk> chunks = new ArrayList<Chunk>();
 
         // 这一块在本篇文档里的序号，从 0 递增。存进 payload，调试时用来还原上下文
         int ordinal = 0;
 
         // 遍历解析阶段切好的小节 —— 一个 section = 一段正文 + 它的标题路径
-        for (MarkdownDocument.Section section : doc.sections()) {
+        for (DocSection section : doc.sections()) {
             // 图片引用在这一步变成文字描述，之后的切分只面对纯文本
             String body = withImagesDescribed(section);
 
@@ -173,8 +181,11 @@ public final class HeadingPathSplitter {
             for (String piece : sliceBySize(body)) {
                 // withHeadingPath 会把 [文档 > 章 > 节] 前缀拼进 embedText，
                 // 但 rawText 保持原样。这两份文本的分离就是消融表第 2 行的全部内容
+                // 图片地址跟着 section 走。一个 section 被按大小切成多块时，
+                // 每块都带同一份地址 —— 宁可重复，也别让某块丢掉原图链接
                 chunks.add(Chunk.withHeadingPath(
-                        doc.sourceId(), doc.title(), section.headingPath(), piece, ordinal++));
+                        doc.sourceId(), doc.title(), section.headingPath(), piece, ordinal++,
+                        section.imageUrls()));
             }
         }
         return chunks;
@@ -183,7 +194,7 @@ public final class HeadingPathSplitter {
     // ── FIXED（baseline）──────────────────────────────────────
 
     /** 无视标题结构，把全文当成一整条字符流硬切。 */
-    private List<Chunk> splitFixed(MarkdownDocument doc) {
+    private List<Chunk> splitFixed(ParsedDocument doc) {
         List<Chunk> chunks = new ArrayList<Chunk>();
         int ordinal = 0;
 

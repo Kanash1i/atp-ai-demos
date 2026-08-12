@@ -18,35 +18,14 @@ import java.util.regex.Pattern;
  *
  * <p>只处理 ATX 风格（{@code # 标题}）。语料是自己生成的，不需要支持 Setext 那种下划线标题。
  */
-public final class MarkdownDocument {
-
-    /** 一个最小的可检索单元：一段正文，加上它所处的标题层级。 */
-    public static final class Section {
-
-        private final List<String> headingPath;
-        private final String body;
-
-        Section(List<String> headingPath, String body) {
-            this.headingPath = Collections.unmodifiableList(new ArrayList<String>(headingPath));
-            this.body = body;
-        }
-
-        /** 从二级标题往下的路径，不含文档标题。 */
-        public List<String> headingPath() {
-            return headingPath;
-        }
-
-        public String body() {
-            return body;
-        }
-    }
+public final class MarkdownDocument implements ParsedDocument {
 
     private final String sourceId;
     private final String title;
     private final String fullText;
-    private final List<Section> sections;
+    private final List<DocSection> sections;
 
-    private MarkdownDocument(String sourceId, String title, String fullText, List<Section> sections) {
+    private MarkdownDocument(String sourceId, String title, String fullText, List<DocSection> sections) {
         this.sourceId = sourceId;
         this.title = title;
         this.fullText = fullText;
@@ -82,8 +61,8 @@ public final class MarkdownDocument {
      * <p>正文归属的是<b>最深</b>的标题，所以 {@code ## 章} 下面、{@code ### 节} 之前的
      * 那段引言会单独成为一个 path 只有一层的 section。这是对的 —— 那段话确实属于章而不属于任何节。
      */
-    private static List<Section> extractSections(String text) {
-        List<Section> sections = new ArrayList<Section>();
+    private static List<DocSection> extractSections(String text) {
+        List<DocSection> sections = new ArrayList<DocSection>();
 
         // 当前所处的标题层级，形如 ["常见错误", "绝对路径"]。
         // 遇到同级或更浅的标题时会被截断，遇到更深的标题时压栈
@@ -179,15 +158,26 @@ public final class MarkdownDocument {
     }
 
     /** 把攒着的正文连同当前标题路径存成一个 section，然后清空缓冲。 */
-    private static void flush(List<Section> sections, List<String> stack, StringBuilder body) {
+    private static void flush(List<DocSection> sections, List<String> stack, StringBuilder body) {
         String content = body.toString().trim();
 
-        // 两种情况不产出 section：
-        //   正文是空的 —— 连续两个标题之间没内容
-        //   栈是空的   —— 还没遇到任何 ## 标题，这是文档开头的引言，没有层级路径可挂
-        if (!content.isEmpty() && !stack.isEmpty()) {
+        // 只有正文为空时才不产出（连续两个标题之间没内容）。
+        //
+        // ⚠️ 这里曾经还有一个 `&& !stack.isEmpty()` 的条件，把「# 标题之后、
+        // 第一个 ## 之前」的<b>文档引言</b>整段丢掉了 —— 15 篇文档共 1464 字符，
+        // 而且丢的都是高价值内容：每篇规范的「制定日／最終改訂／管理チーム」元信息，
+        // 和每篇手册的「本篇讲什么」主旨段。
+        //
+        // 后果是「STD-001 是谁维护的」「什么时候改的」这类问题在库里根本没有答案，
+        // 且不报错 —— 只表现为检索莫名召回不到。发现它是因为生成 PDF 语料时
+        // 比对 md 与 PDF 文本层，看到一批普通汉字凭空消失（DECISIONS.md D-023）。
+        //
+        // 引言的 headingPath 是空列表，这是<b>正确</b>的：它确实不属于任何小节。
+        // 下游对空 path 早有处理 —— anchor() 退化成 sourceId、
+        // 前缀只剩 [文档标题]、父子切块把它归入 "(前言)" 组
+        if (!content.isEmpty()) {
             // 传 stack 进去时构造函数会拷贝一份，所以后续修改 stack 不影响已存的 section
-            sections.add(new Section(stack, content));
+            sections.add(new DocSection(stack, content));
         }
 
         // 清空缓冲，准备攒下一段
@@ -215,19 +205,23 @@ public final class MarkdownDocument {
         }
     }
 
+    @Override
     public String sourceId() {
         return sourceId;
     }
 
+    @Override
     public String title() {
         return title;
     }
 
+    @Override
     public String fullText() {
         return fullText;
     }
 
-    public List<Section> sections() {
+    @Override
+    public List<DocSection> sections() {
         return sections;
     }
 }

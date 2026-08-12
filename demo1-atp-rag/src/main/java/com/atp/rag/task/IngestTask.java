@@ -4,6 +4,7 @@ import com.atp.rag.config.AtpProperties;
 import com.atp.rag.config.RagConfig;
 import com.atp.rag.ingest.CorpusIngestor;
 import com.atp.rag.ingest.image.ImageDescriber;
+import com.atp.rag.storage.ObjectStorage;
 import dev.langchain4j.model.embedding.EmbeddingModel;
 import io.qdrant.client.QdrantClient;
 import org.springframework.boot.ApplicationArguments;
@@ -33,13 +34,16 @@ public class IngestTask implements ApplicationRunner {
     private final EmbeddingModel embeddingModel;
     private final QdrantClient qdrantClient;
     private final ImageDescriber imageDescriber;
+    private final ObjectStorage objectStorage;
 
     public IngestTask(AtpProperties props, EmbeddingModel embeddingModel,
-                      QdrantClient qdrantClient, ImageDescriber imageDescriber) {
+                      QdrantClient qdrantClient, ImageDescriber imageDescriber,
+                      ObjectStorage objectStorage) {
         this.props = props;
         this.embeddingModel = embeddingModel;
         this.qdrantClient = qdrantClient;
         this.imageDescriber = imageDescriber;
+        this.objectStorage = objectStorage;
     }
 
     /**
@@ -77,7 +81,8 @@ public class IngestTask implements ApplicationRunner {
                 // 而 config 决定了 collection 名、切分策略这些一组一变的东西。
                 // 模型客户端和 Qdrant 连接是复用的（容器管的单例），只有编排对象是一次性的
                 CorpusIngestor.Result result = new CorpusIngestor(
-                        config, embeddingModel, qdrantClient, props, imageDescriber).ingestAll();
+                        config, embeddingModel, qdrantClient, props,
+                        imageDescriber, objectStorage).ingestAll();
 
                 // 核对写入条数与 Qdrant 实际点数，对不上就往 failures 里记
                 report(result, System.currentTimeMillis() - startedAt, failures);

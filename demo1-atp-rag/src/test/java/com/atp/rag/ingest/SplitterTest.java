@@ -65,7 +65,7 @@ class SplitterTest {
     void titleIsExtractedAndExcludedFromPath(@TempDir Path dir) throws IOException {
         MarkdownDocument doc = parse(dir, SAMPLE);
         assertEquals("定位器指南", doc.title());
-        for (MarkdownDocument.Section section : doc.sections()) {
+        for (DocSection section : doc.sections()) {
             assertFalse(section.headingPath().contains("定位器指南"),
                     "文档标题不该出现在 section 的标题路径里，它由前缀单独拼");
         }
@@ -76,7 +76,7 @@ class SplitterTest {
     void bodyBelongsToDeepestHeading(@TempDir Path dir) throws IOException {
         MarkdownDocument doc = parse(dir, SAMPLE);
         List<String> paths = new ArrayList<String>();
-        for (MarkdownDocument.Section s : doc.sections()) {
+        for (DocSection s : doc.sections()) {
             paths.add(String.join(" > ", s.headingPath()));
         }
         assertTrue(paths.contains("属性选择的优先级"),
@@ -89,7 +89,7 @@ class SplitterTest {
     @DisplayName("代码块里的 # 不被当成标题")
     void hashInsideFenceIsNotHeading(@TempDir Path dir) throws IOException {
         MarkdownDocument doc = parse(dir, SAMPLE);
-        for (MarkdownDocument.Section section : doc.sections()) {
+        for (DocSection section : doc.sections()) {
             for (String heading : section.headingPath()) {
                 assertFalse(heading.contains("代码块里的井号"),
                         "``` 围栏内的 # 被误判成了标题：" + heading);

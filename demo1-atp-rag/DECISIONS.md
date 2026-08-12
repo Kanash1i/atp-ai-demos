@@ -926,9 +926,260 @@ xt()="提交"]`）
 
 ---
 
+## D-022 — 多格式语料链路：为什么 PDF/DOCX 是地基而不是加分项
+
+**日期** 2026-08-13　**分支** `demo1/m3e-multiformat`
+
+### 起因
+
+用户指出：企业里手册和规范都是 PDF/DOCX 交付的，**markdown 只有开发者看**。
+只支持 md 的链路在面试里等于没做 —— 「这个链路能不能吃我们公司的文档」是第一个会被问的问题。
+
+### 为什么这不只是「多一个 parser」
+
+现有的两个核心策略 **完全建立在 markdown 的 `##` 之上**：
+
+```java
+int level = headingLevel(line);          // 数 # 的个数
+stack.add(line.substring(level + 1));    // 层级路径从这来
+```
+
+`PDFTextStripper` 抽出来的是一坨扁平文本，没有任何 `#`。层级栈无米下锅
+→ `HEADING_PATH` 和 `PARENT_CHILD` **双双退化成 FIXED**。
+也就是说，消融表第 2、3 行在 PDF 语料上直接归零。
+
+### 依赖选型（都实测过字节码）
+
+| 依赖 | 版本 | major | 说明 |
+|---|---|---|---|
+| `org.apache.pdfbox:pdfbox` | 2.0.30 | 50 | **不能升 3.x**：API 全变（`PDDocument.load` → `PDFParser`+`RandomAccessRead`） |
+| `org.apache.poi:poi-ooxml` | 5.4.1 | 52 | Java 8 兼容 |
+| `langchain4j-document-parser-apache-pdfbox` | 0.35.0 | 52 | 查过但**没用** —— 它只给纯文本，拿不到 outline |
+
+### DOCX 为什么不走 Tika
+
+Spring AI 的 `TikaDocumentReader` 走 Tika，把 docx 抽成一坨扁平文本，
+**段落样式全丢**。而 docx 的层级恰恰存在样式里：
+
+```xml
+<w:pPr><w:pStyle w:val="Heading2"/><w:outlineLvl w:val="1"/></w:pPr>
+```
+
+POI 的 `XWPFParagraph.getStyle()` 直接能读。所以走 POI，不走 Tika。
+
+判据用了两条（缺一不可）：样式名 `Heading\d`，以及 `outlineLvl` ——
+后者是给「用自定义样式名的企业模板」兜底的，Word 导航窗格本身也靠它。
+
+### 结果
+
+三种格式入库，**chunk 数完全一致**：
+
+```
+atp_docs_heading       199 chunk   (markdown)
+atp_docs_heading_pdf   199 chunk
+atp_docs_heading_docx  199 chunk
+```
+
+层级三方对齐，所以 `golden_ids`（`sourceId#小节标题`）三种格式通用，
+消融表能加一组「同样的问题、同样的策略，只换语料格式」的单变量对照。
+
+---
+
+## D-023 — 移植 Spring AI 的 PDF outline 切块（以及不能照抄的地方）
+
+**日期** 2026-08-13
+
+### 出处与改动
+
+算法移植自 Spring AI 的 `ParagraphManager` / `ParagraphPdfDocumentReader`
+（Apache 2.0，作者 Christian Tzolov）。移植而非依赖：Spring AI 要 Java 17，
+且按 PDFBox 3.x 写。
+
+它的核心手法很漂亮 —— **不是按整页抽文本，而是按书签的 Y 坐标切矩形**，
+所以同一页上的几个小节能被正确分开。手册里一页放三四个小节是常态，
+只按页码的话它们会粘成一块。
+
+### ⚠️ 三处不能照抄
+
+**1. 坐标系原点不同（会静默出错）**
+
+```
+书签的 top（PDPageXYZDestination）   原点在左下角，Y 向上
+PDFTextStripperByArea 的 Rectangle  原点在左上角，Y 向下
+```
+
+必须 `Rectangle.y = pageHeight - pdfTop`。原版是直接填的。
+照抄会把区域搬到页面的另一半，抽出来的文本张冠李戴 —— **而且不报错**。
+这套换算由 `PdfSpikeTest` 第 3 个用例钉死。
+
+**2. 原版没有 headingPath**
+
+`Paragraph` 里有 `parent` 和 `children`，但 `get()` 只是 flatten 后按相邻对抽文本，
+**父子关系从没被用来生成标题路径**。而标题路径正是本项目 `HEADING_PATH` 的输入，
+所以补了 `Node.headingPath(skipLevelsAbove)` 沿 parent 链拼。
+
+**3. 原版没有图片处理**
+
+`ParagraphPdfDocumentReader` 只抽文本。PDF 内嵌图片的抽取、转文字、原图留存
+全部要自己做（见 D-025）。
+
+### Spring AI 也没做的：无 outline 降级
+
+原版直接 `Assert` 抛异常，让你改用 `PagePdfDocumentReader`。
+本项目同样抛异常但由调用方决定降级路径 —— **不静默返回空文档**，
+那会让一整篇内容凭空消失且无人察觉。
+
+（按字号启发式恢复标题的降级路径尚未实现，见「待决」。）
+
+---
+
+## D-024 — 生成 PDF/DOCX 测试语料时踩的三个坑
+
+**日期** 2026-08-13
+
+不能爬真实 PDF（项目红线），所以语料要自己造。本机没有 pandoc/libreoffice，
+但 PDFBox 能写 PDF、POI 能写 docx —— 生成器本身就是 Java，零外部工具。
+
+### 坑 1：Noto CJK 嵌不进去
+
+```
+UnsupportedOperationException: OTF fonts do not have a glyf table
+```
+
+`NotoSansCJK-Regular.ttc` 是 **OpenType/CFF**（PostScript 轮廓），
+而 **PDFBox 2.x 只能嵌 TrueType（glyf）** —— CFF 嵌入是 3.0 才支持的。
+
+系统上扫了一遍，唯一含 `glyf` 的 CJK 字体是 `DroidSansFallbackFull.ttf`。
+所以字体选择不能按「哪个好看」，要**按能力探测**：逐个候选真的 load 一次，
+第一个成功的用（`CjkFontLoader`）。
+
+### 坑 2：Droid Sans Fallback 没有 ASCII
+
+```
+No glyph for U+0043 (C) in font DroidSansFallback
+```
+
+它是 fallback 字体，**只有 CJK 字形，连大写 C 都没有**。而语料里满是
+`CLICK` / `CLICKABLE` / `data-testid`。
+
+解法是 `MixedFont`：CJK 走外挂字体、拉丁走内置 Helvetica，
+**按 encode 实际探测**而不是按 Unicode 范围猜 —— 全角标点、破折号、各种符号
+散落在十几个区段里，范围判断在真实语料上必碎。
+
+### 坑 3：书签坐标要在绘制前记
+
+`drawLine()` 会把 `cursorY` 往下推一整行。原来在 drawLine **之后**才算书签坐标，
+于是书签指到了标题文字的**下方** —— 解析侧从那个 Y 往下切，标题自己不在区域内，
+反而把下一节的标题吃了进去。
+
+症状：PDF 比 md 多出 4 个 section（那些「有标题无正文」的过渡层级
+抽到的正文正好是下一节的标题）。由 `PdfDocumentTest` 钉死。
+
+### 顺带发现的两个既存 bug
+
+**① `MarkdownDocument.flush()` 丢掉了每篇文档的引言**
+
+```java
+if (!content.isEmpty() && !stack.isEmpty()) {   // ← 第二个条件是错的
+```
+
+`# 标题` 之后、第一个 `##` 之前的引言，标题栈是空的，于是 **15 篇全被丢**，
+合计 1464 字符。丢的还都是高价值内容：
+
+```
+STD-001  制定日：2023-04-01 ／ 最終改訂：2025-11-20 ／ 管理：QA 基盤チーム
+```
+
+「这份规范谁维护、什么时候改的」在库里根本没有答案，且不报错。
+**这个 bug 一直存在于 md 入库链路**，是比对 md 与 PDF 文本层的字符差异才发现的。
+
+**② 图片路径 resolve 错了根**
+
+语料里 `img/manual/x.png` 相对的是 `docs/` 根，不是 md 文件所在目录。
+按后者 resolve 得到 `docs/manual/img/manual/…`，找不到文件 —— 静默跳过。
+改成按候选根目录依次试（`ImagePathResolver`）。
+
+---
+
+## D-025 — 图片链路：转文字进 embedding，原图进 payload
+
+**日期** 2026-08-13
+
+### 两样都要，缺一不可
+
+- **描述文本** → 拼进正文参与 embedding，让图里的内容可被检索
+- **原图地址** → 只进 payload，不参与 embedding，供引用展示
+
+因为**描述是有损的**。VLM 说「案例编辑页的步骤表单，wait_strategy 显示 CLICKABLE 且置灰」，
+用来检索够了，但用户看到引用时想确认的是「界面到底长什么样」。
+这也是 RAG 处理非文本内容的通行做法：**检索用文字投影，呈现用原件**。
+
+### ObjectStorage 抽象
+
+本地 demo 用文件系统，但企业里一定在 OSS/S3 上 —— 入库进程和查询进程通常不在
+一台机器上，本地路径在另一端打不开。payload 里存的**始终是 URL 而不是路径**，
+所以将来换 OSS，已入库的数据结构不用变。
+
+key 必须**稳定**（`images/{文档}/{文档}-img-N.png`，不掺时间戳）——
+消融实验会反复重跑，key 不稳就在存储里堆副本。由测试钉死。
+
+### ⚠️ 最坑的一个：裸 PDFStreamEngine 不注册操作符
+
+抽图必须带位置（一页多节时按页归属必然归错）。走 `PDFStreamEngine` 拦 `Do` 操作符，
+从 CTM 读位置。但：
+
+```
+[DIAG] 抽到图: page=2 top=1.0      ← translateY=0 + scalingFactorY=1，单位矩阵
+```
+
+**裸的 `PDFStreamEngine` 不注册任何操作符处理器**（`PDFTextStripper` 是在自己构造函数里注册的）。
+不注册的话 `cm`（矩阵变换）没有处理器，`super.processOperator` 直接忽略，
+CTM 永远停在单位矩阵 —— 所有图片位置都算成页面底部，全归到最后一个小节，**不报任何错**。
+
+补上 `Concatenate` / `Save` / `Restore` / `SetMatrix` / `SetGraphicsStateParameters`
+之后拿到 `top=781.89`，图片归进正确的小节。
+
+### 一个诚实的局限：PDF 下降级实现基本无效
+
+`AltTextImageDescriber` 从文件名榨关键词。md 场景下文件名是作者起的
+（`case-edit-wait-strategy`），有语义；**但 PDF 格式本身不存 alt**，
+文件名是我们自己编的，榨出来是「05 等待策略 img 1」，毫无信息量。
+
+DOCX 有救 —— 它能存 `docPr/@descr`。让生成器把 alt 写进去之后，零成本拿到：
+
+```
+［图片］案例编辑页里 CLICK 步骤的 wait_strategy 字段，显示 CLICKABLE 由平台自动补完
+```
+
+**结论：图片链路在 PDF 上真正依赖 VLM，降级实现只对 md 和 docx 有效。**
+这一点要在消融表里如实标注，不能拿 md 的图片效果去代表 PDF。
+
+---
+
+## D-026 — @Lazy 不是性能优化，是可用性问题
+
+**日期** 2026-08-13
+
+服务机被收回去用时（Qdrant 停了），发现**造语料这种纯本地的活也起不来**：
+
+```
+BeanCreationException: ... 连不上 Qdrant REST (http://…:6333)，服务没起？
+```
+
+`qdrantClient` 在构造时要连 Qdrant 做版本校验（D-002 的加固），而它是 eager singleton。
+
+只在 `@Bean` 方法上标 `@Lazy` **不够** —— `RetrieverFactory` 是无条件 `@Component`，
+构造注入 `QdrantClient`，一样会触发创建。注入点那一侧也得标，Spring 才会注入代理。
+
+两边都标之后：`--atp.qdrant.host=10.255.255.1`（不存在的地址）跑 `gen-corpus` 正常完成。
+版本校验该守的场景一个没少。
+
+---
+
 ## 待决 / 下一步
 
-> 最后更新 2026-08-12。M0~M3 已合入 main，PR #14（父子切块 + 图片）待 review。
+> 最后更新 2026-08-13。M0~M3 已合入 main，PR #14（父子切块 + 图片）待 review，
+> `demo1/m3e-multiformat`（PDF/DOCX 链路）开发中。
 
 **主线（核心交付物，尚未开始）**
 
@@ -943,8 +1194,18 @@ xt()="提交"]`）
    「标题路径前缀」的提升会被高估。建议两边都设 0（见 D-017 / D-021）
 2. **手册与规范不区别处理** —— `doc_group` 字段已存但检索时没用。零成本可改
 3. **payload 存两份正文** —— `embed_text` 与 `text_segment` 内容重复
-4. **两条链路未实现** —— 链路 A（多格式文本：PDF/docx/md）与链路 B（图表：VLM + 表格模型）
-   的设计见切分文档，代码只做了图片描述的抽象
+4. ~~**两条链路未实现**~~ —— 链路 A 已完成（D-022~D-025）：PDF/DOCX/md 三格式入库，
+   chunk 数 199 三方一致，图片抽取+转文字+原图 URL 全通。链路 B（表格模型）仍未做
+
+**多格式链路的已知缺口**
+
+- **无 outline 的 PDF 没有降级路径** —— 目前直接抛异常。企业里扫描件之外，
+  第三方拼接的 PDF 也常常没书签。需要按字号/字重启发式恢复标题层级
+- **PDF 下图片描述基本无效** —— 格式不存 alt，降级实现榨不出语义，真正依赖 VLM（D-025）
+- **表格没有专门处理** —— 实测本项目语料 0 处碎片，但那是语料表格短（3~5 行）的运气。
+  单张表超过约 525 字符必被拦腰切断且下半截无表头。三档改法见对话记录
+- **PDF 文本层与 md 不逐字一致** —— 34 处符号（→ ❌ ✅ ⚠ ★ ≠）因字体缺字形被丢弃。
+  跨格式对照出现差异时，这是第一个要排除的原因
 
 **留给 M5 的**
 

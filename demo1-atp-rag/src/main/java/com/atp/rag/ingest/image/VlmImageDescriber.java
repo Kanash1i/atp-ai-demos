@@ -121,15 +121,28 @@ public final class VlmImageDescriber implements ImageDescriber {
             return "";
         }
 
+        return describeBytes(bytes, imagePath, altText, context);
+    }
+
+    /**
+     * 字节版 —— PDF / DOCX 内嵌图片走这条路。
+     *
+     * <p>路径版读完文件后也委托到这里，所以「调 VLM + 失败降级」的逻辑只有一份。
+     */
+    @Override
+    public String describeBytes(byte[] content, String nameHint, String altText, String context) {
+        if (!configured || content == null || content.length == 0) {
+            return "";
+        }
         try {
-            String description = callVlm(bytes, imagePath, context);
+            String description = callVlm(content, nameHint, context);
             // 模型可能返回空串或纯空白，那和没描述是一回事
             return description.trim().isEmpty() ? "" : "［图片］" + description.trim();
         } catch (RuntimeException e) {
             // ⚠️ 单张图描述失败**不能**让整个入库失败。
             // 15 篇文档里有一张图调不通，不该导致 264 个点全部灌不进去 ——
             // 降级成没有描述，比整批失败合理得多
-            log.warn("VLM 描述失败，降级为无描述：{}（{}）", imagePath, e.getMessage());
+            log.warn("VLM 描述失败，降级为无描述：{}（{}）", nameHint, e.getMessage());
             return "";
         }
     }
