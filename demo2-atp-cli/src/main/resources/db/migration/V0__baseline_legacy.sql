@@ -18,8 +18,8 @@ CREATE TABLE tc_module (
   module_name VARCHAR(100) NOT NULL,
   PRIMARY KEY (module_id),
   UNIQUE KEY uk_module_code (module_code),
-  KEY idx_module_project (project_id),
-  CONSTRAINT fk_module_project FOREIGN KEY (project_id) REFERENCES tc_project (project_id)
+  -- 只建索引，不建外键约束（见 DECISIONS D-109）
+  KEY idx_module_project (project_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ── 案例主表 ──────────────────────────────────────────────
@@ -38,8 +38,10 @@ CREATE TABLE tc_case (
   updated_at   DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (case_id),
   UNIQUE KEY uk_case_code (case_code),
-  KEY idx_case_module (module_id),
-  CONSTRAINT fk_case_module FOREIGN KEY (module_id) REFERENCES tc_module (module_id)
+  -- ⚠️ 只建索引，不建外键约束。
+  --    引用完整性由写入方（CLI / 平台）保证 —— module_id 的有效性
+  --    在写之前由 atp validate 对着 tc_module 查，不指望数据库兜底。
+  KEY idx_case_module (module_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ── 步骤子表 ──────────────────────────────────────────────
@@ -49,11 +51,10 @@ CREATE TABLE tc_step (
   seq       INT         NOT NULL COMMENT '1..n 连续无跳号',
   step_json JSON        NOT NULL COMMENT '步骤内容',
   PRIMARY KEY (step_id),
-  -- 同一案例内 seq 不重复，靠唯一键而不是靠应用层自觉
-  UNIQUE KEY uk_step_case_seq (case_id, seq),
-  -- ⭐ CASCADE 是给清理任务用的：删弃置草稿时步骤必须跟着走，
-  --    否则每月清理会留下一堆孤儿步骤行。
-  CONSTRAINT fk_step_case FOREIGN KEY (case_id) REFERENCES tc_case (case_id) ON DELETE CASCADE
+  -- 同一案例内 seq 不重复。这条是【唯一键】不是外键 —— 它约束的是本表内部，
+  -- 与"不建外键"不冲突，该由数据库保证的仍然由数据库保证。
+  -- 顺带：case_id 是这个联合索引的最左列，删步骤时能走到它，不必再单建索引。
+  UNIQUE KEY uk_step_case_seq (case_id, seq)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ── 字典数据（00-SHARED-CONTEXT.md §1.2 的模块表，补上项目归属）──

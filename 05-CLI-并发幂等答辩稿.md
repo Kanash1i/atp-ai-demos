@@ -103,17 +103,12 @@ MCP 方案是在外面挂一张 ChangeSet 表来当仲裁点。但既然老平�
 ### 3.2 DDL（实际执行的那一支，已在 MySQL 8.4 上跑通）
 
 ```sql
--- ⚠️ 第一步：tc_step 的外键引用着 tc_case.case_id，
---    MySQL 不允许直接改被引用列的类型 —— 必须【先摘外键 → 改父 → 改子 → 再装回去】，
---    且父子列类型必须一致，否则装不回去。这一步很容易在生产迁移时才炸出来。
-ALTER TABLE tc_step DROP FOREIGN KEY fk_step_case;
-
-ALTER TABLE tc_case MODIFY COLUMN case_id VARCHAR(36) NOT NULL;   -- UUID 是 36 字符
+-- 第一步：主键改宽。UUID 是 36 字符，老列 VARCHAR(32) 装不下。
+-- ⚠️ 父子两边必须一起改：tc_step.case_id 存的就是 tc_case.case_id 的值，
+--    本库不建外键约束，但长度不一致仍会在写入时被静默截断。
+ALTER TABLE tc_case MODIFY COLUMN case_id VARCHAR(36) NOT NULL;
 ALTER TABLE tc_step MODIFY COLUMN case_id VARCHAR(36) NOT NULL,
                     MODIFY COLUMN step_id VARCHAR(36) NOT NULL;
-
-ALTER TABLE tc_step ADD CONSTRAINT fk_step_case
-  FOREIGN KEY (case_id) REFERENCES tc_case (case_id) ON DELETE CASCADE;
 
 -- 第二步：编写态与乐观锁
 ALTER TABLE tc_case
@@ -136,6 +131,7 @@ ALTER TABLE tc_case
   ADD COLUMN created_by VARCHAR(64) NULL COMMENT 'agent 身份，也是 AI 来源的唯一标记',
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整
+  -- ⚠️ 只在 MySQL 8.0.16+ 生效，5.7 会静默丢弃。见 §9④
   ADD CONSTRAINT ck_case_complete CHECK (
         status = 'AI_DRAFT'
      OR (case_code IS NOT NULL AND title    IS NOT NULL
@@ -143,13 +139,25 @@ ALTER TABLE tc_case
      AND author    IS NOT NULL)
   );
 
--- 清理任务只需要 status —— AI_DRAFT 这个状态只可能由 AI 编写路径产生
 CREATE INDEX idx_ai_draft_cleanup ON tc_case (status, created_at);
 ```
 
-**⭐ `tc_step` 的 `ON DELETE CASCADE` 是给清理任务用的。**
-每月删弃置草稿时，步骤必须跟着走 —— 否则清理任务本身会在子表里制造一堆孤儿行。
-**做清理设计时，第一件事是问"这行有没有子表"。**
+### 3.3 ⚠️ 全库不建外键约束
+
+`tc_case.module_id → tc_module`、`tc_step.case_id → tc_case` 都是**逻辑外键**，
+只建索引、不建 `FOREIGN KEY` 约束。引用完整性由**写入方**（CLI 与平台）保证。
+
+理由和代价都要能说：
+
+| | |
+|---|---|
+| **为什么不建** | 外键在写入路径上要查父表加锁，高并发下是热点；分库分表直接不可用；且它会让 DDL 变形 —— 被引用列连类型都改不了，必须 `DROP FK → 改父 → 改子 → 装回去` |
+| **代价①** | **没有 `ON DELETE CASCADE`。** 清理任务必须自己**先删子表再删父表**，顺序反了就找不到要删的步骤了（见 §8） |
+| **代价②** | **数据库不再挡编造的 `module_id`。** 「防模型编造模块」这条责任转移到了 `atp validate`，它必须对着 `tc_module` 查 |
+
+> **面试点**：讲"不建外键"时，只说性能理由是不够的 ——
+> **要能说出你把那两件事接管到哪儿去了。**
+> 约束撤掉不等于不变式消失，只是换了个人负责。说不出接管方，那就是漏了。
 
 **⭐ 第 5 条要单独讲：放宽 `NOT NULL` 是代价，`CHECK` 把它挣回来。**
 
@@ -297,40 +305,52 @@ UPDATE tc_case SET status='DRAFT', version=version+1 WHERE case_id = ?;   // ←
 
 ## 8. 草稿清理：XXL-JOB 每月一次
 
+⚠️ 没有外键级联，所以**必须自己删两次，且顺序不能反**。
+
 ```java
 @XxlJob("atpDraftCleanupHandler")
 public void cleanup() {
-    long cutoff = System.currentTimeMillis() - Duration.ofDays(30).toMillis();
-    int deleted, total = 0;
+    Timestamp cutoff = Timestamp.from(Instant.now().minus(30, ChronoUnit.DAYS));
+    int total = 0, batch;
     do {
-        deleted = jdbc.update("""
-            DELETE FROM tc_case
-             WHERE status = 'AI_DRAFT' AND case_type = 'AI' AND created_at < ?
-             LIMIT 1000
-            """, new Timestamp(cutoff));
-        total += deleted;
-    } while (deleted == 1000);
+        // ① 先圈出这一批要删的 case_id（走 idx_ai_draft_cleanup）
+        List<String> ids = jdbc.queryForList("""
+                SELECT case_id FROM tc_case
+                 WHERE status = 'AI_DRAFT' AND created_at < ?
+                 LIMIT 1000
+                """, String.class, cutoff);
+        if (ids.isEmpty()) break;
+
+        // ② 先删子表 —— 必须在删父表之前，父表没了就再也定位不到这些步骤
+        jdbc.update("DELETE FROM tc_step WHERE case_id IN (:ids)", Map.of("ids", ids));
+        // ③ 再删父表
+        batch = jdbc.update("DELETE FROM tc_case WHERE case_id IN (:ids)", Map.of("ids", ids));
+        total += batch;
+    } while (batch == 1000);
     XxlJobHelper.log("清理弃置 AI 草稿 {} 条", total);
 }
 ```
 
 Cron：`0 0 3 1 * ?`（每月 1 号 03:00）。
 
-要讲的三点：
+要讲的四点：
 
-1. **必须分批 + `LIMIT`。** 一条 `DELETE WHERE created_at < ?` 扫全表会长时间持锁，
-   在生产库上是事故。走 `idx_draft_cleanup` 索引，每批 1000 行。
-2. **保留期一个月，不是 30 分钟。** 因为确认人是 QA 同事，可能隔几天才回来看。
+1. **⭐ 先子后父，顺序不能反。** 删完 `tc_case` 再想删步骤，`WHERE` 条件已经查不到了 ——
+   直接产生永久孤儿行，而且**没有任何报错**。
+   > 做清理设计时第一件事是问：**这行有没有子表？没有级联的话谁来删？**
+   >
+   > 这个坑我在写测试时真踩了：`@BeforeEach` 只 `DELETE FROM tc_case`，
+   > 上一个用例的孤儿步骤漏进下一个用例，测试互相污染。
+2. **必须分批 + `LIMIT`。** 一条 `DELETE WHERE created_at < ?` 扫全表会长时间持锁，
+   在生产库上是事故。走 `idx_ai_draft_cleanup` 索引，每批 1000 行。
+3. **保留期一个月，不是 30 分钟。** 确认人是 QA 同事，可能隔几天才回来看。
    TTL 是按**人的节奏**定的，不是按技术方便定的。
-3. **⭐ 一个月 + 硬删除，让 `EXPIRED` 这个状态不需要存在。**
+4. **⭐ 一个月 + 硬删除，让 `EXPIRED` 这个状态不需要存在。**
    过期的表现就是**行不存在 → `NOT_FOUND`**，状态机少一个状态。
-   （对比 MCP 方案里的 30 分钟 TTL + `EXPIRED` 状态——那是被"外挂表"的形态逼出来的复杂度。）
-
----
 
 ## 9. 主动交代的边界（比宣称"全链路幂等"可信得多）
 
-被问"你这套哪里还不够"时，答这三条：
+被问"你这套哪里还不够"时，答这四条：
 
 **① CLI 的版本收敛是 O(N)。**
 20 台机器上 20 个 CLI 版本，规则改一条要全量升级，且旧版本在升级前一直产生不合规数据。
@@ -349,6 +369,31 @@ WHERE status != 'DELETED'               -- ⚠️ 黑名单：新枚举默认被
 ```
 
 黑名单写法会把草稿静默捞进结果集。grep 一遍 status 的过滤方式即可，命中就那几处。
+
+**④ ⚠️ `ck_case_complete` 在 MySQL 5.7 上是假的。**
+
+老平台的技术栈是 Java 8 + Spring 4 + **MySQL 5.7**。
+**5.7 会解析 `CHECK` 子句然后直接丢弃它** —— 建表不报错、不告警，
+`SHOW CREATE TABLE` 里那条约束干脆就不出现。
+
+实测（同一份 V0+V1，同一条残缺草稿，同一条 commit 语句）：
+
+| | MySQL 5.7.44 | MySQL 8.4 |
+|---|---|---|
+| 建表时 | 静默丢弃约束，无任何提示 | 约束建立 |
+| commit 一条 `case_code/module_id/priority/author` 全空的草稿 | ✅ **提交成功** | ❌ `ERROR 3819: Check constraint 'ck_case_complete' is violated` |
+| 结果 | 库里多出一条 `status=DRAFT` 但必填字段全 NULL 的案例，执行器会读到它 | 案例仍停在 `AI_DRAFT` |
+
+**危险的地方在于我们的测试发现不了**：Testcontainers 起的是 8.4，用例全绿。
+**只有在真实平台上才会炸，而且炸的时候没有报错，只是数据脏了。**
+
+三个选项：**(a)** 确认/推动老平台 DB 升到 8.0.16+（企业里常见，最省事）；
+**(b)** 改用 `BEFORE UPDATE` 触发器（5.7 可用，但难测、易被 DBA 顺手删掉）；
+**(c)** 退回应用层校验（但这就推翻了 §3.2 "能用约束表达的不要用代码表达"那条论点）。
+
+> **这条在面试里是加分项不是减分项。** 说得出"我知道这条约束在 5.7 上是假的、
+> 而且我的测试环境掩盖了它"，比默认它一定生效强得多 ——
+> **它证明你会区分"我验证过的环境"和"它真正要跑的环境"。**
 
 ### 什么时候这套不成立，必须回到 MCP server 方案
 

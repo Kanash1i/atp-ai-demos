@@ -65,6 +65,8 @@ docker-java 只从**系统属性** `api.version` 取值。
 
 **收益**：`commit` 那条 UPDATE 天然被数据库守门 —— 残缺案例迁不出 `AI_DRAFT`，
 应用层不必再写一遍"提交前检查必填"。
+
+⚠️ **前提是 MySQL 8.0.16+**。5.7 上这条约束是假的，见 **D-108**。
 `CommitGuardTest.incompleteDraftBlockedByCheckConstraint` 锁定这条。
 
 > 原则：**能用约束表达的，不要用代码表达。** 代码会被绕过、分支会漏，约束不会。
@@ -126,7 +128,7 @@ AI 草稿日增百级，暂不优化；要优化就改自增 BIGINT 聚簇 + UUI
 
 真实定位一条案例是"某个项目的某个模块里的某个案例"。原文档只有 `tc_module`，缺一层。
 
-**决策**：新增 `tc_project`，`tc_module.project_id` 外键指向它。
+**决策**：新增 `tc_project`，`tc_module.project_id` 指向它（**逻辑外键，无 FK 约束**，见 D-109）。
 **`tc_case` 不冗余 project_id** —— 项目通过 `tc_case → tc_module → tc_project` 两跳 join 取得。
 
 **代价**：案例列表按项目过滤要多一次 join。真实遗留平台多半会把 `project_id` 冗余到
@@ -137,33 +139,36 @@ AI 草稿日增百级，暂不优化；要优化就改自增 BIGINT 聚簇 + UUI
 
 ---
 
-## D-107 · `tc_step` 建表，以及改父表主键必须先摘外键
+## D-107 · `tc_step` 建表；主键改宽的迁移代价（外键撤除后已消失）
 
 **表结构**（按需求只保留三块核心 + `seq`）：
 
 ```
 step_id   VARCHAR(36) PK      子表主键 UUID
-case_id   VARCHAR(36) FK      对应父表 UUID，ON DELETE CASCADE
+case_id   VARCHAR(36)         对应父表 UUID —— 逻辑外键，无 FK 约束（D-109）
 seq       INT                 1..n 连续无跳号，UNIQUE(case_id, seq)
 step_json JSON                步骤内容
 ```
 
 **`seq` 为什么没被省掉**：步骤是有序的，顺序不能靠"插入顺序"隐式表达。
-`UNIQUE (case_id, seq)` 让"同一案例内 seq 不重复"由数据库保证，而不是靠应用层自觉。
+`UNIQUE (case_id, seq)` 是**本表内部**的唯一键，不是外键 —— 与 D-109 不冲突，
+该由数据库保证的仍然由数据库保证。
+顺带：`case_id` 是这个联合索引的最左列，删步骤时能走到它，不必再单建索引。
 
-**`ON DELETE CASCADE` 为什么必须有**：每月清理弃置草稿时，步骤必须跟着走，
-否则**清理任务自己会在子表里制造孤儿行**。
-> 做清理设计时第一件事是问：**这行有没有子表？**
-
-**⚠️ 迁移踩点**：`tc_step.case_id` 外键引用 `tc_case.case_id`，
-MySQL **不允许直接修改被外键引用的列类型**。V1 把主键从 `VARCHAR(32)` 改到 `VARCHAR(36)` 必须：
+**⚠️ 曾经的迁移踩点，现在没有了**：最初 `tc_step.case_id` 带 `FOREIGN KEY` 引用
+`tc_case.case_id`，而 MySQL **不允许直接修改被外键引用的列类型**。
+V1 把主键从 `VARCHAR(32)` 改到 `VARCHAR(36)` 当时必须：
 
 ```
 DROP FOREIGN KEY → 改父列 → 改子列 → ADD CONSTRAINT 装回去
 ```
 
-父子列类型不一致时装不回去，所以两边必须一起改。
-这类问题在只建单表的测试里发现不了，**必须有真实的父子表基线才会暴露**。
+D-109 撤除全部外键后，这一套不再需要，V1 直接两条 `ALTER` 就完了。
+**记录在此是因为它正是"外键让 DDL 变形"的教科书案例，面试可以直接用。**
+
+**⚠️ 仍然存在的约束**：父子两边的列宽**必须一起改**。
+没有外键强制不代表可以只改一边 —— `tc_step.case_id` 存的就是 `tc_case.case_id` 的值，
+长度不一致会在写入时被**静默截断**，比报错更难查。
 
 ---
 
@@ -171,9 +176,23 @@ DROP FOREIGN KEY → 改父列 → 改子列 → ADD CONSTRAINT 装回去
 
 `00-SHARED-CONTEXT.md` §1.1 写明老平台是 **Java 8 + Spring 4 + MySQL 5.7**。
 
-**MySQL 5.7 会解析 `CHECK` 约束但直接忽略它，不报错、不生效。**
-也就是说 D-102 的 `ck_case_complete` 在 5.7 上等于不存在 ——
-残缺的案例可以照常 commit 出去，而且没有任何征兆。
+**MySQL 5.7 会解析 `CHECK` 子句然后直接丢弃，不报错、不告警、不生效。**
+
+**已实测**（`mysql:5.7.44` vs `mysql:8.4`，同一份 V0+V1，同一条 SQL）：
+
+```
+5.7  应用 V1                       → 无任何输出，无报错
+5.7  SHOW CREATE TABLE tc_case     → 找不到 ck_case_complete，约束根本没建
+5.7  INSERT 残缺草稿 + commit UPDATE → 成功，得到一条 status=DRAFT 且
+                                       case_code/module_id/priority/author 全 NULL 的案例
+8.4  同一条 commit UPDATE           → ERROR 3819 (HY000): Check constraint
+                                       'ck_case_complete' is violated
+```
+
+**最危险的地方是我们的测试发现不了**：Testcontainers 起的是 8.4，
+`CommitGuardTest.incompleteDraftBlockedByCheckConstraint` 一直是绿的。
+**只有在真实平台上才会炸，而且炸的时候没有报错，只是数据脏了** ——
+执行器会读到一条必填字段全空的 DRAFT 案例。
 
 （`JSON` 类型 5.7.8+ 有，`DATETIME(3)` 5.7 也有，只有 `CHECK` 是断的。）
 
@@ -183,5 +202,41 @@ DROP FOREIGN KEY → 改父列 → 改子列 → ADD CONSTRAINT 装回去
 2. 改用 `BEFORE UPDATE` 触发器 —— 5.7 可用，但触发器难测、难看、易被 DBA 删
 3. 退回应用层校验 —— 但这就推翻了"能用约束表达的不要用代码表达"这条论点
 
-**在面试里这反而是个好料**：说得出"我知道这条约束在 5.7 上是假的"，
-比默认它一定生效要强。
+**在面试里这是加分项不是减分项**：说得出"我知道这条约束在 5.7 上是假的、
+而且我的测试环境掩盖了它"，比默认它一定生效强得多 ——
+**它证明你会区分「我验证过的环境」和「它真正要跑的环境」。**
+
+⚠️ 若最终选 (a)（DB 升 8.0），要在 `00-SHARED-CONTEXT.md` §1.1 里把
+"MySQL 5.7" 改掉，否则契约文档和实现继续互相矛盾。
+
+---
+
+## D-109 · 全库不建外键约束，引用完整性由写入方保证
+
+**决策**：撤除 `fk_module_project` / `fk_case_module` / `fk_step_case`，
+只保留对应的索引（`idx_module_project` / `idx_case_module` / `uk_step_case_seq`）。
+
+**为什么**：
+
+- 外键在写入路径上要查父表并加锁，高并发下是热点
+- 分库分表后外键直接不可用
+- **它让 DDL 变形** —— 被引用列连类型都改不了（见 D-107），迁移成本被放大
+
+**两个代价，必须说得出接管方**：
+
+| 撤掉的是什么 | 谁接管 |
+|---|---|
+| `ON DELETE CASCADE`（删案例自动删步骤） | **M5 的清理任务**：必须自己 `先删 tc_step → 再删 tc_case`，顺序反了就定位不到步骤 |
+| `module_id` 引用有效性（挡模型编造的模块） | **M3 的 `atp validate`**：必须对着 `tc_module` 查 |
+
+`SchemaShapeTest` 里两个用例把这两条代价钉死了：
+`deletingCaseLeavesOrphanSteps`（只删父表会留孤儿）和
+`fabricatedModuleIdIsAcceptedByDb`（M999 照样写得进去）。
+**它们断言的是"缺陷"而不是"功能"，目的是防止后面的人想当然。**
+
+**⚠️ 这个坑当场就咬了一次**：测试基类的 `@BeforeEach` 原本只 `DELETE FROM tc_case`，
+上一个用例留下的孤儿步骤漏进下一个用例，测试互相污染。
+`truncate()` 改成先删 `tc_step` 再删 `tc_case`。
+
+> **面试要点**：讲"不建外键"只说性能理由是不够的。
+> **约束撤掉不等于不变式消失，只是换了个人负责 —— 说不出接管方，那就是漏了。**

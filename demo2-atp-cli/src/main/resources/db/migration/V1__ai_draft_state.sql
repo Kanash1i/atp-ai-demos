@@ -1,31 +1,24 @@
 -- V1 · AI 案例编写的状态机改造
 -- 这是要真正执行到老平台的那一支。设计依据：05-CLI-并发幂等答辩稿.md §3。
+--
+-- ✅ 本库不建外键约束（DECISIONS D-109），所以主键改宽不需要
+--    "先摘外键 → 改父 → 改子 → 再装回去" 那套 —— 父子两张表各改各的即可。
 
--- ─────────────────────────────────────────────────────────────
--- 第一步：主键改宽。
--- ⚠️ tc_step 的外键引用着 tc_case.case_id，MySQL 不允许直接改被引用列的类型，
---    必须【先摘外键 → 改父 → 改子 → 再装回去】。
---    父子列类型不一致时装不回去，所以两边必须一起改。
--- ─────────────────────────────────────────────────────────────
-ALTER TABLE tc_step DROP FOREIGN KEY fk_step_case;
-
+-- ── 第一步：主键改宽 ──────────────────────────────────────────
 -- UUID 是 36 字符，老列 VARCHAR(32) 装不下。
 -- 改造后 AI 案例的主键由 CLI 本地生成，人工案例仍走平台雪花 ID ——
 -- 两者不冲突，唯一约束只关心"不重复"，不关心谁生成的。
+-- ⚠️ 父子两边必须一起改：tc_step.case_id 存的就是 tc_case.case_id 的值，
+--    虽然没有外键约束强制，长度不一致仍会在写入时被截断。
 ALTER TABLE tc_case
   MODIFY COLUMN case_id VARCHAR(36) NOT NULL
         COMMENT 'AI 案例=客户端生成的 UUID；人工案例=平台雪花 ID';
 
 ALTER TABLE tc_step
-  MODIFY COLUMN case_id VARCHAR(36) NOT NULL COMMENT '父表主键',
+  MODIFY COLUMN case_id VARCHAR(36) NOT NULL COMMENT '父表主键（逻辑外键，无约束）',
   MODIFY COLUMN step_id VARCHAR(36) NOT NULL COMMENT '子表主键，AI 生成时同为 UUID';
 
-ALTER TABLE tc_step
-  ADD CONSTRAINT fk_step_case FOREIGN KEY (case_id) REFERENCES tc_case (case_id) ON DELETE CASCADE;
-
--- ─────────────────────────────────────────────────────────────
--- 第二步：编写态与乐观锁
--- ─────────────────────────────────────────────────────────────
+-- ── 第二步：编写态与乐观锁 ────────────────────────────────────
 ALTER TABLE tc_case
 
   -- ⚠️ 新增 AI_DRAFT，**不复用已有的 DRAFT**。
@@ -37,7 +30,6 @@ ALTER TABLE tc_case
          NOT NULL DEFAULT 'DRAFT',
 
   -- 编写期这些字段还填不出来，只能放宽 NOT NULL。
-  -- 放宽是代价，最后那条 CHECK 把它按状态挣回来。
   -- ⭐ case_code 放宽后仍带 UNIQUE：MySQL 的唯一索引允许多个 NULL，
   --    所以并存任意多条尚未编号的草稿不会互相撞键。
   MODIFY COLUMN case_code VARCHAR(64)  NULL,
@@ -55,8 +47,8 @@ ALTER TABLE tc_case
   ADD COLUMN created_by VARCHAR(64) NULL COMMENT '发起编写的 agent 身份，也是 AI 来源的唯一标记',
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整。
-  --    这样 commit 那条 UPDATE 天然被数据库守门 —— 不完整的案例根本迁不出去，
-  --    不需要在应用层再写一遍"提交前检查必填"。
+  -- ⚠️⚠️ 只在 MySQL 8.0.16+ 生效。5.7 会解析这段但静默丢弃，不报错不告警。
+  --      老平台的 DB 版本必须先确认，见 DECISIONS D-108。
   ADD CONSTRAINT ck_case_complete CHECK (
         status = 'AI_DRAFT'
      OR (case_code IS NOT NULL AND title    IS NOT NULL
@@ -66,4 +58,5 @@ ALTER TABLE tc_case
 
 -- 清理任务（XXL-JOB 每月一次）要走的索引。
 -- 只需要 status —— AI_DRAFT 这个状态只可能由 AI 编写路径产生。
+-- ⚠️ 没有 ON DELETE CASCADE，清理任务必须自己【先删 tc_step 再删 tc_case】。
 CREATE INDEX idx_ai_draft_cleanup ON tc_case (status, created_at);

@@ -45,6 +45,11 @@ abstract class MySqlTestBase {
     @BeforeEach
     void truncate() throws SQLException {
         try (Connection c = connections.open(); Statement st = c.createStatement()) {
+            // ⚠️ 顺序不能反，也不能只删父表。
+            //    本库不建外键、没有 ON DELETE CASCADE，只删 tc_case 会把孤儿步骤
+            //    漏给下一个用例 —— 这个坑在写 SchemaShapeTest 时真的踩到了。
+            //    M5 的清理任务面对的是同一个约束。
+            st.execute("DELETE FROM tc_step");
             st.execute("DELETE FROM tc_case");
         }
     }

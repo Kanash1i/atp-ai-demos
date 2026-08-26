@@ -27,19 +27,46 @@ class SchemaShapeTest extends MySqlTestBase {
     }
 
     @Test
-    @DisplayName("删案例级联删步骤 —— 每月清理任务不会留下孤儿步骤行")
-    void deletingCaseCascadesToSteps() throws SQLException {
+    @DisplayName("⚠️ 无外键 = 无级联：只删父表会留下孤儿步骤，清理任务必须自己删两次")
+    void deletingCaseLeavesOrphanSteps() throws SQLException {
         String caseId = UUID.randomUUID().toString();
         store.draft(caseId, PC_WEB, "购物车结算", "agent-a");
         insertStep(caseId, 1);
         insertStep(caseId, 2);
-        assertThat(count("SELECT COUNT(*) FROM tc_step WHERE case_id = '" + caseId + "'")).isEqualTo(2);
 
         try (var c = connections.open(); Statement st = c.createStatement()) {
             st.executeUpdate("DELETE FROM tc_case WHERE case_id = '" + caseId + "'");
         }
 
-        assertThat(count("SELECT COUNT(*) FROM tc_step WHERE case_id = '" + caseId + "'")).isZero();
+        // 这不是 bug，是"不建外键"的必然代价 —— 这个断言存在的意义就是把代价钉死，
+        // 免得 M5 写清理任务时想当然以为有级联。
+        assertThat(count("SELECT COUNT(*) FROM tc_step WHERE case_id = '" + caseId + "'"))
+                .as("父表没了，步骤还在 —— 孤儿行")
+                .isEqualTo(2);
+    }
+
+    @Test
+    @DisplayName("清理任务的正确删法：先子后父（顺序反了就找不到要删的步骤了）")
+    void cleanupMustDeleteChildrenFirst() throws SQLException {
+        String caseId = UUID.randomUUID().toString();
+        store.draft(caseId, PC_WEB, "购物车结算", "agent-a");
+        insertStep(caseId, 1);
+
+        try (var c = connections.open(); Statement st = c.createStatement()) {
+            // ① 先按条件选出这一批的 case_id（真实清理任务里带 LIMIT 分批）
+            //    ② 再删子表 —— 必须在删父表之前，否则条件就查不到了
+            st.executeUpdate("""
+                    DELETE FROM tc_step WHERE case_id IN (
+                        SELECT case_id FROM (
+                            SELECT case_id FROM tc_case WHERE status = 'AI_DRAFT'
+                        ) t)
+                    """);
+            // ③ 最后删父表
+            st.executeUpdate("DELETE FROM tc_case WHERE status = 'AI_DRAFT'");
+        }
+
+        assertThat(count("SELECT COUNT(*) FROM tc_step")).isZero();
+        assertThat(count("SELECT COUNT(*) FROM tc_case")).isZero();
     }
 
     @Test
@@ -55,15 +82,24 @@ class SchemaShapeTest extends MySqlTestBase {
     }
 
     @Test
-    @DisplayName("module_id 必须存在于 tc_module —— 外键挡住模型编造的模块")
-    void fabricatedModuleIdRejectedByForeignKey() {
+    @DisplayName("⚠️ 数据库不挡编造的 module_id —— 引用完整性是写入方的责任")
+    void fabricatedModuleIdIsAcceptedByDb() throws SQLException {
         String caseId = UUID.randomUUID().toString();
         store.draft(caseId, PC_WEB, "购物车结算", "agent-a");
 
         var fabricated = new dev.kanashi.atp.cli.model.CaseDraft(
                 "ATP-CART-0002", "购物车结算", "M999", "P1", "qa.kanashi", null, "{}");
 
-        assertThat(store.update(caseId, 0, fabricated).code()).isEqualTo(ExitCode.INFRA_ERROR);
+        // 不建外键，所以 M999 照样写得进去。
+        // 这个断言不是在庆祝，是在钉死一条责任转移：
+        // 「防模型编造 module_id」从数据库挪到了 atp validate（M3），那里必须对着 tc_module 查。
+        assertThat(store.update(caseId, 0, fabricated).code()).isEqualTo(ExitCode.OK);
+        assertThat(count("""
+                SELECT COUNT(*) FROM tc_case c
+                 WHERE c.module_id NOT IN (SELECT module_id FROM tc_module)
+                """))
+                .as("库里已经存在一条引用了不存在模块的案例")
+                .isEqualTo(1);
     }
 
     @Test
