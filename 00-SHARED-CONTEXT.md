@@ -3,6 +3,11 @@
 > 这份文档定义了两个 demo 共用的**虚构世界观、模型服务、法律边界**。
 > demo1 和 demo2 在各自的 session 里开发，但它们描述的是**同一个平台**。
 > 修改本文档中的任何"契约"(平台名、DB schema、Action 枚举)必须同步另一个 demo。
+>
+> **⚠️ 2026-08-19 更新**：demo1（Java 8 + langchain4j）已归档，
+> 知识侧改为在 Java 21 引擎上重做 —— 见 **[`03-HANDOFF-rag-v2.md`](03-HANDOFF-rag-v2.md)**。
+> 本文档的 **§1 世界观、§2 机器拓扑、§3 模型选型全部依然有效**；
+> 受影响的只有 §2.1(b) 的 Qdrant 版本约束和 §4 的技术栈标注，各自已就地加注。
 
 ---
 
@@ -25,9 +30,9 @@
 ### 1.1 它是什么
 
 - 测试工程师通过 Web 界面编写**测试案例**，不写代码
-- 案例存在 **MySQL** 里，是**关系型结构**（不是 YAML/脚本文件）
+- 案例存在 **PostgreSQL** 里，是**关系型结构**（不是 YAML/脚本文件）
 - 独立的**执行器 (Executor)** 服务从 DB 读案例，驱动 Selenium Grid 执行
-- 平台已运行多年，技术栈是 **Java 8 + Spring 4 + MySQL 5.7**（这是 demo1 用 Java 8 的现实理由）
+- 平台已运行多年，技术栈是 **Java 8 + Spring 4 + PostgreSQL**（这是 demo1 用 Java 8 的现实理由）
 
 ### 1.2 案例的领域模型（**这是两个 demo 的共享契约**）
 
@@ -295,6 +300,10 @@ docker run -d --name qdrant --restart unless-stopped \
 
 > ⚠️⚠️ **tag 必须钉死 `v1.11.5`，不要用 `latest`。**
 >
+> **（2026-08-19 补充：`v1.11.5` 这个具体版本是 langchain4j 0.35 带来的，
+> demo1 归档后不再需要 —— v2 用 Java 21 + Spring AI，可以升到当前版本。
+> 但「**钉死 tag、不要用 `latest`**」这条永远有效，那次踩坑的直接原因就是 `latest`。）**
+>
 > Qdrant **1.12 起**把 dense 向量从 `Vector.data`(field 1) 挪进了 oneof 的 `dense`(field 101)。
 > langchain4j-qdrant **0.35.0** 传递依赖的 qdrant-client 1.11.0 不认识 field 101，
 > 会把它当 unknown field 丢掉 → 检索时拿到**空向量**。
@@ -533,19 +542,23 @@ Qwen3-Embedding 是**非对称**的 —— query 侧要加 instruction prefix，
 ```
         ┌──────────────────────────────────────────────┐
         │              ATP 遗留测试平台                  │
-        │           Java 8 / Spring 4 / MySQL          │
+        │        Java 8 / Spring 4 / PostgreSQL        │
         └──────────────────────────────────────────────┘
                  ▲                          ▲
                  │                          │
     ┌────────────┴──────────┐   ┌───────────┴─────────────┐
-    │  demo1: 知识侧          │   │  demo2: 生产侧            │
+    │  知识侧 (atp-rag)      │   │  生产侧 (atp-mcp)         │
     │  RAG 知识助手           │   │  MCP 规范化服务            │
     │                       │   │                          │
     │  让人更快学会用平台      │   │  让 agent 产出能进平台     │
-    │  Java 8 + langchain4j │   │  Java 17 + MCP SDK       │
+    │  Java 21 + Spring AI  │   │  Java 17 + Spring AI 2.0 │
     │  "读"                  │   │  "写"                    │
     └───────────────────────┘   └──────────────────────────┘
 ```
+
+> **2026-08-19**：知识侧原为 Java 8 + langchain4j（已归档），现改为在买来的 Java 21 引擎上重做。
+> 两侧计划合并进**同一个 Maven 多模块仓库**、**统一 Spring AI**，理由见 `03-HANDOFF-rag-v2.md` §4.1。
+> 「读 + 写」这条主线不变 —— 它才是面试骨架，技术栈只是实现。
 
 **一句话主线**：
 > "我们的老平台有两个瓶颈：新人上手慢，以及 AI 生成的案例进不了库。
@@ -562,9 +575,10 @@ Qwen3-Embedding 是**非对称**的 —— query 侧要加 instruction prefix，
 ```
 /home/kanashi/Applications/interview-demos/
 ├── 00-SHARED-CONTEXT.md          ← 本文档
-├── 01-HANDOFF-demo1-rag.md       ← demo1 session 的入口文档
-├── 02-HANDOFF-demo2-mcp.md       ← demo2 session 的入口文档
-├── demo1-atp-rag/                ← demo1 session 在此目录启动
+├── 01-HANDOFF-demo1-rag.md       ← 🗄️ 已归档（Java 8 路线）
+├── 02-HANDOFF-demo2-mcp.md       ← demo2 (MCP) 的入口文档
+├── 03-HANDOFF-rag-v2.md          ← ⭐ 知识侧当前的入口文档
+├── demo1-atp-rag/                ← 🗄️ 已归档。语料与 DECISIONS.md 仍在用
 └── demo2-atp-mcp/                ← demo2 session 在此目录启动
 ```
 

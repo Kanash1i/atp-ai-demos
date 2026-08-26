@@ -17,7 +17,7 @@ import java.util.stream.IntStream;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @DisplayName("commit：一条 CAS UPDATE 扛住并发与重放")
-class ConcurrentCommitTest extends MySqlTestBase {
+class ConcurrentCommitTest extends PgTestBase {
 
     @Test
     @DisplayName("10 个线程并发提交同一个 id+version → 1 个真提交 + 9 个幂等重放，全部退出码 0")

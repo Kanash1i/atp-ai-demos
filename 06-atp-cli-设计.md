@@ -13,7 +13,7 @@
 | 语言 | Java 21 | 与 know-engine 一致 |
 | CLI 框架 | **picocli 4.7.x** | 子命令、参数校验、自动 `--help` |
 | **不用 Spring Boot** | 裸 JDBC + Jackson | ⭐ CLI 被 agent **高频反复调用**，冷启动是真实成本：Spring Boot ≈ 1.5s，picocli fat jar ≈ 300ms。一次会话调 20 次就是 24s vs 6s |
-| DB | MySQL Connector/J，**每次调用一条连接** | 进程活 300ms，连接池没有意义 |
+| DB | **PostgreSQL**，pgjdbc，**每次调用一条连接** | 进程活 300ms，连接池没有意义；错误判定走 SQLSTATE 不走厂商 errorCode |
 | 打包 | `maven-shade-plugin` fat jar + `bin/atp` 包装脚本 | 后续可上 GraalVM native（≈40ms），但不是 demo 必需 |
 
 > **面试点**：这是个反直觉但正确的取舍——"我是 Spring 工程师，但这里我没用 Spring，
@@ -283,7 +283,7 @@ metadata:
 
 | # | 内容 | 产出 |
 |---|---|---|
-| M1 | DDL 迁移脚本 + `CaseStore` 的 draft/show/update/commit | Testcontainers 起 MySQL，`ConcurrentCommitTest` 绿 |
+| M1 | DDL 迁移脚本 + `CaseStore` 的 draft/show/update/commit | Testcontainers 起 PostgreSQL，`ConcurrentCommitTest` 绿 |
 | M2 | picocli 命令层 + 退出码 + `--json` 信封 | `bin/atp` 能跑通完整七步 |
 | M3 | `validate` / `lint-locator` 纯本地规则 | 断言零网络零模型 |
 | M4 | opencode 接入（`opencode.json` + SKILL.md） | 在 opencode 里走完演示脚本 |

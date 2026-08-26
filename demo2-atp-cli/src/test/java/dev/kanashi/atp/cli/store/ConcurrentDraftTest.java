@@ -19,7 +19,7 @@ import java.util.concurrent.Future;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @DisplayName("draft：主键唯一约束即幂等约束")
-class ConcurrentDraftTest extends MySqlTestBase {
+class ConcurrentDraftTest extends PgTestBase {
 
     @Test
     @DisplayName("10 个线程用同一个 UUID 建草稿 → 只插入 1 行，其余 9 个是幂等重放且退出码 0")

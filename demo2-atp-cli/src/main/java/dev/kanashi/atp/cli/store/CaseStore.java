@@ -9,7 +9,6 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLIntegrityConstraintViolationException;
 import java.util.Optional;
 
 /**
@@ -26,11 +25,16 @@ import java.util.Optional;
  *   <li><b>{@code affectedRows == 0} 不能直接抛错</b> —— 必须读回来分情况，
  *       否则幂等重放永远过不去，agent 会无限重试。</li>
  * </ol>
+ *
+ * <p>数据库是 PostgreSQL。错误判定一律走 <b>SQLSTATE</b> 而不是厂商 errorCode ——
+ * SQLSTATE 是 SQL 标准的一部分，这样这段逻辑换库也不用改。
  */
 public final class CaseStore {
 
-    /** MySQL: ER_CHECK_CONSTRAINT_VIOLATED */
-    private static final int ERR_CHECK_VIOLATED = 3819;
+    /** SQL 标准：唯一约束冲突。 */
+    private static final String SQLSTATE_UNIQUE_VIOLATION = "23505";
+    /** SQL 标准：CHECK 约束冲突。 */
+    private static final String SQLSTATE_CHECK_VIOLATION = "23514";
 
     private static final String SELECT_COLS =
             "case_id, case_type, status, version, title, draft_json";
@@ -55,7 +59,7 @@ public final class CaseStore {
             try (PreparedStatement ps = conn.prepareStatement("""
                     INSERT INTO tc_case (case_id, case_type, status, version,
                                          title, created_by, created_at, updated_at)
-                    VALUES (?, ?, 'AI_DRAFT', 0, ?, ?, NOW(3), NOW(3))
+                    VALUES (?, ?::tc_case_type, 'AI_DRAFT', 0, ?, ?, now(), now())
                     """)) {
                 ps.setString(1, caseId);
                 ps.setString(2, caseType);
@@ -63,7 +67,10 @@ public final class CaseStore {
                 ps.setString(4, createdBy);
                 ps.executeUpdate();
 
-            } catch (SQLIntegrityConstraintViolationException duplicate) {
+            } catch (SQLException e) {
+                if (!isUniqueViolation(e)) {
+                    throw e;
+                }
                 // ⭐ 唯一约束是并发的最后防线，也是幂等的入口：
                 //    把"并发/重试的失败者"转换成"幂等的成功者"。
                 CaseRow existing = findById(conn, caseId).orElse(null);
@@ -98,9 +105,9 @@ public final class CaseStore {
             int affected;
             try (PreparedStatement ps = conn.prepareStatement("""
                     UPDATE tc_case
-                       SET draft_json = ?, case_code = ?, title = ?, module_id = ?,
-                           priority = ?, author = ?, precondition = ?,
-                           version = version + 1, updated_at = NOW(3)
+                       SET draft_json = ?::jsonb, case_code = ?, title = ?, module_id = ?,
+                           priority = ?::tc_priority, author = ?, precondition = ?,
+                           version = version + 1, updated_at = now()
                      WHERE case_id = ? AND status = 'AI_DRAFT' AND version = ?
                     """)) {
                 ps.setString(1, draft.rawJson());
@@ -143,7 +150,7 @@ public final class CaseStore {
             int affected;
             try (PreparedStatement ps = conn.prepareStatement("""
                     UPDATE tc_case
-                       SET status = 'DRAFT', version = version + 1, updated_at = NOW(3)
+                       SET status = 'DRAFT', version = version + 1, updated_at = now()
                      WHERE case_id = ? AND status = 'AI_DRAFT' AND version = ?
                     """)) {
                 ps.setString(1, caseId);
@@ -237,13 +244,28 @@ public final class CaseStore {
         }
     }
 
+    private static boolean isUniqueViolation(SQLException e) {
+        return hasSqlState(e, SQLSTATE_UNIQUE_VIOLATION);
+    }
+
     private static boolean isCheckViolation(SQLException e) {
+        return hasSqlState(e, SQLSTATE_CHECK_VIOLATION)
+                || messageContains(e, "ck_case_complete");
+    }
+
+    private static boolean hasSqlState(SQLException e, String sqlState) {
         for (SQLException cur = e; cur != null; cur = cur.getNextException()) {
-            if (cur.getErrorCode() == ERR_CHECK_VIOLATED) {
+            if (sqlState.equals(cur.getSQLState())) {
                 return true;
             }
+        }
+        return false;
+    }
+
+    private static boolean messageContains(SQLException e, String needle) {
+        for (SQLException cur = e; cur != null; cur = cur.getNextException()) {
             String msg = cur.getMessage();
-            if (msg != null && msg.contains("ck_case_complete")) {
+            if (msg != null && msg.contains(needle)) {
                 return true;
             }
         }
@@ -252,6 +274,6 @@ public final class CaseStore {
 
     private static StoreResult infra(SQLException e) {
         return StoreResult.fail(ExitCode.INFRA_ERROR,
-                "数据库操作失败: [%d] %s".formatted(e.getErrorCode(), e.getMessage()));
+                "数据库操作失败: [SQLSTATE %s] %s".formatted(e.getSQLState(), e.getMessage()));
     }
 }

@@ -25,7 +25,7 @@ export DOCKER_HOST=unix:///var/run/docker.sock     # ~/.docker 的 currentContex
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn test
 ```
 
-12 个用例，起真 MySQL 8.4（Testcontainers），**先建老表再跑改造脚本** ——
+18 个用例，起真 **PostgreSQL 17**（Testcontainers），**先建老表再跑改造脚本** ——
 V1 能不能在老平台的形状上执行得下去，本身就被测到了。
 
 | 测试类 | 锁定的不变式 |
@@ -34,10 +34,11 @@ V1 能不能在老平台的形状上执行得下去，本身就被测到了。
 | `ConcurrentCommitTest` | 10 线程同一 id+version → 1 真提交 + 9 重放；落地状态是普通 `DRAFT` |
 | `TocTouTest` | ⭐ 确认后内容被改过 → `commit` 必须报 `VERSION_CONFLICT` |
 | `CommitGuardTest` | `ck_case_complete` 拦残缺案例；退出码取值契约 |
+| `SchemaShapeTest` | 多条 NULL `case_code` 并存；无级联的孤儿代价；`seq` 唯一；项目→模块→案例链路 |
 
 ### 变异检验（这些测试有牙齿）
 
-把 `CaseStore.commit` 的 `AND version = ?` 从 WHERE 里去掉，
+把 `CaseStore.commit` 的 `AND version = ?` 改成 `AND version >= ?`（放行过期版本），
 `TocTouTest.staleVersionRejected` 立刻红 —— 已实测。
 
 ## 已知坑

@@ -3,7 +3,7 @@ package dev.kanashi.atp.cli.store;
 import dev.kanashi.atp.cli.model.CaseDraft;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
@@ -17,16 +17,16 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * 起一个真 MySQL，按 V0 → V1 的顺序跑迁移。
+ * 起一个真 PostgreSQL，按 V0 → V1 的顺序跑迁移。
  *
  * <p>⭐ 测试<b>先建老表、再跑改造脚本</b>，而不是直接建改造后的表 ——
  * 这样 V1 是不是真能在老平台的形状上执行得下去，本身就被测到了。
  */
 @Testcontainers
-abstract class MySqlTestBase {
+abstract class PgTestBase {
 
     @Container
-    static final MySQLContainer<?> MYSQL = new MySQLContainer<>("mysql:8.4")
+    static final PostgreSQLContainer<?> PG = new PostgreSQLContainer<>("postgres:17")
             .withDatabaseName("atp")
             .withUsername("atp")
             .withPassword("atp");
@@ -36,7 +36,7 @@ abstract class MySqlTestBase {
 
     @BeforeAll
     static void migrate() throws Exception {
-        connections = ConnectionFactory.of(MYSQL.getJdbcUrl(), MYSQL.getUsername(), MYSQL.getPassword());
+        connections = ConnectionFactory.of(PG.getJdbcUrl(), PG.getUsername(), PG.getPassword());
         store = new CaseStore(connections);
         runScript("db/migration/V0__baseline_legacy.sql");
         runScript("db/migration/V1__ai_draft_state.sql");
@@ -55,7 +55,7 @@ abstract class MySqlTestBase {
     }
 
     private static void runScript(String resource) throws IOException, SQLException {
-        try (InputStream in = MySqlTestBase.class.getClassLoader().getResourceAsStream(resource)) {
+        try (InputStream in = PgTestBase.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {
                 throw new IllegalStateException("找不到迁移脚本: " + resource);
             }

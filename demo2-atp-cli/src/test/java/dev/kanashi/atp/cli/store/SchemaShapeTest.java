@@ -14,7 +14,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** 表结构本身承担的不变式 —— 这些不靠应用层代码保证，靠约束保证。 */
 @DisplayName("表结构约束")
-class SchemaShapeTest extends MySqlTestBase {
+class SchemaShapeTest extends PgTestBase {
 
     @Test
     @DisplayName("多条未编号的草稿可以并存 —— UNIQUE 索引允许多个 NULL")
@@ -55,11 +55,10 @@ class SchemaShapeTest extends MySqlTestBase {
         try (var c = connections.open(); Statement st = c.createStatement()) {
             // ① 先按条件选出这一批的 case_id（真实清理任务里带 LIMIT 分批）
             //    ② 再删子表 —— 必须在删父表之前，否则条件就查不到了
+            // PG 没有 MySQL 那条"不能在子查询里引用正在删的表"的限制，可以直写
             st.executeUpdate("""
                     DELETE FROM tc_step WHERE case_id IN (
-                        SELECT case_id FROM (
-                            SELECT case_id FROM tc_case WHERE status = 'AI_DRAFT'
-                        ) t)
+                        SELECT case_id FROM tc_case WHERE status = 'AI_DRAFT')
                     """);
             // ③ 最后删父表
             st.executeUpdate("DELETE FROM tc_case WHERE status = 'AI_DRAFT'");
@@ -121,7 +120,7 @@ class SchemaShapeTest extends MySqlTestBase {
         try (var c = connections.open(); Statement st = c.createStatement()) {
             st.executeUpdate("""
                     INSERT INTO tc_step (step_id, case_id, seq, step_json)
-                    VALUES ('%s', '%s', %d, '{"action":"CLICK"}')
+                    VALUES ('%s', '%s', %d, '{"action":"CLICK"}'::jsonb)
                     """.formatted(UUID.randomUUID(), caseId, seq));
         }
     }

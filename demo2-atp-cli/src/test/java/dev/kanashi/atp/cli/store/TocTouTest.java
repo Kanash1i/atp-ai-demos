@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 把状态和版本压进同一条 UPDATE 的 WHERE，窗口才是零。
  */
 @DisplayName("TOCTOU：确认之后内容被改过，提交必须失败")
-class TocTouTest extends MySqlTestBase {
+class TocTouTest extends PgTestBase {
 
     @Test
     @DisplayName("preview 拿到 version=1 后被改成 2 → commit(version=1) 报 VERSION_CONFLICT")

@@ -11,7 +11,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @DisplayName("commit 的守门：残缺、不存在、状态不对")
-class CommitGuardTest extends MySqlTestBase {
+class CommitGuardTest extends PgTestBase {
 
     @Test
     @DisplayName("必填字段残缺 → 被 ck_case_complete 拦下，报 VALIDATION_FAILED")

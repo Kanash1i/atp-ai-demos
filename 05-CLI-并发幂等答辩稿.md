@@ -13,7 +13,7 @@
 |---|---|
 | 核心动作 | 先在**老平台的案例表**里插一条 AI_DRAFT 行拿到 UUID，一切围绕这行做 |
 | 幂等键 | 就是那个 **UUID 主键**，由 CLI 本地生成 |
-| 并发仲裁点 | **MySQL 的主键唯一约束 + 一条带 CAS 的 UPDATE** |
+| 并发仲裁点 | **PostgreSQL 的主键唯一约束 + 一条带 CAS 的 UPDATE** |
 | 防"确认后被偷改" | **version 乐观锁**（替代了 contentHash） |
 | 草稿清理 | **XXL-JOB 每月一次硬删除** |
 | 需要额外的 server 吗 | **不需要**。仲裁点在平台自己的表上 |
@@ -100,38 +100,41 @@ MCP 方案是在外面挂一张 ChangeSet 表来当仲裁点。但既然老平�
 > 每条 SQL 本来就带 `case_type` 条件。新增一个枚举值不会串到既有查询里。
 > ⚠️ 唯一要 grep 一遍的是 `WHERE status != 'X'` 这种**黑名单写法**（见 §9③）。
 
-### 3.2 DDL（实际执行的那一支，已在 MySQL 8.4 上跑通）
+### 3.2 DDL（实际执行的那一支，已在 PostgreSQL 17 上跑通）
 
 ```sql
--- 第一步：主键改宽。UUID 是 36 字符，老列 VARCHAR(32) 装不下。
+-- 第一步：给状态枚举加编写态。
+-- ⚠️ PG 的坑，和 MySQL 完全相反，别混：
+--    · PG 可以用 BEFORE / AFTER 把新值插在枚举任意位置（MySQL 只能追加末尾）
+--    · 但【新加的枚举值不能在同一个事务里被使用】，所以这条必须单独提交，
+--      下面引用 'AI_DRAFT' 的 CHECK 才建得起来 —— 也就是说 V1 不是原子的（见 §9④）
+ALTER TYPE tc_status ADD VALUE 'AI_DRAFT';
+
+-- 第二步：主键改宽。UUID 是 36 字符，老列 VARCHAR(32) 装不下。
 -- ⚠️ 父子两边必须一起改：tc_step.case_id 存的就是 tc_case.case_id 的值，
 --    本库不建外键约束，但长度不一致仍会在写入时被静默截断。
-ALTER TABLE tc_case MODIFY COLUMN case_id VARCHAR(36) NOT NULL;
-ALTER TABLE tc_step MODIFY COLUMN case_id VARCHAR(36) NOT NULL,
-                    MODIFY COLUMN step_id VARCHAR(36) NOT NULL;
+ALTER TABLE tc_case ALTER COLUMN case_id TYPE VARCHAR(36);
+ALTER TABLE tc_step
+  ALTER COLUMN case_id TYPE VARCHAR(36),
+  ALTER COLUMN step_id TYPE VARCHAR(36);
 
--- 第二步：编写态与乐观锁
+-- 第三步：放宽必填 + 乐观锁 + 编写期内容
 ALTER TABLE tc_case
-  -- 枚举值只能追加在末尾：MySQL 的 ENUM 按定义顺序编号，
-  -- 在中间插值会重排既有行的存储值。
-  MODIFY COLUMN status ENUM('DRAFT','ACTIVE','DEPRECATED','AI_DRAFT')
-         NOT NULL DEFAULT 'DRAFT',
-
   -- 编写期填不出来，只能放宽 NOT NULL。
-  -- ⭐ case_code 放宽后仍带 UNIQUE：MySQL 的唯一索引允许多个 NULL，
+  -- ⭐ case_code 放宽后仍带 UNIQUE：PG 的唯一约束默认允许多个 NULL
+  --    （PG 15+ 可用 NULLS NOT DISTINCT 改掉，我们要的正是默认行为），
   --    所以并存任意多条尚未编号的草稿不会互相撞键。
-  MODIFY COLUMN case_code VARCHAR(64)  NULL,
-  MODIFY COLUMN module_id VARCHAR(32)  NULL,
-  MODIFY COLUMN priority  ENUM('P0','P1','P2','P3') NULL,
-  MODIFY COLUMN author    VARCHAR(64)  NULL,
-  MODIFY COLUMN title     VARCHAR(200) NULL,
+  ALTER COLUMN case_code DROP NOT NULL,
+  ALTER COLUMN module_id DROP NOT NULL,
+  ALTER COLUMN priority  DROP NOT NULL,
+  ALTER COLUMN author    DROP NOT NULL,
+  ALTER COLUMN title     DROP NOT NULL,
 
-  ADD COLUMN version    INT  NOT NULL DEFAULT 0 AFTER status,
-  ADD COLUMN draft_json JSON NULL,
-  ADD COLUMN created_by VARCHAR(64) NULL COMMENT 'agent 身份，也是 AI 来源的唯一标记',
+  ADD COLUMN version    INT   NOT NULL DEFAULT 0,
+  ADD COLUMN draft_json JSONB NULL,
+  ADD COLUMN created_by VARCHAR(64) NULL,
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整
-  -- ⚠️ 只在 MySQL 8.0.16+ 生效，5.7 会静默丢弃。见 §9④
   ADD CONSTRAINT ck_case_complete CHECK (
         status = 'AI_DRAFT'
      OR (case_code IS NOT NULL AND title    IS NOT NULL
@@ -142,22 +145,9 @@ ALTER TABLE tc_case
 CREATE INDEX idx_ai_draft_cleanup ON tc_case (status, created_at);
 ```
 
-### 3.3 ⚠️ 全库不建外键约束
-
-`tc_case.module_id → tc_module`、`tc_step.case_id → tc_case` 都是**逻辑外键**，
-只建索引、不建 `FOREIGN KEY` 约束。引用完整性由**写入方**（CLI 与平台）保证。
-
-理由和代价都要能说：
-
-| | |
-|---|---|
-| **为什么不建** | 外键在写入路径上要查父表加锁，高并发下是热点；分库分表直接不可用；且它会让 DDL 变形 —— 被引用列连类型都改不了，必须 `DROP FK → 改父 → 改子 → 装回去` |
-| **代价①** | **没有 `ON DELETE CASCADE`。** 清理任务必须自己**先删子表再删父表**，顺序反了就找不到要删的步骤了（见 §8） |
-| **代价②** | **数据库不再挡编造的 `module_id`。** 「防模型编造模块」这条责任转移到了 `atp validate`，它必须对着 `tc_module` 查 |
-
-> **面试点**：讲"不建外键"时，只说性能理由是不够的 ——
-> **要能说出你把那两件事接管到哪儿去了。**
-> 约束撤掉不等于不变式消失，只是换了个人负责。说不出接管方，那就是漏了。
+> ⚠️ **PG 没有 MySQL 的 `ON UPDATE CURRENT_TIMESTAMP`。**
+> `updated_at` 由写入方显式赋值（`CaseStore` 每条 UPDATE 都带 `now()`），否则得挂触发器。
+> 这是从 MySQL 迁过来最容易漏的一条 —— 漏了不报错，只是时间戳永远停在创建那一刻。
 
 **⭐ 第 5 条要单独讲：放宽 `NOT NULL` 是代价，`CHECK` 把它挣回来。**
 
@@ -171,9 +161,15 @@ CREATE INDEX idx_ai_draft_cleanup ON tc_case (status, created_at);
 > 被问"校验逻辑写在哪"时，这是最好的答案：**能用约束表达的，就不要用代码表达。**
 > 代码会被绕过、会有分支漏掉，约束不会。
 
-⚠️ **UUID 做 InnoDB 聚簇主键会导致随机插入、页分裂。**
-被问到时答：AI 草稿量级不大（日增百级），先不优化；要优化就用**自增 BIGINT 做聚簇主键、UUID 走唯一二级索引**。
-主动说出这一点，比等对方问出来强。
+⚠️ **两点关于 UUID 的，主动说出来比等对方问出来强**：
+
+1. **这里不能用 PG 原生的 `uuid` 类型**（16 字节，比 36 字符的 varchar 省一半）。
+   因为同一列还要装人工案例的雪花 ID，换成 `uuid` 会把存量数据挡在外面。
+   **放弃紧凑存储，是兼容遗留数据的代价。**
+2. **"UUID 做主键导致页分裂"这条在 PG 上不成立** —— 那是 InnoDB 的问题，
+   因为 InnoDB 是索引组织表，主键顺序就是物理存储顺序。
+   PG 是堆表，主键只是一个普通 B-tree 索引，随机 UUID 不会打乱行的物理布局。
+   （被问"为什么不怕随机主键"时答这个 —— 能区分这两种存储结构，比背结论强。）
 
 ---
 
@@ -277,8 +273,17 @@ UPDATE tc_case SET status='DRAFT', version=version+1 WHERE case_id = ?;   // ←
 **用户确认的是 version 3，落库的是 version 4。** 版本检测写了、执行了、还通过了——
 它在 SELECT 那一刻是对的，等到 UPDATE 执行时已经失效。这就是 **TOCTOU**。
 
-合并成一条之后，InnoDB 执行 UPDATE 时 **WHERE 的求值和写入在同一个行锁区间内完成**，
-中间插不进任何东西。线程B 只有两种可能：
+合并成一条之后就没有窗口了。**PG 和 MySQL 走的是不同机制，但结论一样，这点值得会说**：
+
+- **InnoDB**：UPDATE 对匹配行加排他锁，WHERE 的求值和写入在同一个锁区间内完成
+- **PostgreSQL（READ COMMITTED）**：MVCC 下 UPDATE 撞到被并发事务锁住的行时会**等待**，
+  对方提交后**拿最新版本重新求值 WHERE**（EvalPlanQual）。
+  所以线程A 看到的一定是线程B 写完之后的 `version`，`AND version = 3` 自然不匹配。
+
+> **面试点**：能说出"我依赖的是 CAS 语义，不是某个引擎的锁实现"，
+> 比只会背 InnoDB 行锁强 —— 它说明这套设计换库不会塌。
+
+线程B 只有两种可能：
 
 - 排在前面 → 线程A 的 `AND version = 3` 不匹配 → `affectedRows = 0` → **正确拒绝**
 - 排在后面 → 线程A 已把 status 改成 DRAFT → 线程B 的 `AND status='AI_DRAFT'` 不匹配 → 失败
@@ -314,6 +319,8 @@ public void cleanup() {
     int total = 0, batch;
     do {
         // ① 先圈出这一批要删的 case_id（走 idx_ai_draft_cleanup）
+        // ⚠️ PG 不支持 DELETE ... LIMIT（MySQL 支持），分批只能先 SELECT 出 id 再按 id 删，
+        //    或者用 WHERE ctid IN (SELECT ctid ... LIMIT n)。这里用前者，因为子表也要按 id 删。
         List<String> ids = jdbc.queryForList("""
                 SELECT case_id FROM tc_case
                  WHERE status = 'AI_DRAFT' AND created_at < ?
@@ -341,8 +348,10 @@ Cron：`0 0 3 1 * ?`（每月 1 号 03:00）。
    >
    > 这个坑我在写测试时真踩了：`@BeforeEach` 只 `DELETE FROM tc_case`，
    > 上一个用例的孤儿步骤漏进下一个用例，测试互相污染。
-2. **必须分批 + `LIMIT`。** 一条 `DELETE WHERE created_at < ?` 扫全表会长时间持锁，
-   在生产库上是事故。走 `idx_ai_draft_cleanup` 索引，每批 1000 行。
+2. **必须分批。** 一条 `DELETE WHERE created_at < ?` 扫全表会长时间持锁，在生产库上是事故。
+   走 `idx_ai_draft_cleanup` 索引，每批 1000 行。
+   ⚠️ **PG 不支持 `DELETE ... LIMIT`**（MySQL 支持）—— 只能先 `SELECT` 出 id 再按 id 删，
+   或者 `WHERE ctid IN (SELECT ctid ... LIMIT n)`。**这是背错了会当场露馅的一条。**
 3. **保留期一个月，不是 30 分钟。** 确认人是 QA 同事，可能隔几天才回来看。
    TTL 是按**人的节奏**定的，不是按技术方便定的。
 4. **⭐ 一个月 + 硬删除，让 `EXPIRED` 这个状态不需要存在。**
@@ -370,30 +379,19 @@ WHERE status != 'DELETED'               -- ⚠️ 黑名单：新枚举默认被
 
 黑名单写法会把草稿静默捞进结果集。grep 一遍 status 的过滤方式即可，命中就那几处。
 
-**④ ⚠️ `ck_case_complete` 在 MySQL 5.7 上是假的。**
+**④ ⚠️ V1 迁移脚本不是原子的。**
 
-老平台的技术栈是 Java 8 + Spring 4 + **MySQL 5.7**。
-**5.7 会解析 `CHECK` 子句然后直接丢弃它** —— 建表不报错、不告警，
-`SHOW CREATE TABLE` 里那条约束干脆就不出现。
+`ALTER TYPE tc_status ADD VALUE 'AI_DRAFT'` **必须单独提交** ——
+PG 不允许在添加枚举值的同一个事务里使用这个新值，而后面 `ck_case_complete` 的
+CHECK 表达式正好要引用它。
 
-实测（同一份 V0+V1，同一条残缺草稿，同一条 commit 语句）：
+后果：如果第一条成功、后面的 `ALTER TABLE` 失败，库会停在
+**"枚举多了个值、但表结构没改"** 的中间态。不致命（多一个用不到的枚举值无害），
+但**重跑迁移时 `ADD VALUE` 会因为值已存在而报错**，脚本必须写成
+`ADD VALUE IF NOT EXISTS` 才是幂等的。
 
-| | MySQL 5.7.44 | MySQL 8.4 |
-|---|---|---|
-| 建表时 | 静默丢弃约束，无任何提示 | 约束建立 |
-| commit 一条 `case_code/module_id/priority/author` 全空的草稿 | ✅ **提交成功** | ❌ `ERROR 3819: Check constraint 'ck_case_complete' is violated` |
-| 结果 | 库里多出一条 `status=DRAFT` 但必填字段全 NULL 的案例，执行器会读到它 | 案例仍停在 `AI_DRAFT` |
-
-**危险的地方在于我们的测试发现不了**：Testcontainers 起的是 8.4，用例全绿。
-**只有在真实平台上才会炸，而且炸的时候没有报错，只是数据脏了。**
-
-三个选项：**(a)** 确认/推动老平台 DB 升到 8.0.16+（企业里常见，最省事）；
-**(b)** 改用 `BEFORE UPDATE` 触发器（5.7 可用，但难测、易被 DBA 顺手删掉）；
-**(c)** 退回应用层校验（但这就推翻了 §3.2 "能用约束表达的不要用代码表达"那条论点）。
-
-> **这条在面试里是加分项不是减分项。** 说得出"我知道这条约束在 5.7 上是假的、
-> 而且我的测试环境掩盖了它"，比默认它一定生效强得多 ——
-> **它证明你会区分"我验证过的环境"和"它真正要跑的环境"。**
+> **自嘲一句效果很好**：我整套设计讲的都是幂等，
+> **结果自己的迁移脚本一开始不幂等** —— 幂等这件事，稍不留神就漏。
 
 ### 什么时候这套不成立，必须回到 MCP server 方案
 

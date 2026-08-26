@@ -19,7 +19,10 @@
 AI 编写完成后落地成一条普通草稿案例，**执行器和既有列表页完全无感知**。
 测试 `ConcurrentCommitTest.commitsIntoOrdinaryDraft` 锁定这条。
 
-⚠️ MySQL 的 ENUM 按定义顺序编号，**新值只能追加在末尾**，在中间插值会重排既有行的存储值。
+⚠️ **PG 的枚举扩展和 MySQL 完全不同，别混**（见 D-110）：
+PG 用 `ALTER TYPE tc_status ADD VALUE 'AI_DRAFT'`，可以用 `BEFORE`/`AFTER` 插在任意位置；
+但**新值不能在同一事务里被使用**，所以这条必须单独提交，V1 因此不是原子的。
+（MySQL 的 ENUM 按定义顺序编号，只能追加末尾 —— 那是另一套限制。）
 
 ---
 
@@ -66,7 +69,8 @@ docker-java 只从**系统属性** `api.version` 取值。
 **收益**：`commit` 那条 UPDATE 天然被数据库守门 —— 残缺案例迁不出 `AI_DRAFT`，
 应用层不必再写一遍"提交前检查必填"。
 
-⚠️ **前提是 MySQL 8.0.16+**。5.7 上这条约束是假的，见 **D-108**。
+✅ PostgreSQL 一直真正强制 CHECK，这条不需要附加前提。
+（MySQL 5.7 会静默丢弃 CHECK —— 那个坑记在 **D-108**，现在只作为对照素材保留。）
 `CommitGuardTest.incompleteDraftBlockedByCheckConstraint` 锁定这条。
 
 > 原则：**能用约束表达的，不要用代码表达。** 代码会被绕过、分支会漏，约束不会。
@@ -91,8 +95,14 @@ CLI 被 agent 高频反复调用，冷启动是真实成本：Spring Boot ≈ 1.
 把生成动作挪到客户端后，重试复用同一个 UUID → 撞主键唯一约束 → 读回来当成功返回。
 `ConcurrentDraftTest` 两个用例锁定这条。
 
-⚠️ 已知未优化：UUID 作 InnoDB 聚簇主键会随机插入、页分裂。
-AI 草稿日增百级，暂不优化；要优化就改自增 BIGINT 聚簇 + UUID 唯一二级索引。
+⚠️ 两点值得记住（切 PG 之后结论变了）：
+
+1. **"UUID 主键导致页分裂"在 PG 上不成立。** 那是 InnoDB 的问题 ——
+   InnoDB 是索引组织表，主键顺序就是物理存储顺序。
+   PG 是堆表，主键只是普通 B-tree 索引，随机 UUID 不打乱行的物理布局。
+2. **但这里也用不了 PG 原生的 `uuid` 类型**（16 字节 vs 36 字符）。
+   同一列还要装人工案例的雪花 ID，换成 `uuid` 会把存量数据挡在外面。
+   放弃紧凑存储，是兼容遗留数据的代价。
 
 ---
 
@@ -156,7 +166,8 @@ step_json JSON                步骤内容
 顺带：`case_id` 是这个联合索引的最左列，删步骤时能走到它，不必再单建索引。
 
 **⚠️ 曾经的迁移踩点，现在没有了**：最初 `tc_step.case_id` 带 `FOREIGN KEY` 引用
-`tc_case.case_id`，而 MySQL **不允许直接修改被外键引用的列类型**。
+`tc_case.case_id`。**MySQL 明确不允许直接修改被外键引用的列类型**（当时实测撞到的就是这个）；
+PG 的限制没那么死，但改类型同样会牵动约束校验与重建。
 V1 把主键从 `VARCHAR(32)` 改到 `VARCHAR(36)` 当时必须：
 
 ```
@@ -172,42 +183,31 @@ D-109 撤除全部外键后，这一套不再需要，V1 直接两条 `ALTER` �
 
 ---
 
-## D-108 · ⚠️ 未决：`CHECK` 约束在 MySQL 5.7 上是静默失效的
+## D-108 · ✅ 已关闭：改用 PostgreSQL，`CHECK` 静默失效的问题不存在
 
-`00-SHARED-CONTEXT.md` §1.1 写明老平台是 **Java 8 + Spring 4 + MySQL 5.7**。
+**原问题**：老平台原设定是 MySQL 5.7，而 **5.7 会解析 `CHECK` 子句然后直接丢弃，
+不报错、不告警、不生效** —— D-102 的 `ck_case_complete` 在 5.7 上等于不存在。
 
-**MySQL 5.7 会解析 `CHECK` 子句然后直接丢弃，不报错、不告警、不生效。**
-
-**已实测**（`mysql:5.7.44` vs `mysql:8.4`，同一份 V0+V1，同一条 SQL）：
+**当时的实测**（`mysql:5.7.44` vs `mysql:8.4`，同一份 V0+V1，同一条 SQL）：
 
 ```
-5.7  应用 V1                       → 无任何输出，无报错
-5.7  SHOW CREATE TABLE tc_case     → 找不到 ck_case_complete，约束根本没建
+5.7  应用 V1                        → 无任何输出，无报错
+5.7  SHOW CREATE TABLE tc_case      → 找不到 ck_case_complete，约束根本没建
 5.7  INSERT 残缺草稿 + commit UPDATE → 成功，得到一条 status=DRAFT 且
                                        case_code/module_id/priority/author 全 NULL 的案例
-8.4  同一条 commit UPDATE           → ERROR 3819 (HY000): Check constraint
+8.4  同一条 commit UPDATE            → ERROR 3819 (HY000): Check constraint
                                        'ck_case_complete' is violated
 ```
 
-**最危险的地方是我们的测试发现不了**：Testcontainers 起的是 8.4，
-`CommitGuardTest.incompleteDraftBlockedByCheckConstraint` 一直是绿的。
-**只有在真实平台上才会炸，而且炸的时候没有报错，只是数据脏了** ——
-执行器会读到一条必填字段全空的 DRAFT 案例。
+**解决**：整个 demo 改用 PostgreSQL（D-110）。**PG 一直真正强制 CHECK**，问题消失。
 
-（`JSON` 类型 5.7.8+ 有，`DATETIME(3)` 5.7 也有，只有 `CHECK` 是断的。）
+**保留这条记录的理由**：它本身是很好的面试素材 ——
+> "我的测试环境（Testcontainers 起的 8.4）掩盖了真实环境（5.7）的行为差异。
+> 用例全绿，但那条约束在生产上根本不存在。"
 
-**三个选项，待定**：
-
-1. 设定老平台的 DB 已升到 8.0（真实企业里很常见，也最省事）
-2. 改用 `BEFORE UPDATE` 触发器 —— 5.7 可用，但触发器难测、难看、易被 DBA 删
-3. 退回应用层校验 —— 但这就推翻了"能用约束表达的不要用代码表达"这条论点
-
-**在面试里这是加分项不是减分项**：说得出"我知道这条约束在 5.7 上是假的、
-而且我的测试环境掩盖了它"，比默认它一定生效强得多 ——
-**它证明你会区分「我验证过的环境」和「它真正要跑的环境」。**
-
-⚠️ 若最终选 (a)（DB 升 8.0），要在 `00-SHARED-CONTEXT.md` §1.1 里把
-"MySQL 5.7" 改掉，否则契约文档和实现继续互相矛盾。
+**这里真正的教训不是 MySQL 版本，是**：
+**你验证过的环境，不等于它真正要跑的环境。** 换成 PG 之后这条教训依然成立 ——
+只是这次我们让两边一致了。
 
 ---
 
@@ -240,3 +240,46 @@ D-109 撤除全部外键后，这一套不再需要，V1 直接两条 `ALTER` �
 
 > **面试要点**：讲"不建外键"只说性能理由是不够的。
 > **约束撤掉不等于不变式消失，只是换了个人负责 —— 说不出接管方，那就是漏了。**
+
+---
+
+## D-110 · 数据库从 MySQL 改为 PostgreSQL
+
+**背景**：真实项目用的是 PG，`00-SHARED-CONTEXT.md` 原来写的 MySQL 5.7 是设定错误。
+
+**决策**：全面切 PG（`postgres:17`），`00-SHARED-CONTEXT.md` §1.1 同步改掉。
+
+**核心论证完全不受影响** —— 这点很重要，说明设计不依赖某个引擎：
+
+- 唯一约束当并发仲裁点 ✅
+- `UPDATE ... WHERE id=? AND status=? AND version=?` 的 CAS 语义 ✅
+- `affectedRows == 0` 三分支 ✅
+- 唯一约束允许多个 NULL ✅（PG 默认行为与 MySQL 相同）
+
+> **CAS 在两边靠的是不同机制，但结论一样，这点值得会说**：
+> InnoDB 是对匹配行加排他锁，WHERE 求值与写入同处一个锁区间；
+> PG 在 READ COMMITTED 下是 MVCC —— UPDATE 撞到被并发事务锁住的行会等待，
+> 对方提交后**拿最新版本重新求值 WHERE**（EvalPlanQual）。
+> **我依赖的是 CAS 语义，不是某个引擎的锁实现。**
+
+**实际改动的差异清单**：
+
+| | MySQL | PostgreSQL |
+|---|---|---|
+| CHECK 约束 | 8.0.16+ 才生效，5.7 静默丢弃 | **一直强制** |
+| 枚举扩展 | 只能追加末尾 | `ALTER TYPE ADD VALUE`，可 BEFORE/AFTER 插入；**但新值不能在同一事务用** |
+| `DELETE ... LIMIT n` | 支持 | **不支持**，要 `WHERE ctid IN (SELECT ctid ... LIMIT n)` 或先 SELECT 出 id |
+| `ON UPDATE CURRENT_TIMESTAMP` | 支持 | **没有**，写入方显式赋值或挂触发器 |
+| UUID 主键 | InnoDB 索引组织表 → 随机插入页分裂 | 堆表 → **不存在这个问题** |
+| JSON | `JSON` | `JSONB`（可 GIN 索引） |
+| 错误判定 | errorCode 1062 / 3819 | **SQLSTATE 23505 / 23514**（SQL 标准，换库不用改） |
+| 枚举列传参 | 直接 setString | 需要显式转型 `?::tc_case_type` |
+
+**顺带的代码改善**：错误判定从厂商 `errorCode` 改成 **SQLSTATE**，
+`23505`（unique_violation）/ `23514`（check_violation）是 SQL 标准的一部分，
+这段逻辑现在换库也不用动。**被逼着做的移植，反而让代码更干净了。**
+
+**⚠️ 新发现的坑**：`ALTER TYPE ... ADD VALUE` 必须单独提交（新值不能在同一事务使用），
+所以 **V1 整体不是原子的** —— 第一条成功、后面失败会停在中间态。
+已改成 `ADD VALUE IF NOT EXISTS` 让脚本可重跑。
+> 一整套设计都在讲幂等，结果自己的迁移脚本一开始不幂等。这个自嘲在面试里效果很好。
