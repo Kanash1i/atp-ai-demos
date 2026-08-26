@@ -23,7 +23,7 @@ class ConcurrentCommitTest extends MySqlTestBase {
     @DisplayName("10 个线程并发提交同一个 id+version → 1 个真提交 + 9 个幂等重放，全部退出码 0")
     void concurrentCommitSameKey() throws Exception {
         String caseId = UUID.randomUUID().toString();
-        store.draft(caseId, "购物车结算", "agent-a");
+        store.draft(caseId, PC_WEB, "购物车结算", "agent-a");
         StoreResult updated = store.update(caseId, 0, completeDraft("购物车结算"));
         assertThat(updated.row().version()).isEqualTo(1);
 
@@ -57,7 +57,7 @@ class ConcurrentCommitTest extends MySqlTestBase {
     @DisplayName("提交成功但响应丢失 → 重试返回同一行、replayed=true、退出码 0")
     void lostResponseThenRetry() {
         String caseId = UUID.randomUUID().toString();
-        store.draft(caseId, "登录成功", "agent-a");
+        store.draft(caseId, PC_WEB, "登录成功", "agent-a");
         store.update(caseId, 0, completeDraft("登录成功"));
 
         StoreResult first = store.commit(caseId, 1);
@@ -76,7 +76,7 @@ class ConcurrentCommitTest extends MySqlTestBase {
     @DisplayName("落地状态是普通 DRAFT，不是新造的状态 —— 执行器与既有列表页无感知")
     void commitsIntoOrdinaryDraft() {
         String caseId = UUID.randomUUID().toString();
-        store.draft(caseId, "搜索结果排序", "agent-a");
+        store.draft(caseId, PC_WEB, "搜索结果排序", "agent-a");
         store.update(caseId, 0, completeDraft("搜索结果排序"));
 
         assertThat(store.commit(caseId, 1).row().status()).isEqualTo("DRAFT");

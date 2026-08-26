@@ -24,7 +24,7 @@ class TocTouTest extends MySqlTestBase {
     @DisplayName("preview 拿到 version=1 后被改成 2 → commit(version=1) 报 VERSION_CONFLICT")
     void staleVersionRejected() {
         String caseId = UUID.randomUUID().toString();
-        store.draft(caseId, "购物车结算", "agent-a");
+        store.draft(caseId, PC_WEB, "购物车结算", "agent-a");
 
         StoreResult afterFirstEdit = store.update(caseId, 0, completeDraft("购物车结算"));
         int previewedVersion = afterFirstEdit.row().version();   // 用户 preview 看到的就是这个
@@ -47,7 +47,7 @@ class TocTouTest extends MySqlTestBase {
     @DisplayName("重新 preview 后用新版本号提交 → 成功")
     void recoverByRepreview() {
         String caseId = UUID.randomUUID().toString();
-        store.draft(caseId, "购物车结算", "agent-a");
+        store.draft(caseId, PC_WEB, "购物车结算", "agent-a");
         store.update(caseId, 0, completeDraft("购物车结算"));
         store.update(caseId, 1, completeDraft("购物车结算（终稿）"));
 
@@ -62,7 +62,7 @@ class TocTouTest extends MySqlTestBase {
     @DisplayName("并发 update 撞版本 → 后到的被 CAS 挡下")
     void concurrentUpdateLosesOnCas() {
         String caseId = UUID.randomUUID().toString();
-        store.draft(caseId, "登录成功", "agent-a");
+        store.draft(caseId, PC_WEB, "登录成功", "agent-a");
 
         StoreResult win = store.update(caseId, 0, completeDraft("A 写的"));
         StoreResult lose = store.update(caseId, 0, completeDraft("B 写的"));

@@ -91,3 +91,97 @@ CLI 被 agent 高频反复调用，冷启动是真实成本：Spring Boot ≈ 1.
 
 ⚠️ 已知未优化：UUID 作 InnoDB 聚簇主键会随机插入、页分裂。
 AI 草稿日增百级，暂不优化；要优化就改自增 BIGINT 聚簇 + UUID 唯一二级索引。
+
+---
+
+## D-105 · `case_type` 归还「执行平台」原义，`browser` / `timeout_sec` 删除
+
+**背景**：D-100 时我把 `case_type` 当成 `MANUAL/AI` 的来源标记用了。
+但老平台本来就按 **iOS / Android / Web** 区分案例（旧 `SKILL.md` 第一句就写着），
+`case_type` 这个名字天然属于执行平台，不该兼职。
+
+**决策**：
+
+| 字段 | 处置 |
+|---|---|
+| `case_type` | `ENUM('IOS','ANDROID','PC_WEB')`，回归执行平台原义 |
+| `browser` | **删除** —— 只对 Web 有意义，被 `case_type` 覆盖，属于过度设计 |
+| `timeout_sec` | **删除** —— 全链路无人读写，纯粹是从文档抄下来的死字段 |
+| AI 来源标记 | 由 `created_by`（agent 身份）承担 |
+| 编写态 | 由 `status='AI_DRAFT'` 承担 |
+
+**原则**：**一个字段只表示一件事。** 这跟 §5.2 三态状态机不合并成 `REJECTED`、
+以及 demo1 拒答标记混了两类含义（`03-HANDOFF-rag-v2.md` §2.4）是同一条教训的第三次出现。
+
+**连带变更**：清理任务的索引从 `(status, case_type, created_at)` 简化为 `(status, created_at)` ——
+`AI_DRAFT` 只可能由 AI 编写路径产生，不需要再叠一个来源条件。
+
+⚠️ **共享契约漂移**：`00-SHARED-CONTEXT.md` §1.2 仍写着 `browser` / `timeout_sec`，
+`demo2-atp-mcp/src/main/resources/schema/tc_case.schema.json` 的 `required` 里也还有它们。
+两处都需要同步，**尚未做**。
+
+---
+
+## D-106 · 新增 `tc_project`，定位链路变成 项目 → 模块 → 案例
+
+真实定位一条案例是"某个项目的某个模块里的某个案例"。原文档只有 `tc_module`，缺一层。
+
+**决策**：新增 `tc_project`，`tc_module.project_id` 外键指向它。
+**`tc_case` 不冗余 project_id** —— 项目通过 `tc_case → tc_module → tc_project` 两跳 join 取得。
+
+**代价**：案例列表按项目过滤要多一次 join。真实遗留平台多半会把 `project_id` 冗余到
+`tc_case` 上。现在不做是因为冗余带来一致性维护成本，且当前没有性能诉求。
+**要加随时可加，反过来去掉很难。**
+
+`SchemaShapeTest.projectModuleCaseChain` 锁定这条链路。
+
+---
+
+## D-107 · `tc_step` 建表，以及改父表主键必须先摘外键
+
+**表结构**（按需求只保留三块核心 + `seq`）：
+
+```
+step_id   VARCHAR(36) PK      子表主键 UUID
+case_id   VARCHAR(36) FK      对应父表 UUID，ON DELETE CASCADE
+seq       INT                 1..n 连续无跳号，UNIQUE(case_id, seq)
+step_json JSON                步骤内容
+```
+
+**`seq` 为什么没被省掉**：步骤是有序的，顺序不能靠"插入顺序"隐式表达。
+`UNIQUE (case_id, seq)` 让"同一案例内 seq 不重复"由数据库保证，而不是靠应用层自觉。
+
+**`ON DELETE CASCADE` 为什么必须有**：每月清理弃置草稿时，步骤必须跟着走，
+否则**清理任务自己会在子表里制造孤儿行**。
+> 做清理设计时第一件事是问：**这行有没有子表？**
+
+**⚠️ 迁移踩点**：`tc_step.case_id` 外键引用 `tc_case.case_id`，
+MySQL **不允许直接修改被外键引用的列类型**。V1 把主键从 `VARCHAR(32)` 改到 `VARCHAR(36)` 必须：
+
+```
+DROP FOREIGN KEY → 改父列 → 改子列 → ADD CONSTRAINT 装回去
+```
+
+父子列类型不一致时装不回去，所以两边必须一起改。
+这类问题在只建单表的测试里发现不了，**必须有真实的父子表基线才会暴露**。
+
+---
+
+## D-108 · ⚠️ 未决：`CHECK` 约束在 MySQL 5.7 上是静默失效的
+
+`00-SHARED-CONTEXT.md` §1.1 写明老平台是 **Java 8 + Spring 4 + MySQL 5.7**。
+
+**MySQL 5.7 会解析 `CHECK` 约束但直接忽略它，不报错、不生效。**
+也就是说 D-102 的 `ck_case_complete` 在 5.7 上等于不存在 ——
+残缺的案例可以照常 commit 出去，而且没有任何征兆。
+
+（`JSON` 类型 5.7.8+ 有，`DATETIME(3)` 5.7 也有，只有 `CHECK` 是断的。）
+
+**三个选项，待定**：
+
+1. 设定老平台的 DB 已升到 8.0（真实企业里很常见，也最省事）
+2. 改用 `BEFORE UPDATE` 触发器 —— 5.7 可用，但触发器难测、难看、易被 DBA 删
+3. 退回应用层校验 —— 但这就推翻了"能用约束表达的不要用代码表达"这条论点
+
+**在面试里这反而是个好料**：说得出"我知道这条约束在 5.7 上是假的"，
+比默认它一定生效要强。

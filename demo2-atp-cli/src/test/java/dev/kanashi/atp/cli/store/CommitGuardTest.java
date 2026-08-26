@@ -17,11 +17,11 @@ class CommitGuardTest extends MySqlTestBase {
     @DisplayName("必填字段残缺 → 被 ck_case_complete 拦下，报 VALIDATION_FAILED")
     void incompleteDraftBlockedByCheckConstraint() {
         String caseId = UUID.randomUUID().toString();
-        store.draft(caseId, "只有标题", "agent-a");
+        store.draft(caseId, PC_WEB, "只有标题", "agent-a");
 
         // 只写了标题，case_code / module_id / priority / author 全空
         CaseDraft partial = new CaseDraft(
-                null, "只有标题", null, null, null, null, "CHROME", 30, "{}");
+                null, "只有标题", null, null, null, null, "{}");
         StoreResult updated = store.update(caseId, 0, partial);
         assertThat(updated.code())
                 .as("编写期允许残缺，update 本身不该失败")
@@ -47,7 +47,7 @@ class CommitGuardTest extends MySqlTestBase {
     @DisplayName("已提交后又被改过 → STATE_CONFLICT，不是重放")
     void modifiedAfterCommitIsStateConflict() throws Exception {
         String caseId = UUID.randomUUID().toString();
-        store.draft(caseId, "登录成功", "agent-a");
+        store.draft(caseId, PC_WEB, "登录成功", "agent-a");
         store.update(caseId, 0, completeDraft("登录成功"));
         store.commit(caseId, 1);        // → DRAFT, version=2
 

@@ -50,16 +50,17 @@ public final class CaseStore {
      * 两条各自合法的草稿，而版本号救不了它们（是两行不同的记录）。
      * 把生成动作挪到客户端，这个洞就免费消失了。
      */
-    public StoreResult draft(String caseId, String title, String createdBy) {
+    public StoreResult draft(String caseId, String caseType, String title, String createdBy) {
         try (Connection conn = connections.open()) {
             try (PreparedStatement ps = conn.prepareStatement("""
                     INSERT INTO tc_case (case_id, case_type, status, version,
                                          title, created_by, created_at, updated_at)
-                    VALUES (?, 'AI', 'AI_DRAFT', 0, ?, ?, NOW(3), NOW(3))
+                    VALUES (?, ?, 'AI_DRAFT', 0, ?, ?, NOW(3), NOW(3))
                     """)) {
                 ps.setString(1, caseId);
-                ps.setString(2, title);
-                ps.setString(3, createdBy);
+                ps.setString(2, caseType);
+                ps.setString(3, title);
+                ps.setString(4, createdBy);
                 ps.executeUpdate();
 
             } catch (SQLIntegrityConstraintViolationException duplicate) {
@@ -70,9 +71,12 @@ public final class CaseStore {
                     return StoreResult.fail(ExitCode.INFRA_ERROR,
                             "唯一约束冲突但读不回该行，请检查隔离级别与连接是否同库");
                 }
-                if (!CaseRow.TYPE_AI.equals(existing.caseType())) {
+                if (!existing.isAiDraft()) {
+                    // 不是我们的编写态行 —— 要么撞上了一条既有案例，
+                    // 要么这个草稿已经提交过了，两种都不该当成重放。
                     return StoreResult.fail(ExitCode.STATE_CONFLICT,
-                            "case_id 与一条人工案例冲突：" + caseId);
+                            "case_id 已被占用且不处于编写态（当前 status=%s）：%s"
+                                    .formatted(existing.status(), caseId));
                 }
                 return StoreResult.replayed(existing);
             }
@@ -95,8 +99,7 @@ public final class CaseStore {
             try (PreparedStatement ps = conn.prepareStatement("""
                     UPDATE tc_case
                        SET draft_json = ?, case_code = ?, title = ?, module_id = ?,
-                           priority = ?, author = ?, precondition = ?, browser = ?,
-                           timeout_sec = COALESCE(?, timeout_sec),
+                           priority = ?, author = ?, precondition = ?,
                            version = version + 1, updated_at = NOW(3)
                      WHERE case_id = ? AND status = 'AI_DRAFT' AND version = ?
                     """)) {
@@ -107,14 +110,8 @@ public final class CaseStore {
                 ps.setString(5, draft.priority());
                 ps.setString(6, draft.author());
                 ps.setString(7, draft.precondition());
-                ps.setString(8, draft.browser() == null ? "CHROME" : draft.browser());
-                if (draft.timeoutSec() == null) {
-                    ps.setNull(9, java.sql.Types.INTEGER);
-                } else {
-                    ps.setInt(9, draft.timeoutSec());
-                }
-                ps.setString(10, caseId);
-                ps.setInt(11, expectedVersion);
+                ps.setString(8, caseId);
+                ps.setInt(9, expectedVersion);
                 affected = ps.executeUpdate();
             }
 

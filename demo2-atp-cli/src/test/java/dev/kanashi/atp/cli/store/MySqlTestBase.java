@@ -77,11 +77,14 @@ abstract class MySqlTestBase {
                 .toList();
     }
 
-    /** 一份能通过 ck_case_complete 的完整草稿。 */
+    /** 执行平台，老平台原有概念（IOS / ANDROID / PC_WEB）。 */
+    static final String PC_WEB = "PC_WEB";
+
+    /** 一份能通过 ck_case_complete 的完整草稿。module_id 必须是 tc_module 里真实存在的值。 */
     static CaseDraft completeDraft(String title) {
         return new CaseDraft(
                 "ATP-CART-0001", title, "M003", "P1", "qa.kanashi",
-                "已登录且购物车非空", "CHROME", 30,
+                "已登录且购物车非空",
                 "{\"title\":\"" + title + "\",\"steps\":[]}");
     }
 }

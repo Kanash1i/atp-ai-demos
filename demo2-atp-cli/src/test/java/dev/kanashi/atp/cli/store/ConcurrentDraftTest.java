@@ -32,7 +32,7 @@ class ConcurrentDraftTest extends MySqlTestBase {
             List<Callable<StoreResult>> tasks = java.util.stream.IntStream.range(0, threads)
                     .<Callable<StoreResult>>mapToObj(i -> () -> {
                         gate.await();   // 尽量压到同一瞬间
-                        return store.draft(caseId, "购物车结算", "agent-" + i);
+                        return store.draft(caseId, PC_WEB, "购物车结算", "agent-" + i);
                     })
                     .toList();
 
@@ -58,8 +58,8 @@ class ConcurrentDraftTest extends MySqlTestBase {
     void retrySameIdIsReplay() {
         String caseId = UUID.randomUUID().toString();
 
-        StoreResult first = store.draft(caseId, "登录成功", "agent-a");
-        StoreResult second = store.draft(caseId, "登录成功", "agent-a");
+        StoreResult first = store.draft(caseId, PC_WEB, "登录成功", "agent-a");
+        StoreResult second = store.draft(caseId, PC_WEB, "登录成功", "agent-a");
 
         assertThat(first.replayed()).isFalse();
         assertThat(second.replayed()).isTrue();

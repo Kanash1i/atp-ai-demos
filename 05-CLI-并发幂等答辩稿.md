@@ -79,7 +79,10 @@ MCP 方案是在外面挂一张 ChangeSet 表来当仲裁点。但既然老平�
 1. **主键放宽到 `VARCHAR(36)`** —— UUID 是 36 字符，老列 `VARCHAR(32)` 装不下。
    AI 案例的主键由 CLI 本地生成，人工案例仍走平台雪花 ID —— 两者不冲突，
    **唯一约束只关心"不重复"，不关心谁生成的。**
-2. **`case_type` 加 `AI` 枚举值** —— 区分来源，也是清理任务的过滤条件
+2. **`case_type` 保持原义（`IOS` / `ANDROID` / `PC_WEB`）** —— 这是老平台本来就有的
+   「执行平台」概念，不要拿它兼职做 AI/人工的来源标记。
+   AI 来源由 `created_by`（agent 身份）承担，编写态由 `status='AI_DRAFT'` 承担 ——
+   **一个字段只表示一件事**
 3. **`status` 加 `AI_DRAFT` 枚举值** —— ⚠️ **不复用已有的 `DRAFT`**，见下
 4. **加 `version` 字段** —— 乐观锁
 5. **放宽几个 `NOT NULL`，再用 `CHECK` 按状态挣回来** —— 见下
@@ -100,25 +103,37 @@ MCP 方案是在外面挂一张 ChangeSet 表来当仲裁点。但既然老平�
 ### 3.2 DDL（实际执行的那一支，已在 MySQL 8.4 上跑通）
 
 ```sql
-ALTER TABLE tc_case
-  MODIFY COLUMN case_id VARCHAR(36) NOT NULL,
+-- ⚠️ 第一步：tc_step 的外键引用着 tc_case.case_id，
+--    MySQL 不允许直接改被引用列的类型 —— 必须【先摘外键 → 改父 → 改子 → 再装回去】，
+--    且父子列类型必须一致，否则装不回去。这一步很容易在生产迁移时才炸出来。
+ALTER TABLE tc_step DROP FOREIGN KEY fk_step_case;
 
-  -- ⚠️ 枚举值只能追加在末尾：MySQL 的 ENUM 按定义顺序编号，
-  --    在中间插值会重排既有行的存储值。
+ALTER TABLE tc_case MODIFY COLUMN case_id VARCHAR(36) NOT NULL;   -- UUID 是 36 字符
+ALTER TABLE tc_step MODIFY COLUMN case_id VARCHAR(36) NOT NULL,
+                    MODIFY COLUMN step_id VARCHAR(36) NOT NULL;
+
+ALTER TABLE tc_step ADD CONSTRAINT fk_step_case
+  FOREIGN KEY (case_id) REFERENCES tc_case (case_id) ON DELETE CASCADE;
+
+-- 第二步：编写态与乐观锁
+ALTER TABLE tc_case
+  -- 枚举值只能追加在末尾：MySQL 的 ENUM 按定义顺序编号，
+  -- 在中间插值会重排既有行的存储值。
   MODIFY COLUMN status ENUM('DRAFT','ACTIVE','DEPRECATED','AI_DRAFT')
          NOT NULL DEFAULT 'DRAFT',
 
-  -- 编写期这些字段还填不出来，只能放宽 NOT NULL
+  -- 编写期填不出来，只能放宽 NOT NULL。
+  -- ⭐ case_code 放宽后仍带 UNIQUE：MySQL 的唯一索引允许多个 NULL，
+  --    所以并存任意多条尚未编号的草稿不会互相撞键。
   MODIFY COLUMN case_code VARCHAR(64)  NULL,
   MODIFY COLUMN module_id VARCHAR(32)  NULL,
   MODIFY COLUMN priority  ENUM('P0','P1','P2','P3') NULL,
   MODIFY COLUMN author    VARCHAR(64)  NULL,
   MODIFY COLUMN title     VARCHAR(200) NULL,
 
-  ADD COLUMN case_type  ENUM('MANUAL','AI') NOT NULL DEFAULT 'MANUAL' AFTER case_id,
   ADD COLUMN version    INT  NOT NULL DEFAULT 0 AFTER status,
   ADD COLUMN draft_json JSON NULL,
-  ADD COLUMN created_by VARCHAR(64) NULL,
+  ADD COLUMN created_by VARCHAR(64) NULL COMMENT 'agent 身份，也是 AI 来源的唯一标记',
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整
   ADD CONSTRAINT ck_case_complete CHECK (
@@ -128,8 +143,13 @@ ALTER TABLE tc_case
      AND author    IS NOT NULL)
   );
 
-CREATE INDEX idx_ai_draft_cleanup ON tc_case (status, case_type, created_at);
+-- 清理任务只需要 status —— AI_DRAFT 这个状态只可能由 AI 编写路径产生
+CREATE INDEX idx_ai_draft_cleanup ON tc_case (status, created_at);
 ```
+
+**⭐ `tc_step` 的 `ON DELETE CASCADE` 是给清理任务用的。**
+每月删弃置草稿时，步骤必须跟着走 —— 否则清理任务本身会在子表里制造一堆孤儿行。
+**做清理设计时，第一件事是问"这行有没有子表"。**
 
 **⭐ 第 5 条要单独讲：放宽 `NOT NULL` 是代价，`CHECK` 把它挣回来。**
 
