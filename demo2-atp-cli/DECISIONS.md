@@ -82,7 +82,7 @@ docker-java 只从**系统属性** `api.version` 取值。
 CLI 被 agent 高频反复调用，冷启动是真实成本：Spring Boot ≈ 1.5s，picocli fat jar ≈ 300ms。
 一次会话调 20 次差 24s。同理不用连接池 —— 进程只活 300ms，HikariCP 预热比它省下的还多。
 
-**这与 demo1 / demo2-atp-mcp 的技术栈刻意不同，不是疏漏。**
+**这与 demo1 的技术栈刻意不同，不是疏漏。**
 
 ---
 
@@ -128,9 +128,9 @@ CLI 被 agent 高频反复调用，冷启动是真实成本：Spring Boot ≈ 1.
 **连带变更**：清理任务的索引从 `(status, case_type, created_at)` 简化为 `(status, created_at)` ——
 `AI_DRAFT` 只可能由 AI 编写路径产生，不需要再叠一个来源条件。
 
-⚠️ **共享契约漂移**：`00-SHARED-CONTEXT.md` §1.2 仍写着 `browser` / `timeout_sec`，
-`demo2-atp-mcp/src/main/resources/schema/tc_case.schema.json` 的 `required` 里也还有它们。
-两处都需要同步，**尚未做**。
+⚠️ **共享契约漂移，尚未同步**：`00-SHARED-CONTEXT.md` §1.2 与迁入本模块的
+`src/main/resources/schema/tc_case.schema.json` 的 `required` 里仍有 `browser` / `timeout_sec`。
+schema 文件在 M3 做 `atp schema` 时一并改。
 
 ---
 
@@ -267,7 +267,7 @@ D-109 撤除全部外键后，这一套不再需要，V1 直接两条 `ALTER` �
 | | MySQL | PostgreSQL |
 |---|---|---|
 | CHECK 约束 | 8.0.16+ 才生效，5.7 静默丢弃 | **一直强制** |
-| 枚举扩展 | 只能追加末尾 | `ALTER TYPE ADD VALUE`，可 BEFORE/AFTER 插入；**但新值不能在同一事务用** |
+| 枚举扩展 | 只能追加末尾 | `ALTER TYPE ADD VALUE`，可 BEFORE/AFTER 插入；**但新值不能在同一事务用** —— 因此本项目最终改存 SMALLINT，见 D-112 |
 | `DELETE ... LIMIT n` | 支持 | **不支持**，要 `WHERE ctid IN (SELECT ctid ... LIMIT n)` 或先 SELECT 出 id |
 | `ON UPDATE CURRENT_TIMESTAMP` | 支持 | **没有**，写入方显式赋值或挂触发器 |
 | UUID 主键 | InnoDB 索引组织表 → 随机插入页分裂 | 堆表 → **不存在这个问题** |
@@ -279,7 +279,81 @@ D-109 撤除全部外键后，这一套不再需要，V1 直接两条 `ALTER` �
 `23505`（unique_violation）/ `23514`（check_violation）是 SQL 标准的一部分，
 这段逻辑现在换库也不用动。**被逼着做的移植，反而让代码更干净了。**
 
-**⚠️ 新发现的坑**：`ALTER TYPE ... ADD VALUE` 必须单独提交（新值不能在同一事务使用），
-所以 **V1 整体不是原子的** —— 第一条成功、后面失败会停在中间态。
-已改成 `ADD VALUE IF NOT EXISTS` 让脚本可重跑。
-> 一整套设计都在讲幂等，结果自己的迁移脚本一开始不幂等。这个自嘲在面试里效果很好。
+**⚠️ 由此暴露的坑，最终导向 D-112**：`ALTER TYPE ... ADD VALUE` 必须单独提交
+（新值不能在同一事务使用），所以 V1 一度**不是原子的**。
+改成枚举存 `SMALLINT` 之后这个问题从根上消失了 —— V1 收回成一个 `BEGIN; ... COMMIT;`。
+
+---
+
+## D-111 · MCP server 方案废弃：废案审计、资产迁移、删除
+
+**2026-08-27** 决定放弃 MCP server 形态，主线改为 `atp` CLI。
+`02-HANDOFF-demo2-mcp.md`（902 行）与 `demo2-atp-mcp/`（4678 行）**已删除，不是归档**。
+
+**为什么删而不是留着**：留着的废案会持续污染上下文 ——
+每次开工都要重新判断"这个该不该看"，而判断本身就是成本。
+设计推理留在 git 历史（commit `95cdc81`）已经够用。
+
+### 审计结论（三档）
+
+| 档 | 内容 | 处置 |
+|---|---|---|
+| **A · 已迁入本模块** | `Action`（共享契约，`00-SHARED-CONTEXT` §1.3）、`LocatorType` / `WaitStrategy` / `OnFailure` / `Diagnostic` / `Severity` / `FieldRequirement`、`DiagnosticCodes`（STD-xxx 码表）、`LocatorLinter`（200 行纯规则）、`ActionContractTableTest`（45 个用例）、`tc_case.schema.json` | 已迁，编译并跑通 |
+| **B · M3 再搬** | `ValidationEngine` + 测试、`GoldenCasesTest` 的黄金用例数据 | 要先解开 `PlatformProfile` 依赖 |
+| **C · 丢弃** | `tool/*`、`McpServerApplication`、MCP 协议测试、`RuleMapper`(381) + `AtpAliasDictionary` + `profile/`、`EnvelopeParser`、`GapAnalyzer` | 见下 |
+
+### C 档里最值得说的：`RuleMapper` 为什么没有位置
+
+它是"别名归一化 + 缺口分析"流水线的心脏，381 行。但——
+
+**CLI 设计故意不做归一化。** `atp schema` 在**生成阶段**就告诉 agent 该产出什么形状（左移），
+所以不存在"上游乱生成、下游收拾"的环节。加上 `browser` / `timeout_sec` 删除后
+一半映射规则已失效（D-105）。
+
+> **迁移时最该问的不是"这段代码好不好"，是"新架构里它有没有位置"。**
+> 好代码搬进没有它位置的架构，就变成了债。
+
+同理 `EnvelopeParser`（从模型回复里剥信封）—— CLI 收的是 agent 写好的 JSON 文件，不需要剥。
+`GapAnalyzer`（172 行缺口分析）对应退出码 14 `NEEDS_INPUT`，
+但那本质就是"必填为空且无默认值"，写在 `validate` 里几行就够，不值得搬一个分析器。
+
+---
+
+## D-112 · 枚举列存 `SMALLINT`，语义由应用层持有
+
+**决策**：`status` / `case_type` / `priority` 在 DB 里是 `SMALLINT`，
+取值含义由 `CaseStatus` / `CaseType` / `Priority` 三个 Java enum 持有。
+**不用 PG 原生 enum 类型。**
+
+```
+status:    1=DRAFT  2=ACTIVE  3=DEPRECATED  4=AI_DRAFT
+case_type: 1=IOS    2=ANDROID 3=PC_WEB
+priority:  0=P0     1=P1      2=P2          3=P3
+```
+
+**为什么**：原生 enum 加值要 `ALTER TYPE tc_status ADD VALUE 'AI_DRAFT'`，而
+
+1. **新值不能在同一事务里被使用** —— `ck_case_complete` 的 CHECK 正好要引用它，
+   所以 `ALTER TYPE` 必须单独提交，**整份迁移脚本因此不是原子的**
+2. 加一个状态就要动一次 DDL —— 而"加状态"是业务演进里最频繁的动作之一
+
+改存 `SMALLINT` 后：**新增 `AI_DRAFT` 不需要任何 DDL**（只是应用层多认一个码），
+V1 收回成一个 `BEGIN; ... COMMIT;`。
+
+**代价（要能说出来，别只讲好处）**：
+
+| 代价 | 补偿 |
+|---|---|
+| `SELECT *` 出来是数字 | `COMMENT ON COLUMN` 把映射写在列上 |
+| DB 挡不住 `status = 99` | **故意不加范围 CHECK** —— 加了就等于把枚举又拖回 DDL，白改了。防线交给 `fromCode()`，未知码直接抛 |
+| CHECK 里出现裸字面量 `4` | 紧跟 COMMENT 说明；全库唯一一处硬编码 |
+
+**前提**：所有写入都走 CLI 或平台代码。有人直连库跑 SQL 这层保护就没了 ——
+和 D-109 撤外键是同一类取舍。
+
+> **判据：这个东西会不会频繁变？** 会变的东西，放在改起来最便宜的那一层。
+> 状态枚举会变，所以它不该住在需要 `ALTER TYPE` 的地方。
+
+**连带**：`PgTestBase` 的迁移脚本执行改为**整份一次执行**，不再按分号切 ——
+V1 用 `BEGIN/COMMIT` 包成原子事务，切开就等于把原子性拆掉，
+那样测的就不是要部署的那个东西。

@@ -1,5 +1,6 @@
 package dev.kanashi.atp.cli.store;
 
+import dev.kanashi.atp.cli.model.CaseStatus;
 import dev.kanashi.atp.cli.model.ExitCode;
 import dev.kanashi.atp.cli.model.StoreResult;
 import org.junit.jupiter.api.DisplayName;
@@ -45,7 +46,7 @@ class ConcurrentCommitTest extends PgTestBase {
                 assertThat(r.code())
                         .as("重放在语义上是成功，返回非 0 会让 agent 无限重试")
                         .isEqualTo(ExitCode.OK);
-                assertThat(r.row().status()).isEqualTo("DRAFT");
+                assertThat(r.row().status()).isEqualTo(CaseStatus.DRAFT);
                 assertThat(r.row().version()).isEqualTo(2);
             });
             assertThat(results.stream().filter(r -> !r.replayed()).count()).isEqualTo(1);
@@ -64,7 +65,7 @@ class ConcurrentCommitTest extends PgTestBase {
         StoreResult retry = store.commit(caseId, 1);
 
         assertThat(first.replayed()).isFalse();
-        assertThat(first.row().status()).isEqualTo("DRAFT");
+        assertThat(first.row().status()).isEqualTo(CaseStatus.DRAFT);
 
         assertThat(retry.code()).isEqualTo(ExitCode.OK);
         assertThat(retry.replayed()).isTrue();
@@ -79,7 +80,7 @@ class ConcurrentCommitTest extends PgTestBase {
         store.draft(caseId, PC_WEB, "搜索结果排序", "agent-a");
         store.update(caseId, 0, completeDraft("搜索结果排序"));
 
-        assertThat(store.commit(caseId, 1).row().status()).isEqualTo("DRAFT");
+        assertThat(store.commit(caseId, 1).row().status()).isEqualTo(CaseStatus.DRAFT);
     }
 
     private static StoreResult get(Future<StoreResult> f) {

@@ -457,7 +457,7 @@ Kimi 才有 `json_schema` + `strict`。而且 DeepSeek 的 function calling stri
 **结论：demo2 不依赖任何 provider 的结构化输出特性。**
 用最低公分母 `json_object` + 自己做 JSON Schema 校验 + 带错误重试。
 provider 支持 strict 时作为**额外保险**开启，但本地校验永不跳过。
-详见 `02-HANDOFF-demo2-mcp.md` §3-L3。
+详见 `06-atp-cli-设计.md`。
 
 ### 2.3 为什么是 TEI，不是 llama.cpp / Ollama / Infinity
 
@@ -576,10 +576,11 @@ Qwen3-Embedding 是**非对称**的 —— query 侧要加 instruction prefix，
 /home/kanashi/Applications/interview-demos/
 ├── 00-SHARED-CONTEXT.md          ← 本文档
 ├── 01-HANDOFF-demo1-rag.md       ← 🗄️ 已归档（Java 8 路线）
-├── 02-HANDOFF-demo2-mcp.md       ← demo2 (MCP) 的入口文档
+├── 05-CLI-并发幂等答辩稿.md        ← demo2 (CLI) 的入口文档
+├── 06-atp-cli-设计.md            ← CLI 命令表与接入方式
 ├── 03-HANDOFF-rag-v2.md          ← ⭐ 知识侧当前的入口文档
 ├── demo1-atp-rag/                ← 🗄️ 已归档。语料与 DECISIONS.md 仍在用
-└── demo2-atp-mcp/                ← demo2 session 在此目录启动
+└── demo2-atp-cli/                ← demo2 session 在此目录启动
 ```
 
 两个 session 各自 `git init`，互不干扰。共享契约（§1.2 领域模型、§1.3 Action 枚举）

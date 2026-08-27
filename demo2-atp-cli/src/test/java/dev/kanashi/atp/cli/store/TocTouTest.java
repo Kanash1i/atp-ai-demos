@@ -1,5 +1,6 @@
 package dev.kanashi.atp.cli.store;
 
+import dev.kanashi.atp.cli.model.CaseStatus;
 import dev.kanashi.atp.cli.model.ExitCode;
 import dev.kanashi.atp.cli.model.StoreResult;
 import org.junit.jupiter.api.DisplayName;
@@ -40,7 +41,7 @@ class TocTouTest extends PgTestBase {
         assertThat(commit.message()).contains("被改过");
         assertThat(store.show(caseId).row().status())
                 .as("案例必须还停在编写态，不能被提交出去")
-                .isEqualTo("AI_DRAFT");
+                .isEqualTo(CaseStatus.AI_DRAFT);
     }
 
     @Test
@@ -55,7 +56,7 @@ class TocTouTest extends PgTestBase {
         StoreResult commit = store.commit(caseId, current);
 
         assertThat(commit.code()).isEqualTo(ExitCode.OK);
-        assertThat(commit.row().status()).isEqualTo("DRAFT");
+        assertThat(commit.row().status()).isEqualTo(CaseStatus.DRAFT);
     }
 
     @Test

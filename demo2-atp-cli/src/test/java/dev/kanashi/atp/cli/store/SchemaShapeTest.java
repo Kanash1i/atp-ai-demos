@@ -1,6 +1,7 @@
 package dev.kanashi.atp.cli.store;
 
 import dev.kanashi.atp.cli.model.ExitCode;
+import dev.kanashi.atp.cli.model.Priority;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -58,10 +59,10 @@ class SchemaShapeTest extends PgTestBase {
             // PG 没有 MySQL 那条"不能在子查询里引用正在删的表"的限制，可以直写
             st.executeUpdate("""
                     DELETE FROM tc_step WHERE case_id IN (
-                        SELECT case_id FROM tc_case WHERE status = 'AI_DRAFT')
+                        SELECT case_id FROM tc_case WHERE status = 4 /* AI_DRAFT */)
                     """);
             // ③ 最后删父表
-            st.executeUpdate("DELETE FROM tc_case WHERE status = 'AI_DRAFT'");
+            st.executeUpdate("DELETE FROM tc_case WHERE status = 4 /* AI_DRAFT */");
         }
 
         assertThat(count("SELECT COUNT(*) FROM tc_step")).isZero();
@@ -87,7 +88,7 @@ class SchemaShapeTest extends PgTestBase {
         store.draft(caseId, PC_WEB, "购物车结算", "agent-a");
 
         var fabricated = new dev.kanashi.atp.cli.model.CaseDraft(
-                "ATP-CART-0002", "购物车结算", "M999", "P1", "qa.kanashi", null, "{}");
+                "ATP-CART-0002", "购物车结算", "M999", Priority.P1, "qa.kanashi", null, "{}");
 
         // 不建外键，所以 M999 照样写得进去。
         // 这个断言不是在庆祝，是在钉死一条责任转移：

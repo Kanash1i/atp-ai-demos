@@ -2,10 +2,12 @@
 -- 来源：00-SHARED-CONTEXT.md §1.2。定位路径：项目 → 模块 → 案例。
 -- 方言：PostgreSQL。
 
--- ── 枚举类型 ──────────────────────────────────────────────
-CREATE TYPE tc_case_type AS ENUM ('IOS', 'ANDROID', 'PC_WEB');
-CREATE TYPE tc_priority  AS ENUM ('P0', 'P1', 'P2', 'P3');
-CREATE TYPE tc_status    AS ENUM ('DRAFT', 'ACTIVE', 'DEPRECATED');
+-- ⭐ 枚举一律存 SMALLINT，取值含义由应用层的 Java enum 持有，DB 只存码。
+--    不用 PG 原生 enum 类型的理由见 DECISIONS D-112：
+--    · 加一个新状态不需要任何 DDL（原生 enum 要 ALTER TYPE，还不能在同一事务里用新值）
+--    · 迁移脚本因此可以是单个原子事务
+--    · 枚举语义本来就该由应用侧和 CLI 持有，DB 存 int 就够
+--    代价：SELECT * 出来是数字，可读性差 —— 用 COMMENT 把映射写在列上补偿。
 
 -- ── 项目字典 ──────────────────────────────────────────────
 CREATE TABLE tc_project (
@@ -33,14 +35,14 @@ COMMENT ON COLUMN tc_module.module_code IS '全局唯一，用作 case_code 前�
 -- ── 案例主表 ──────────────────────────────────────────────
 CREATE TABLE tc_case (
   case_id      VARCHAR(32)    NOT NULL,
-  case_type    tc_case_type   NOT NULL DEFAULT 'PC_WEB',
+  case_type    SMALLINT       NOT NULL DEFAULT 3,
   case_code    VARCHAR(64)    NOT NULL,
   title        VARCHAR(200)   NOT NULL,
   module_id    VARCHAR(32)    NOT NULL,
-  priority     tc_priority    NOT NULL,
+  priority     SMALLINT       NOT NULL,
   author       VARCHAR(64)    NOT NULL,
   precondition TEXT           NULL,
-  status       tc_status      NOT NULL DEFAULT 'DRAFT',
+  status       SMALLINT       NOT NULL DEFAULT 1,
   -- ⚠️ PG 没有 MySQL 的 ON UPDATE CURRENT_TIMESTAMP。
   --    updated_at 由写入方显式赋值（CaseStore 每条 UPDATE 都带 now()），
   --    否则就得挂触发器。这是从 MySQL 迁过来最容易漏的一条。
@@ -55,7 +57,9 @@ CREATE INDEX idx_case_module ON tc_case (module_id);
 
 COMMENT ON COLUMN tc_case.case_id   IS '平台生成的雪花 ID';
 COMMENT ON COLUMN tc_case.case_code IS '业务编号 ATP-{MODULE}-{4位}';
-COMMENT ON COLUMN tc_case.case_type IS '执行平台。老平台本来就按 iOS / Android / Web 区分案例';
+COMMENT ON COLUMN tc_case.case_type IS '执行平台 1=IOS 2=ANDROID 3=PC_WEB（老平台本来就按平台区分案例）';
+COMMENT ON COLUMN tc_case.priority  IS '优先级 0=P0 1=P1 2=P2 3=P3';
+COMMENT ON COLUMN tc_case.status    IS '状态 1=DRAFT 2=ACTIVE 3=DEPRECATED';
 
 -- ── 步骤子表 ──────────────────────────────────────────────
 CREATE TABLE tc_step (

@@ -1,5 +1,6 @@
 package dev.kanashi.atp.cli.store;
 
+import dev.kanashi.atp.cli.model.CaseStatus;
 import dev.kanashi.atp.cli.model.ExitCode;
 import dev.kanashi.atp.cli.model.StoreResult;
 import org.junit.jupiter.api.DisplayName;
@@ -43,7 +44,7 @@ class ConcurrentDraftTest extends PgTestBase {
             assertThat(results).allSatisfy(r -> {
                 assertThat(r.code()).isEqualTo(ExitCode.OK);          // 重放也必须是 0
                 assertThat(r.row().caseId()).isEqualTo(caseId);
-                assertThat(r.row().status()).isEqualTo("AI_DRAFT");
+                assertThat(r.row().status()).isEqualTo(CaseStatus.AI_DRAFT);
             });
             assertThat(results.stream().filter(r -> !r.replayed()).count())
                     .as("只有一个线程真正插入成功").isEqualTo(1);

@@ -1,9 +1,9 @@
 # 答辩稿 · CLI 方案下的幂等与并发状态设计
 
 > 用途：面试口述稿，按讲述顺序排列，可直接背。
-> 取代此前的 MCP server 方案（`02-HANDOFF-demo2-mcp.md` §5）——
-> **那份仍然有效，但它的前提是「老平台改不动」。本方案的前提是「老平台改得动」。**
-> 被问到两者区别时，答"这是前提不同，不是谁对谁错"（见 §8）。
+> **MCP server 方案已于 2026-08-27 废弃并删除**，设计推理留在 git 历史（commit `95cdc81`）。
+> 两者的区别是**前提不同**：MCP 方案假设「老平台改不动」，本方案的前提是「老平台改得动」。
+> 被问到时答"这是前提不同，不是谁对谁错"（见 §9 末尾那张表）。
 
 ---
 
@@ -72,7 +72,7 @@ MCP 方案是在外面挂一张 ChangeSet 表来当仲裁点。但既然老平�
 
 ---
 
-## 3. 老平台的两处改造（成本很低，这是方案成立的前提）
+## 3. 老平台的改造（成本很低，这是方案成立的前提）
 
 ### 3.1 改造清单
 
@@ -86,6 +86,7 @@ MCP 方案是在外面挂一张 ChangeSet 表来当仲裁点。但既然老平�
 3. **`status` 加 `AI_DRAFT` 枚举值** —— ⚠️ **不复用已有的 `DRAFT`**，见下
 4. **加 `version` 字段** —— 乐观锁
 5. **放宽几个 `NOT NULL`，再用 `CHECK` 按状态挣回来** —— 见下
+6. **枚举列一律存 `SMALLINT`，语义由应用层的 Java enum 持有** —— 见 §3.4
 
 > **⭐ 为什么必须新造 `AI_DRAFT` 而不是复用 `DRAFT`**（这条是实现时才发现的，很能讲）：
 > 老平台的 `DRAFT` 语义是"**案例已写好、尚未启用**"，执行器和列表页都认它。
@@ -102,15 +103,13 @@ MCP 方案是在外面挂一张 ChangeSet 表来当仲裁点。但既然老平�
 
 ### 3.2 DDL（实际执行的那一支，已在 PostgreSQL 17 上跑通）
 
-```sql
--- 第一步：给状态枚举加编写态。
--- ⚠️ PG 的坑，和 MySQL 完全相反，别混：
---    · PG 可以用 BEFORE / AFTER 把新值插在枚举任意位置（MySQL 只能追加末尾）
---    · 但【新加的枚举值不能在同一个事务里被使用】，所以这条必须单独提交，
---      下面引用 'AI_DRAFT' 的 CHECK 才建得起来 —— 也就是说 V1 不是原子的（见 §9④）
-ALTER TYPE tc_status ADD VALUE 'AI_DRAFT';
+**⭐ 整份是一个原子事务** —— 因为状态枚举存的是 `SMALLINT`，
+新增 `AI_DRAFT` 根本不需要 DDL，它只是应用层多认一个码 `4`。
 
--- 第二步：主键改宽。UUID 是 36 字符，老列 VARCHAR(32) 装不下。
+```sql
+BEGIN;
+
+-- 主键改宽。UUID 是 36 字符，老列 VARCHAR(32) 装不下。
 -- ⚠️ 父子两边必须一起改：tc_step.case_id 存的就是 tc_case.case_id 的值，
 --    本库不建外键约束，但长度不一致仍会在写入时被静默截断。
 ALTER TABLE tc_case ALTER COLUMN case_id TYPE VARCHAR(36);
@@ -118,7 +117,6 @@ ALTER TABLE tc_step
   ALTER COLUMN case_id TYPE VARCHAR(36),
   ALTER COLUMN step_id TYPE VARCHAR(36);
 
--- 第三步：放宽必填 + 乐观锁 + 编写期内容
 ALTER TABLE tc_case
   -- 编写期填不出来，只能放宽 NOT NULL。
   -- ⭐ case_code 放宽后仍带 UNIQUE：PG 的唯一约束默认允许多个 NULL
@@ -135,14 +133,19 @@ ALTER TABLE tc_case
   ADD COLUMN created_by VARCHAR(64) NULL,
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整
+  --    字面量 4 就是 AI_DRAFT —— 这是"枚举存 int"的可读性代价，用 COMMENT 补偿
   ADD CONSTRAINT ck_case_complete CHECK (
-        status = 'AI_DRAFT'
+        status = 4
      OR (case_code IS NOT NULL AND title    IS NOT NULL
      AND module_id IS NOT NULL AND priority IS NOT NULL
      AND author    IS NOT NULL)
   );
 
+COMMENT ON COLUMN tc_case.status IS '状态 1=DRAFT 2=ACTIVE 3=DEPRECATED 4=AI_DRAFT（AI 编写中）';
+
 CREATE INDEX idx_ai_draft_cleanup ON tc_case (status, created_at);
+
+COMMIT;
 ```
 
 > ⚠️ **PG 没有 MySQL 的 `ON UPDATE CURRENT_TIMESTAMP`。**
@@ -170,6 +173,59 @@ CREATE INDEX idx_ai_draft_cleanup ON tc_case (status, created_at);
    因为 InnoDB 是索引组织表，主键顺序就是物理存储顺序。
    PG 是堆表，主键只是一个普通 B-tree 索引，随机 UUID 不会打乱行的物理布局。
    （被问"为什么不怕随机主键"时答这个 —— 能区分这两种存储结构，比背结论强。）
+
+---
+
+### 3.3 ⚠️ 全库不建外键约束
+
+`tc_case.module_id → tc_module`、`tc_step.case_id → tc_case` 都是**逻辑外键**，
+只建索引、不建 `FOREIGN KEY` 约束。引用完整性由**写入方**（CLI 与平台）保证。
+
+理由和代价都要能说：
+
+| | |
+|---|---|
+| **为什么不建** | 外键在写入路径上要查父表加锁，高并发下是热点；分库分表直接不可用；且它会让 DDL 变形 —— 被引用列连类型都改不了，必须 `DROP FK → 改父 → 改子 → 装回去` |
+| **代价①** | **没有 `ON DELETE CASCADE`。** 清理任务必须自己**先删子表再删父表**，顺序反了就找不到要删的步骤了（见 §8） |
+| **代价②** | **数据库不再挡编造的 `module_id`。** 「防模型编造模块」这条责任转移到了 `atp validate`，它必须对着 `tc_module` 查 |
+
+> **面试点**：讲"不建外键"时，只说性能理由是不够的 ——
+> **要能说出你把那两件事接管到哪儿去了。**
+> 约束撤掉不等于不变式消失，只是换了个人负责。说不出接管方，那就是漏了。
+
+### 3.4 ⭐ 枚举列存 `SMALLINT`，不用 PG 原生 enum
+
+`status` / `case_type` / `priority` 在 DB 里都是 `SMALLINT`，
+取值含义由应用层的 Java enum 持有（`CaseStatus` / `CaseType` / `Priority`）。
+
+**为什么不用 PG 原生 enum 类型**：
+
+```sql
+-- 原生 enum 要这么加值：
+ALTER TYPE tc_status ADD VALUE 'AI_DRAFT';
+```
+
+这条有两个连锁问题：
+
+1. **新加的枚举值不能在同一个事务里被使用** —— 而 `ck_case_complete` 的 CHECK 正好要引用它，
+   所以 `ALTER TYPE` 必须单独提交。**整份迁移脚本因此不是原子的**：
+   第一条成功、后面失败会停在"枚举多了个值但表没改"的中间态。
+2. 加一个状态就要动一次 DDL。**而"加状态"是业务演进里最频繁的动作之一。**
+
+改存 `SMALLINT` 之后：**新增 `AI_DRAFT` 不需要任何 DDL**，只是应用层多认一个码。
+迁移脚本收回成一个 `BEGIN; ... COMMIT;`。
+
+**代价要认，别只讲好处**：
+
+| 代价 | 补偿 |
+|---|---|
+| `SELECT *` 出来是数字，DBA 看不懂 | `COMMENT ON COLUMN` 把映射写在列上 |
+| DB 层面挡不住写入非法码（比如 `status=99`） | 不加范围 CHECK —— **加了就等于把枚举又拖回 DDL，白改了**。这道防线交给应用层的 `fromCode()`，非法码直接抛异常 |
+| CHECK 里出现裸字面量 `4` | 紧跟一条 COMMENT 说明；这是唯一一处硬编码 |
+
+> **面试点**：这是一次**把语义从 DDL 层挪回应用层**的取舍。
+> 判据是"**这个东西会不会频繁变**" —— 会变的东西放在改起来最便宜的那一层。
+> 状态枚举会变，所以它不该住在需要 `ALTER TYPE` 的地方。
 
 ---
 
@@ -379,19 +435,20 @@ WHERE status != 'DELETED'               -- ⚠️ 黑名单：新枚举默认被
 
 黑名单写法会把草稿静默捞进结果集。grep 一遍 status 的过滤方式即可，命中就那几处。
 
-**④ ⚠️ V1 迁移脚本不是原子的。**
+**④ ⚠️ 数据库不校验枚举码的合法性。**
 
-`ALTER TYPE tc_status ADD VALUE 'AI_DRAFT'` **必须单独提交** ——
-PG 不允许在添加枚举值的同一个事务里使用这个新值，而后面 `ck_case_complete` 的
-CHECK 表达式正好要引用它。
+枚举存 `SMALLINT` 换来了"加状态不用动 DDL"，代价是
+**`UPDATE tc_case SET status = 99` 数据库照收**。
 
-后果：如果第一条成功、后面的 `ALTER TABLE` 失败，库会停在
-**"枚举多了个值、但表结构没改"** 的中间态。不致命（多一个用不到的枚举值无害），
-但**重跑迁移时 `ADD VALUE` 会因为值已存在而报错**，脚本必须写成
-`ADD VALUE IF NOT EXISTS` 才是幂等的。
+我**故意没加**范围 CHECK —— 加了就等于把枚举语义又拖回 DDL，
+那这次改造的收益就没了。这道防线放在应用层：`CaseStatus.fromCode()` 遇到未知码直接抛异常。
 
-> **自嘲一句效果很好**：我整套设计讲的都是幂等，
-> **结果自己的迁移脚本一开始不幂等** —— 幂等这件事，稍不留神就漏。
+**所以这条依赖"所有写入都走 CLI 或平台代码"这个前提。**
+如果有人直接连库跑 SQL，这层保护就没了 —— 和 §3.3 撤外键是同一类取舍：
+**约束撤掉不等于不变式消失，只是换了个人负责。**
+
+> 被追问"那你怎么保证没人直连库改"时，老实答：**保证不了，靠权限收口。**
+> 承认边界比编一个不存在的防护强。
 
 ### 什么时候这套不成立，必须回到 MCP server 方案
 

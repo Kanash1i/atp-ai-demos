@@ -2,6 +2,9 @@ package dev.kanashi.atp.cli.store;
 
 import dev.kanashi.atp.cli.model.CaseDraft;
 import dev.kanashi.atp.cli.model.CaseRow;
+import dev.kanashi.atp.cli.model.CaseStatus;
+import dev.kanashi.atp.cli.model.CaseType;
+import dev.kanashi.atp.cli.model.Priority;
 import dev.kanashi.atp.cli.model.ExitCode;
 import dev.kanashi.atp.cli.model.StoreResult;
 
@@ -54,17 +57,18 @@ public final class CaseStore {
      * 两条各自合法的草稿，而版本号救不了它们（是两行不同的记录）。
      * 把生成动作挪到客户端，这个洞就免费消失了。
      */
-    public StoreResult draft(String caseId, String caseType, String title, String createdBy) {
+    public StoreResult draft(String caseId, CaseType caseType, String title, String createdBy) {
         try (Connection conn = connections.open()) {
             try (PreparedStatement ps = conn.prepareStatement("""
                     INSERT INTO tc_case (case_id, case_type, status, version,
                                          title, created_by, created_at, updated_at)
-                    VALUES (?, ?::tc_case_type, 'AI_DRAFT', 0, ?, ?, now(), now())
+                    VALUES (?, ?, ?, 0, ?, ?, now(), now())
                     """)) {
                 ps.setString(1, caseId);
-                ps.setString(2, caseType);
-                ps.setString(3, title);
-                ps.setString(4, createdBy);
+                ps.setInt(2, caseType.code());
+                ps.setInt(3, CaseStatus.AI_DRAFT.code());
+                ps.setString(4, title);
+                ps.setString(5, createdBy);
                 ps.executeUpdate();
 
             } catch (SQLException e) {
@@ -106,19 +110,20 @@ public final class CaseStore {
             try (PreparedStatement ps = conn.prepareStatement("""
                     UPDATE tc_case
                        SET draft_json = ?::jsonb, case_code = ?, title = ?, module_id = ?,
-                           priority = ?::tc_priority, author = ?, precondition = ?,
+                           priority = ?, author = ?, precondition = ?,
                            version = version + 1, updated_at = now()
-                     WHERE case_id = ? AND status = 'AI_DRAFT' AND version = ?
+                     WHERE case_id = ? AND status = ? AND version = ?
                     """)) {
                 ps.setString(1, draft.rawJson());
                 ps.setString(2, draft.caseCode());
                 ps.setString(3, draft.title());
                 ps.setString(4, draft.moduleId());
-                ps.setString(5, draft.priority());
+                setNullableInt(ps, 5, draft.priority() == null ? null : draft.priority().code());
                 ps.setString(6, draft.author());
                 ps.setString(7, draft.precondition());
                 ps.setString(8, caseId);
-                ps.setInt(9, expectedVersion);
+                ps.setInt(9, CaseStatus.AI_DRAFT.code());
+                ps.setInt(10, expectedVersion);
                 affected = ps.executeUpdate();
             }
 
@@ -150,11 +155,13 @@ public final class CaseStore {
             int affected;
             try (PreparedStatement ps = conn.prepareStatement("""
                     UPDATE tc_case
-                       SET status = 'DRAFT', version = version + 1, updated_at = now()
-                     WHERE case_id = ? AND status = 'AI_DRAFT' AND version = ?
+                       SET status = ?, version = version + 1, updated_at = now()
+                     WHERE case_id = ? AND status = ? AND version = ?
                     """)) {
-                ps.setString(1, caseId);
-                ps.setInt(2, expectedVersion);
+                ps.setInt(1, CaseStatus.DRAFT.code());
+                ps.setString(2, caseId);
+                ps.setInt(3, CaseStatus.AI_DRAFT.code());
+                ps.setInt(4, expectedVersion);
                 affected = ps.executeUpdate();
 
             } catch (SQLException e) {
@@ -235,12 +242,20 @@ public final class CaseStore {
                 }
                 return Optional.of(new CaseRow(
                         rs.getString("case_id"),
-                        rs.getString("case_type"),
-                        rs.getString("status"),
+                        CaseType.fromCode(rs.getInt("case_type")),
+                        CaseStatus.fromCode(rs.getInt("status")),
                         rs.getInt("version"),
                         rs.getString("title"),
                         rs.getString("draft_json")));
             }
+        }
+    }
+
+    private static void setNullableInt(PreparedStatement ps, int idx, Integer value) throws SQLException {
+        if (value == null) {
+            ps.setNull(idx, java.sql.Types.SMALLINT);
+        } else {
+            ps.setInt(idx, value);
         }
     }
 

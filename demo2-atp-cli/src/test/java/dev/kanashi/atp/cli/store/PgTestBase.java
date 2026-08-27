@@ -1,6 +1,8 @@
 package dev.kanashi.atp.cli.store;
 
 import dev.kanashi.atp.cli.model.CaseDraft;
+import dev.kanashi.atp.cli.model.CaseType;
+import dev.kanashi.atp.cli.model.Priority;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -13,8 +15,6 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Arrays;
-import java.util.List;
 
 /**
  * 起一个真 PostgreSQL，按 V0 → V1 的顺序跑迁移。
@@ -60,35 +60,23 @@ abstract class PgTestBase {
                 throw new IllegalStateException("找不到迁移脚本: " + resource);
             }
             String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            // ⭐ 整份脚本一次执行，不按分号切：V1 用 BEGIN/COMMIT 包成一个原子事务，
+            //    切开就等于把原子性拆掉了 —— 那样测的就不是要部署的那个东西。
+            //    pgjdbc 的 Statement.execute 走简单查询协议，支持多语句串。
             try (Connection c = connections.open(); Statement st = c.createStatement()) {
-                for (String stmt : splitStatements(sql)) {
-                    st.execute(stmt);
-                }
+                st.execute(sql);
             }
         }
     }
 
-    /** 去掉整行 {@code --} 注释后按分号切分。脚本里没有字符串内分号，够用。 */
-    private static List<String> splitStatements(String sql) {
-        String stripped = Arrays.stream(sql.split("\n"))
-                .map(line -> {
-                    int idx = line.indexOf("--");
-                    return idx >= 0 ? line.substring(0, idx) : line;
-                })
-                .reduce("", (a, b) -> a + "\n" + b);
-        return Arrays.stream(stripped.split(";"))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .toList();
-    }
 
-    /** 执行平台，老平台原有概念（IOS / ANDROID / PC_WEB）。 */
-    static final String PC_WEB = "PC_WEB";
+    /** 执行平台，老平台原有概念。 */
+    static final CaseType PC_WEB = CaseType.PC_WEB;
 
     /** 一份能通过 ck_case_complete 的完整草稿。module_id 必须是 tc_module 里真实存在的值。 */
     static CaseDraft completeDraft(String title) {
         return new CaseDraft(
-                "ATP-CART-0001", title, "M003", "P1", "qa.kanashi",
+                "ATP-CART-0001", title, "M003", Priority.P1, "qa.kanashi",
                 "已登录且购物车非空",
                 "{\"title\":\"" + title + "\",\"steps\":[]}");
     }

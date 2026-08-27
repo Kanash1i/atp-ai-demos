@@ -1,8 +1,8 @@
 # `atp` CLI 设计（可接入 opencode 演示）
 
 > 骨架来自 `05-CLI-并发幂等答辩稿.md`。本文只讲**怎么建**，不重复论证。
-> 模块位置：`demo2-atp-cli/`（取代 `02-HANDOFF-demo2-mcp.md` 的 MCP server 形态，
-> 那份文档保留为"平台改不动时"的备选方案）。
+> 模块位置：`demo2-atp-cli/`。MCP server 形态（`demo2-atp-mcp/`）已于 2026-08-27 删除，
+> 可复用资产已迁入本模块（见 `demo2-atp-cli/DECISIONS.md` D-111）。
 
 ---
 

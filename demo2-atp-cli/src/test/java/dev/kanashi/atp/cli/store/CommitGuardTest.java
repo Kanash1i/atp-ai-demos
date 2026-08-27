@@ -1,6 +1,7 @@
 package dev.kanashi.atp.cli.store;
 
 import dev.kanashi.atp.cli.model.CaseDraft;
+import dev.kanashi.atp.cli.model.CaseStatus;
 import dev.kanashi.atp.cli.model.ExitCode;
 import dev.kanashi.atp.cli.model.StoreResult;
 import org.junit.jupiter.api.DisplayName;
@@ -21,7 +22,7 @@ class CommitGuardTest extends PgTestBase {
 
         // 只写了标题，case_code / module_id / priority / author 全空
         CaseDraft partial = new CaseDraft(
-                null, "只有标题", null, null, null, null, "{}");
+                null, "只有标题", null, null, null, null, "{}");   // priority 也是 null
         StoreResult updated = store.update(caseId, 0, partial);
         assertThat(updated.code())
                 .as("编写期允许残缺，update 本身不该失败")
@@ -31,7 +32,7 @@ class CommitGuardTest extends PgTestBase {
 
         assertThat(commit.code()).isEqualTo(ExitCode.VALIDATION_FAILED);
         assertThat(commit.message()).contains("ck_case_complete");
-        assertThat(store.show(caseId).row().status()).isEqualTo("AI_DRAFT");
+        assertThat(store.show(caseId).row().status()).isEqualTo(CaseStatus.AI_DRAFT);
     }
 
     @Test

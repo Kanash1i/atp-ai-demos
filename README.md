@@ -32,8 +32,10 @@ PR 由你 review 后 merge，两个 session 都不会自行合并。
 |---|---|---|
 | `.env.example` | **你** | ⚠️ **API key 填在这里**（复制为 `.env`） |
 | `00-SHARED-CONTEXT.md` | **两个 session 都要读** | 虚构世界观、共享领域模型、机器拓扑、provider 差异、面试叙事主线 |
-| `01-HANDOFF-demo1-rag.md` | demo1 session | RAG 助手的架构、语料设计、**评估体系** |
-| `02-HANDOFF-demo2-mcp.md` | demo2 session | MCP server 的流水线、k8s 部署、可靠性策略、测试方案 |
+| **`03-HANDOFF-rag-v2.md`** | **知识侧 session** | ⭐ 当前入口。换引擎重做的路线、**七条跨项目经验**、资产迁移清单 |
+| `05-CLI-并发幂等答辩稿.md` | demo2 session | ⭐ `atp` CLI 的并发幂等设计（面试口述稿）|
+| `06-atp-cli-设计.md` | demo2 session | CLI 命令表、退出码契约、opencode 接入、里程碑 |
+| `01-HANDOFF-demo1-rag.md` | — | 🗄️ 已归档（Java 8 + langchain4j 路线）。有效部分已提炼进 `03-` |
 
 每个 demo 目录下已放 `CLAUDE.md`，新 session 启动时自动读到红线与硬约束。
 
@@ -48,13 +50,17 @@ PR 由你 review 后 merge，两个 session 都不会自行合并。
         └──────────────────────────────────────────────┘
                  ▲                          ▲
     ┌────────────┴──────────┐   ┌───────────┴──────────────┐
-    │  demo1: 知识侧「读」     │   │  demo2: 生产侧「写」        │
+    │  知识侧「读」            │   │  生产侧「写」               │
     │  RAG 知识助手           │   │  MCP 规范化服务 (k8s)      │
-    │  Java 8 + langchain4j │   │  Java 17 + Spring Boot   │
+    │  Java 21 + Spring AI  │   │  Java 17 + Spring AI 2.0 │
     │                       │   │                          │
     │  难点：召回质量怎么量化   │   │  难点：怎么让模型少做事     │
     └───────────────────────┘   └──────────────────────────┘
 ```
+
+> **2026-08-19 路线调整**：知识侧原为 Java 8 + langchain4j 全手搓（`demo1-atp-rag/`，已归档，
+> 停在 M3、消融表未跑）。现改为在买来的 Java 21 RAG 引擎上重做，
+> 两侧计划合并进同一个 Maven 多模块仓库并统一 Spring AI。详见 `03-HANDOFF-rag-v2.md`。
 
 **面试主线**（详见 `00-SHARED-CONTEXT.md` §4）：
 > 老平台有两个瓶颈 —— 新人上手慢，以及 AI 生成的案例进不了库。
@@ -75,7 +81,7 @@ cp .env.example .env
 
 ```bash
 cd demo1-atp-rag     # session A
-cd demo2-atp-mcp     # session B
+cd demo2-atp-cli     # session B
 ```
 
 第一句话直接说：**"读 CLAUDE.md 和交接文档，然后从 M0 开始"**。
@@ -155,9 +161,18 @@ cp .env.example .env
 
 ## 建议的开发顺序
 
-**先做 demo2。**
+**知识侧优先**，按 `03-HANDOFF-rag-v2.md` §5 的里程碑走：
 
-理由：它**不需要服务机**，只要一个 API key，现在就能开工；
-而且 M2（纯规则链路）完成时已有完整演示价值，投入产出比最高。
+```
+M0 拉代码摸底 + 定框架统一方案
+M1 换 ATP 语料
+M2 ⭐ 评估集 + baseline      ← 这一步不完成，不准做 M3
+M3 ⭐ 消融表 4 行
+M4 合并 demo2 + 演示脚本
+```
 
-demo1 需要等服务机就绪，可以在等待期间先做 M1 语料生成（纯文本，无依赖）。
+demo2（MCP）已有可演示的成果，暂不动，在 M4 并入多模块骨架。
+
+> **唯一的硬纪律：语料一能检索，下一件事就是评估集，不是加功能。**
+> demo1 就是栽在这条上 —— 功能做了一堆（多格式解析、图片链路、父子切块），
+> 而第一天写下的「砍功能，不砍评估」被自己违反了，最后消融表一行没跑出来。

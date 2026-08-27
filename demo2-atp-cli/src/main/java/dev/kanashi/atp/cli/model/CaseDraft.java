@@ -10,7 +10,7 @@ public record CaseDraft(
         String caseCode,
         String title,
         String moduleId,
-        String priority,
+        Priority priority,
         String author,
         String precondition,
         String rawJson
