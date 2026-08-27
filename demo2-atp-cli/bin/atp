@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# atp —— ATP 案例编写 CLI 的启动包装。
+# 刻意保持极薄：真正的逻辑全在 fat jar 里，这里只负责【找对 JVM】和【找到 jar】。
+set -euo pipefail
+
+MODULE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+JAR="$MODULE_DIR/target/atp.jar"
+MIN_MAJOR=21
+E_INFRA=20   # 与 ExitCode.INFRA_ERROR 一致
+
+die() { echo "[INFRA_ERROR] $*" >&2; exit $E_INFRA; }
+
+# ── 选 JVM：ATP_JAVA > JAVA_HOME > PATH ────────────────────────
+# ⚠️ 不能直接 exec java —— 开发机上常见 sdkman 把 JAVA_HOME 指到别的版本，
+#    那样 agent 拿到的是一页 UnsupportedClassVersionError 堆栈，而不是一句能照做的错误。
+if [[ -n "${ATP_JAVA:-}" ]]; then
+  JAVA_BIN="$ATP_JAVA"
+elif [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
+  JAVA_BIN="$JAVA_HOME/bin/java"
+else
+  JAVA_BIN="$(command -v java || true)"
+fi
+[[ -n "$JAVA_BIN" && -x "$JAVA_BIN" ]] || die "找不到可执行的 java。设置 JAVA_HOME 或 ATP_JAVA 指向 JDK ${MIN_MAJOR}+。"
+
+# "21.0.8" / "17.0.16" → 21 / 17
+MAJOR="$("$JAVA_BIN" -version 2>&1 | head -1 | sed -E 's/.*version "([0-9]+).*/\1/')"
+if [[ ! "$MAJOR" =~ ^[0-9]+$ ]] || (( MAJOR < MIN_MAJOR )); then
+  die "需要 JDK ${MIN_MAJOR}+，当前 $JAVA_BIN 是 ${MAJOR:-未知}。用 ATP_JAVA=/path/to/jdk21/bin/java 指定。"
+fi
+
+[[ -f "$JAR" ]] || die "找不到 $JAR —— 先跑: mvn -pl demo2-atp-cli package -DskipTests"
+
+# -XX:TieredStopAtLevel=1：CLI 只活几百毫秒，关掉 C2 编译能省下明显的启动开销。见 DECISIONS D-103。
+exec "$JAVA_BIN" -XX:TieredStopAtLevel=1 -Xshare:auto -jar "$JAR" "$@"

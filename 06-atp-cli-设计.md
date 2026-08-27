@@ -283,9 +283,9 @@ metadata:
 
 | # | 内容 | 产出 |
 |---|---|---|
-| M1 | DDL 迁移脚本 + `CaseStore` 的 draft/show/update/commit | Testcontainers 起 PostgreSQL，`ConcurrentCommitTest` 绿 |
-| M2 | picocli 命令层 + 退出码 + `--json` 信封 | `bin/atp` 能跑通完整七步 |
-| M3 | `validate` / `lint-locator` 纯本地规则 | 断言零网络零模型 |
+| ~~M1~~ ✅ | DDL 迁移脚本 + `CaseStore` 的 draft/show/update/commit | **已完成**：Testcontainers 起 PostgreSQL，并发与 TOCTOU 用例绿 |
+| ~~M2~~ ✅ | picocli 命令层 + 退出码 + `--json` 信封 + 本地校验 | **已完成**：`bin/atp` 七步跑通，69 用例绿，冷启动 0.34s |
+| M3 | `lint-locator` + 完整规则引擎（`validate` 的 JSON Schema 部分已在 M2 落地）| 断言零网络零模型 |
 | M4 | opencode 接入（`opencode.json` + SKILL.md） | 在 opencode 里走完演示脚本 |
 | M5 | XXL-JOB 清理任务 | 造 2500 条过期草稿，分 3 批删净 |
 

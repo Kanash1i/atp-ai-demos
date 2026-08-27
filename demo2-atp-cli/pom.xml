@@ -24,6 +24,7 @@
     <picocli.version>4.7.6</picocli.version>
     <jackson.version>2.18.2</jackson.version>
     <postgresql.version>42.7.4</postgresql.version>
+    <jsonschema.version>1.5.4</jsonschema.version>
 
     <junit.version>5.11.4</junit.version>
     <assertj.version>3.26.3</assertj.version>
@@ -41,6 +42,11 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.networknt</groupId>
+      <artifactId>json-schema-validator</artifactId>
+      <version>${jsonschema.version}</version>
     </dependency>
     <dependency>
       <groupId>org.postgresql</groupId>
@@ -72,16 +78,52 @@
       <version>${testcontainers.version}</version>
       <scope>test</scope>
     </dependency>
+    <!-- ⚠️ 不是 test scope。json-schema-validator 带了 slf4j-api 却没有 provider，
+         缺 provider 时它会往 stderr 打三行 warning —— 那会混进 agent 读的输出里。
+         主程序用 simplelogger 且只打 ERROR（src/main/resources/simplelogger.properties）；
+         测试用 src/test/resources 下同名文件覆盖成 info，好看 Testcontainers 的诊断。 -->
     <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-simple</artifactId>
       <version>2.0.16</version>
-      <scope>test</scope>
     </dependency>
   </dependencies>
 
   <build>
     <plugins>
+      <!-- fat jar：bin/atp 直接 java -jar 它。刻意不用 spring-boot-maven-plugin。 -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals><goal>shade</goal></goals>
+            <configuration>
+              <finalName>atp</finalName>
+              <createDependencyReducedPom>false</createDependencyReducedPom>
+              <transformers>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                  <mainClass>dev.kanashi.atp.cli.AtpCli</mainClass>
+                </transformer>
+                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                    <exclude>module-info.class</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>

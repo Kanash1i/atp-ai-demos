@@ -357,3 +357,97 @@ V1 收回成一个 `BEGIN; ... COMMIT;`。
 **连带**：`PgTestBase` 的迁移脚本执行改为**整份一次执行**，不再按分号切 ——
 V1 用 `BEGIN/COMMIT` 包成原子事务，切开就等于把原子性拆掉，
 那样测的就不是要部署的那个东西。
+
+---
+
+## D-113 · `bin/atp` 必须自己选 JVM 并检查版本
+
+**踩到的**：包装脚本原本直接 `exec java`。开发机上 sdkman 把 `JAVA_HOME` 指向 JDK 17，
+结果 agent 拿到的是**一整页 `UnsupportedClassVersionError` 堆栈**，
+而不是一句能照做的错误 —— 而且这页堆栈发生在 picocli 初始化之前，
+CLI 自己的异常处理器根本没机会介入。
+
+**决策**：脚本按 `ATP_JAVA` → `JAVA_HOME` → `PATH` 的顺序选 JVM，
+解析出主版本号，低于 21 就以 **退出码 20（INFRA_ERROR）** 退出并打一行可执行的提示。
+
+```
+[INFRA_ERROR] 需要 JDK 21+，当前 .../java 是 17。用 ATP_JAVA=/path/to/jdk21/bin/java 指定。
+```
+
+> **给 agent 用的工具，错误必须是"一行 + 一个退出码"。**
+> 堆栈是给人看的；agent 只会把它当成一坨无法分流的文本，然后瞎重试。
+
+---
+
+## D-114 · SLF4J provider 是 runtime 依赖，不是 test scope
+
+`json-schema-validator` 传递依赖了 `slf4j-api` 但不带 provider。缺 provider 时它会往
+**stderr 打三行 warning**，直接混进 agent 要解析的输出里：
+
+```
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+...
+```
+
+**决策**：`slf4j-simple` 提到默认 scope，`src/main/resources/simplelogger.properties`
+把级别压到 `error`；测试用 `src/test/resources` 下的同名文件覆盖成 `info`
+（测试资源在 classpath 上优先），好保留 Testcontainers 的诊断。
+
+> **CLI 的 stdout/stderr 是 API 的一部分。** 任何库往里写字都是在破坏契约。
+
+---
+
+## D-115 · 用测试机械地守住"SQL 只在 store 包"
+
+面试时"翻一个包就能把并发设计讲完"这个说法，靠的是这条不变式。
+但**靠约定守不住** —— 下一个人图方便在某个 command 里拼一句 SQL，
+约定就破了，且没有任何东西会提醒他。
+
+`SqlContainmentTest` 扫 `src/main/java`，对 `store` 包之外的文件匹配
+`SELECT/INSERT INTO/UPDATE...SET/DELETE FROM/ALTER TABLE/CREATE TABLE`，
+命中即失败（去掉注释行避免 javadoc 误报）。
+
+> 又是同一条判据：**机器能判定的规则，交给机器强制，别写在文档里指望人自觉。**
+> 这跟 D-102（能用约束表达的不用代码表达）、D-112（会变的东西放在改起来最便宜的层）
+> 是同一族思路的第三次应用。
+
+---
+
+## D-116 · 退出码与 `--json` 信封是对 agent 的契约
+
+| 码 | 常量 | agent 该怎么做 |
+|---|---|---|
+| **0** | `OK` | 继续（**含幂等重放**）|
+| 10 | `VERSION_CONFLICT` | 重新 `show` → `preview` → 让用户重新确认 |
+| 11 | `NOT_FOUND` | 重新 `draft` |
+| 12 | `VALIDATION_FAILED` | 读 `violations` **自己改** |
+| 13 | `STATE_CONFLICT` | 停下，问用户 |
+| 14 | `NEEDS_INPUT` | **去问用户**，不要猜 |
+| 20 | `INFRA_ERROR` | 重试或报警 |
+
+信封：`{ ok, code, replayed, data, violations, questions }`。
+
+**两条不能动的**：
+
+1. **幂等重放返回 0。** 重放在语义上是成功，返回非 0 会让 agent 以为没成功而无限重试。
+2. **12 和 14 必须分开。** 一个是 agent 自己能改，一个是必须去问人 ——
+   **下一步动作不同的，就不能合并成一个码。**
+   `DraftValidator` 按 JSON Schema 报错类型分流：`required` 缺失 → 14，其余 → 12；
+   两类同时存在时**优先 14**（人不补信息，agent 改了也白改）。
+
+这条分流是从已废弃的 MCP 方案继承下来的唯一结构性设计（原三态状态机）。
+
+---
+
+## D-117 · M2 实测：不用 Spring 的取舍值多少
+
+| 命令 | 冷启动耗时 |
+|---|---|
+| `atp --version` | **0.34 s** |
+| `atp validate -f draft.json`（含 JSON Schema 校验） | **0.45 s** |
+
+D-103 当时的估算是「Spring Boot ≈ 1.5s / picocli fat jar ≈ 300ms」，实测吻合。
+fat jar 5.0 MB。
+
+`bin/atp` 带 `-XX:TieredStopAtLevel=1`：进程只活几百毫秒，C2 编译来不及产生收益。
