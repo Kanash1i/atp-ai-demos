@@ -199,8 +199,9 @@ public Result<CaseRow> commit(String id, int expectedVersion) {
 不需要另做 UI。这是这个 demo 最省事也最能讲的一处：
 **"用户确认"不是提示词里的一句话，是宿主的权限门。**
 
-> ⚠️ 开工第一件事核对 `permission.bash` 的 glob 语义（`@opencode-ai/plugin` 已确认取值是
-> `"ask" | "deny" | "allow"`，但配置侧的匹配规则要对着当前版本验一遍，别照抄）。
+> ✅ 已核实（opencode 1.18.15，`@opencode-ai/sdk` 的 `types.gen.d.ts`）：
+> `permission.bash` 的类型是 `("ask"|"allow"|"deny") | Record<string, "ask"|"allow"|"deny">`，
+> 上面这种 glob → 决策的映射写法成立。
 
 ### 6.2 `.opencode/skills/atp-case-authoring/SKILL.md`
 

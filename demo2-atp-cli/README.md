@@ -6,9 +6,13 @@
 - 命令表 / opencode 接入 / 里程碑：`../06-atp-cli-设计.md`
 - 实现过程中的决策与踩坑：`DECISIONS.md`
 
-## 当前进度：M2 完成
+## 当前进度：M4 完成（M1 / M2 / M4）
 
-M1 = 状态机与并发正确性；M2 = 命令行外壳、退出码契约、`--json` 信封、本地校验。
+M1 = 状态机与并发正确性；M2 = 命令行外壳、退出码契约、`--json` 信封、本地校验；
+M4 = opencode 接入（`opencode.json` + `AGENTS.md` + skill）。
+
+> M3（完整规则引擎）与 M5（XXL-JOB 清理）**刻意押后** —— 演示脚本不依赖它们，
+> 而知识侧的消融表才是核心交付物。见 `../CLAUDE.md` 的硬纪律。
 
 ```bash
 mvn -pl demo2-atp-cli package -DskipTests
@@ -63,3 +67,91 @@ JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn test
 
 `Could not find a valid Docker environment` 十有八九**不是**没有 daemon，
 而是 docker-java 谈判到 API 1.32 而 Engine 29 最低要 1.40。见 `DECISIONS.md` **D-101**。
+
+
+---
+
+## 用 opencode 验证（端到端演示）
+
+### 一次性准备
+
+```bash
+# 1. 起演示库 + 应用两支迁移 + 把连接串写进仓库根 .env（幂等，可重复跑）
+cd demo2-atp-cli
+./scripts/demo-db.sh up
+
+# 2. 打包 fat jar
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn -pl . package -DskipTests
+
+# 3. 自检：不带任何环境变量也应该能连上（走 .env）
+./bin/atp modules -p ECSHOP
+```
+
+⚠️ 如果 `./bin/atp` 报 `[INFRA_ERROR] 需要 JDK 21+`，说明 shell 里的 `JAVA_HOME`
+指向别的版本（sdkman 常见）。用 `export ATP_JAVA=/usr/lib/jvm/java-21-openjdk-amd64/bin/java` 指定。
+
+### 起 opencode
+
+```bash
+cd demo2-atp-cli      # ⚠️ 必须在这个目录，opencode 才会读到本目录的 opencode.json 与 .opencode/skills/
+opencode
+```
+
+然后输入：
+
+```
+帮我加一个购物车结算的 Web 测试案例
+```
+
+### 该看到什么（按顺序）
+
+| # | agent 的动作 | 要盯的点 |
+|---|---|---|
+| 1 | `./bin/atp modules --json` | **左移**：先问取值范围，不编造 `module_id` |
+| 2 | `./bin/atp schema` | 生成前就知道该产出什么形状 |
+| 3 | `uuidgen` → `./bin/atp draft --id ...` | 幂等键此刻已存在，且由客户端生成 |
+| 4 | 写 `draft.json` → `./bin/atp validate` | 纯本地、毫秒级、**零模型调用** |
+| 5 | `./bin/atp update --version 0` | CAS，`version` 0→1 |
+| 6 | `./bin/atp preview` | 展示的是**库里的行**，不是本地文件 |
+| 7 | `./bin/atp commit --version 1` | ⭐ **opencode 弹出权限确认框** |
+
+⭐ **第 7 步是这个 demo 最值得讲的一处**：`opencode.json` 里只有 `commit` 是 `"ask"`，
+其余全 `"allow"`。也就是说——
+
+> **「用户确认」不是提示词里的一句话，是宿主强制的权限门。** 不需要另做 UI。
+
+### 手动制造并发冲突（全场最高光，一定要演）
+
+在 opencode **等你点确认的时候**，另开一个终端：
+
+```bash
+cd demo2-atp-cli
+# 偷偷改一版内容，version 1 → 2
+sed 's/购物车结算/购物车结算（被偷改）/' draft.json > draft2.json
+./bin/atp update <caseId> --version 1 -f draft2.json
+```
+
+回到 opencode 点确认，`commit --version 1` 会被拒：
+
+```
+[VERSION_CONFLICT] 版本不一致：库中 version=2，你手上是 1。
+内容在你确认之后被改过，请重新 show/preview 再确认
+退出码 10
+```
+
+**用户确认的那一份和最终落库的那一份必须是同一份 —— 这是整套设计存在的理由。**
+
+### 验证幂等重放
+
+```bash
+./bin/atp commit <caseId> --version <N> --json   # 第一次：replayed=false
+./bin/atp commit <caseId> --version <N> --json   # 第二次：replayed=true，退出码仍是 0
+echo $?                                          # ← 必须是 0，不是错误码
+./scripts/demo-db.sh psql                        # 进库看：只有一行，status=DRAFT
+```
+
+### 收摊
+
+```bash
+./scripts/demo-db.sh down
+```

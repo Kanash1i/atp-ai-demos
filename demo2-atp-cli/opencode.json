@@ -1,0 +1,24 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": ["AGENTS.md"],
+  "permission": {
+    "bash": {
+      "./bin/atp schema*":       "allow",
+      "./bin/atp modules*":      "allow",
+      "./bin/atp validate*":     "allow",
+      "./bin/atp lint-locator*": "allow",
+      "./bin/atp show*":         "allow",
+      "./bin/atp preview*":      "allow",
+      "./bin/atp draft*":        "allow",
+      "./bin/atp update*":       "allow",
+
+      "./bin/atp commit*":       "ask",
+
+      "uuidgen*": "allow",
+      "cat *":    "allow",
+      "jq *":     "allow",
+      "*":        "ask"
+    },
+    "edit": "allow"
+  }
+}
