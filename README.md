@@ -33,7 +33,8 @@ PR 由你 review 后 merge，两个 session 都不会自行合并。
 | `.env.example` | **你** | ⚠️ **API key 填在这里**（复制为 `.env`） |
 | `00-SHARED-CONTEXT.md` | **两个 session 都要读** | 虚构世界观、共享领域模型、机器拓扑、provider 差异、面试叙事主线 |
 | **`03-HANDOFF-rag-v2.md`** | **知识侧 session** | ⭐ 当前入口。换引擎重做的路线、**七条跨项目经验**、资产迁移清单 |
-| `05-CLI-并发幂等答辩稿.md` | demo2 session | ⭐ `atp` CLI 的并发幂等设计（面试口述稿）|
+| `07-CLI-项目综述.md` | demo2 session | ⭐ **生产侧开场文档** —— 定位、判据、实测数字、简历口径 |
+| `05-CLI-并发幂等答辩稿.md` | demo2 session | 并发幂等的细节（被追问时展开）|
 | `06-atp-cli-设计.md` | demo2 session | CLI 命令表、退出码契约、opencode 接入、里程碑 |
 | `01-HANDOFF-demo1-rag.md` | — | 🗄️ 已归档（Java 8 + langchain4j 路线）。有效部分已提炼进 `03-` |
 
