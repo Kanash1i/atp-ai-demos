@@ -287,14 +287,16 @@ public final class AtpRetriever {
         for (EmbeddingMatch<TextSegment> match : matches) {
             RetrievedItem item = new RetrievedItem(
                     match.embedded(), match.score(), rank++, collection);
-            String identity = item.identity();
-            if (identity == null) {
+            if (item.identity() == null) {
                 continue;   // payload 缺 anchor / case_code，跳过而不是让整次检索崩掉
             }
-            RetrievedItem existing = target.get(identity);
+            // 用 dedupeKey 而不是 identity：父子切块下同一章节的多个子块
+            // 携带的是同一份父块正文，只该留一条（见 RetrievedItem.dedupeKey）
+            String key = item.dedupeKey();
+            RetrievedItem existing = target.get(key);
             // 同一节被多路召回时保留分数最高的那次
             if (existing == null || item.vectorScore() > existing.vectorScore()) {
-                target.put(identity, item);
+                target.put(key, item);
             }
         }
     }

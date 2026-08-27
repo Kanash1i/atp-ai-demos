@@ -1,6 +1,11 @@
 package com.atp.rag.config;
 
+import com.atp.rag.ingest.image.AltTextImageDescriber;
+import com.atp.rag.ingest.image.ImageDescriber;
+import com.atp.rag.ingest.image.VlmImageDescriber;
 import com.atp.rag.model.TeiScoringModel;
+import com.atp.rag.storage.LocalFileStorage;
+import com.atp.rag.storage.ObjectStorage;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.langchain4j.model.chat.ChatLanguageModel;
 import dev.langchain4j.model.embedding.EmbeddingModel;
@@ -14,6 +19,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Configuration;
 
 import java.io.ByteArrayOutputStream;
@@ -81,6 +87,44 @@ public class ModelConfig {
     }
 
     /**
+     * 图片转文字描述的实现。
+     *
+     * <p><b>配了 VLM 就用 VLM，没配就降级成 alt 文本</b> —— 后者永远可用。
+     * 这个选择在启动时做一次并打进日志，避免入库到一半才发现用的是哪种。
+     *
+     * <p>为什么降级而不是报错：没有 VLM 时图片信息弱一些，但入库该继续。
+     * 让一个可选增强项阻塞整条主流程是不合理的。
+     */
+    @Bean
+    public ImageDescriber imageDescriber(AtpProperties props) {
+        AtpProperties.Vlm cfg = props.getVlm();
+        if (!cfg.isEnabled()) {
+            log.info("图片描述：alt-text 降级模式（未配置 atp.vlm.base-url）");
+            return new AltTextImageDescriber();
+        }
+        log.info("图片描述：VLM {} @ {}", cfg.getModel(), cfg.getBaseUrl());
+        return new VlmImageDescriber(cfg.getBaseUrl(), cfg.getApiKey(), cfg.getModel(),
+                props.getCorpus().getDir(), cfg.getTimeoutSeconds());
+    }
+
+    /**
+     * 原图的对象存储。
+     *
+     * <p>默认落本地文件系统 —— demo 够用。生产该换成 OSS/S3 实现，
+     * 因为入库进程和查询进程通常不在一台机器上，本地路径在另一端打不开。
+     *
+     * <p>换实现只需要换这个 bean：解析器、切分、入库全都只认
+     * {@link ObjectStorage} 接口，不知道图片存在哪。
+     */
+    @Bean
+    public ObjectStorage objectStorage(AtpProperties props) {
+        AtpProperties.Storage cfg = props.getStorage();
+        LocalFileStorage storage = new LocalFileStorage(cfg.getRoot(), cfg.getBaseUrl());
+        storage.logConfiguration();
+        return storage;
+    }
+
+    /**
      * Qdrant 的 gRPC 客户端。
      *
      * <p>{@code destroyMethod} 让容器负责关闭，不再依赖调用方的 try-finally。
@@ -91,6 +135,19 @@ public class ModelConfig {
      * （写入走 upsert，proto 没变），问题要到检索时才暴露。
      * 放在 bean 构造这一步，入库、检索、评估就都绕不过去了。见 DECISIONS.md D-002。
      */
+    /*
+     * ⚠️ @Lazy 不是性能优化，是可用性问题。
+     *
+     * 这个 bean 在构造时就要连 Qdrant 做版本校验（见下方注释），而它默认是
+     * eager singleton —— 于是 **Qdrant 一停，整个应用就起不来**，
+     * 连根本不碰向量库的任务（gen-corpus 造语料、纯解析的调试）也一起挂掉，
+     * 报的还是一长串 BeanCreationException，指不到「你只是想造个语料」这件事上。
+     *
+     * 加 @Lazy 之后，只有真正注入它的 bean 被创建时才会连 —— 而那些 bean
+     * （IngestTask 等）本来就带 @ConditionalOnProperty，只在对应任务下存在。
+     * 版本校验该守的场景一个没少，不该被守的场景也不再被拖累。
+     */
+    @Lazy
     @Bean(destroyMethod = "close")
     public QdrantClient qdrantClient(AtpProperties props) {
         AtpProperties.Qdrant cfg = props.getQdrant();

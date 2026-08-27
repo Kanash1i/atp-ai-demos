@@ -21,7 +21,22 @@ public final class RagConfig {
         /** baseline：固定大小硬切，不管标题结构。 */
         FIXED("fixed"),
         /** 按 Markdown 标题层级切，并给每个 chunk 加 {@code [文档 > 章 > 节]} 前缀。 */
-        HEADING_PATH("heading");
+        HEADING_PATH("heading"),
+        /**
+         * 父子切块（small-to-big）：<b>用小块检索，用大块回答</b>。
+         *
+         * <p>子块是标题路径切出来的小节（本项目中位数 174 字符），
+         * 父块是它所属的整个二级章节。检索命中子块，但喂给模型的是父块。
+         *
+         * <p>解决的问题：小节短、语义精准，所以检索命中率高；
+         * 但只有那一小段的话，模型缺少回答所需的上下文
+         * （比如命中「优先使用 data-testid」，却看不到同章节里的反例和理由）。
+         *
+         * <p>与 {@link #HEADING_PATH} 的关系：那个用<b>标题前缀</b>给小块补上下文，
+         * 只补了「它在讲什么」；这个用<b>父块正文</b>补，补的是「完整的论述」。
+         * 两者解决同一个问题，深度不同 —— 所以它们该是消融表相邻的两行。
+         */
+        PARENT_CHILD("parent");
 
         private final String tag;
 
@@ -29,6 +44,71 @@ public final class RagConfig {
             this.tag = tag;
         }
 
+        public String tag() {
+            return tag;
+        }
+    }
+
+    /**
+     * 语料的<b>来源格式</b>。
+     *
+     * <h4>为什么这是一个消融维度而不是实现细节</h4>
+     *
+     * 企业里手册和规范是 PDF / DOCX，markdown 只有开发者看。所以「链路能吃 PDF」
+     * 是基本要求，但更要紧的问题是<b>吃得一样好吗</b> ——
+     * PDF 抽出来的文本会不会串行、标题层级还认不认得出来、表格会不会塌掉。
+     *
+     * <p>这些只有对照才看得出来。三种格式的语料是<b>同一份内容</b>
+     * （由 {@code gen-corpus} 从 md 生成），小节标题相同，所以评估集的
+     * {@code golden_ids} 三边通用 —— 消融表里就能加一组
+     * 「同样的问题、同样的策略，只换语料格式」的单变量对照。
+     */
+    public enum CorpusFormat {
+
+        /** markdown。层级来自 {@code ##} 的个数，最直接。 */
+        MARKDOWN("corpus/docs", ".md", ""),
+
+        /**
+         * PDF。层级来自 outline 书签 + 页内 Y 坐标。
+         *
+         * <p>最脆的一档：没书签就没层级，书签没带坐标就切不开同页的多个小节。
+         */
+        PDF("corpus/docs-pdf", ".pdf", "pdf"),
+
+        /**
+         * DOCX。层级来自段落样式 {@code Heading1..9} 与 {@code outlineLvl}。
+         *
+         * <p>结构化、显式，没有猜的成分 —— 比 PDF 可靠得多。
+         */
+        DOCX("corpus/docs-docx", ".docx", "docx");
+
+        private final String defaultDir;
+        private final String suffix;
+        private final String tag;
+
+        CorpusFormat(String defaultDir, String suffix, String tag) {
+            this.defaultDir = defaultDir;
+            this.suffix = suffix;
+            this.tag = tag;
+        }
+
+        /** 相对模块根的语料目录。 */
+        public String defaultDir() {
+            return defaultDir;
+        }
+
+        /** 文件后缀，用来筛目录里的文件。 */
+        public String suffix() {
+            return suffix;
+        }
+
+        /**
+         * collection 名的格式段。
+         *
+         * <p>MARKDOWN 是空串 —— 让 md 的 collection 名保持原样
+         * （{@code atp_docs_heading} 而不是 {@code atp_docs_heading_md}），
+         * 这样之前入的库和已有的评估脚本都不用动。
+         */
         public String tag() {
             return tag;
         }
@@ -53,6 +133,7 @@ public final class RagConfig {
     private final int finalTopK;
     private final String collectionPrefix;
     private final String embeddingTag;
+    private final CorpusFormat corpusFormat;
 
     private RagConfig(Builder b) {
         this.chunkStrategy = b.chunkStrategy;
@@ -66,6 +147,7 @@ public final class RagConfig {
         this.finalTopK = b.finalTopK;
         this.collectionPrefix = b.collectionPrefix;
         this.embeddingTag = b.embeddingTag;
+        this.corpusFormat = b.corpusFormat;
     }
 
     /** 按 {@code application.yml} 里 {@code atp.rag.*} 的值构造。也就是「全部优化都开」。 */
@@ -83,6 +165,7 @@ public final class RagConfig {
                 .finalTopK(rag.getFinalTopK())
                 .collectionPrefix(props.getQdrant().getCollectionPrefix())
                 .embeddingTag(props.getEmbedding().getTag())
+                .corpusFormat(rag.getCorpusFormat())
                 .build();
     }
 
@@ -114,7 +197,8 @@ public final class RagConfig {
                 .candidateTopK(candidateTopK)
                 .finalTopK(finalTopK)
                 .collectionPrefix(collectionPrefix)
-                .embeddingTag(embeddingTag);
+                .embeddingTag(embeddingTag)
+                .corpusFormat(corpusFormat);
     }
 
     // ── collection 命名 ───────────────────────────────────────
@@ -138,6 +222,11 @@ public final class RagConfig {
         StringBuilder name = new StringBuilder(collectionPrefix)
                 .append('_').append(scope)
                 .append('_').append(chunkStrategy.tag());
+        // 语料格式变了，chunk 边界和正文都会变，向量不能复用。
+        // MARKDOWN 的 tag 是空串，所以 md 的 collection 名保持原样
+        if (!corpusFormat.tag().isEmpty()) {
+            name.append('_').append(corpusFormat.tag());
+        }
         // embedding 模型换了，向量空间就变了，旧 collection 里的向量不能混用。
         // 消融表第 7 行（Qwen3）靠这个后缀和前 6 行隔离开
         if (embeddingTag != null && !embeddingTag.isEmpty()) {
@@ -154,6 +243,10 @@ public final class RagConfig {
 
     public CollectionMode collectionMode() {
         return collectionMode;
+    }
+
+    public CorpusFormat corpusFormat() {
+        return corpusFormat;
     }
 
     public int chunkSizeChars() {
@@ -190,7 +283,8 @@ public final class RagConfig {
 
     /** 一行摘要，写进消融表的「配置」列。 */
     public String describe() {
-        return "chunk=" + chunkStrategy.tag()
+        return "format=" + corpusFormat.name().toLowerCase()
+                + " chunk=" + chunkStrategy.tag()
                 + " collections=" + collectionMode.name().toLowerCase()
                 + " rerank=" + rerankEnabled
                 + " rewrite=" + queryRewriteEnabled
@@ -215,6 +309,7 @@ public final class RagConfig {
         private int finalTopK = 5;
         private String collectionPrefix = "atp";
         private String embeddingTag = "";
+        private CorpusFormat corpusFormat = CorpusFormat.MARKDOWN;
 
         public Builder chunkStrategy(ChunkStrategy v) {
             this.chunkStrategy = v;
@@ -263,6 +358,11 @@ public final class RagConfig {
 
         public Builder collectionPrefix(String v) {
             this.collectionPrefix = v;
+            return this;
+        }
+
+        public Builder corpusFormat(CorpusFormat v) {
+            this.corpusFormat = v == null ? CorpusFormat.MARKDOWN : v;
             return this;
         }
 

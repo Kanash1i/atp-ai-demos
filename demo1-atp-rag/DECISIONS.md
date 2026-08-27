@@ -1,5 +1,14 @@
 # 决策记录 — demo1
 
+> ## 🗄️ 项目已归档（2026-08-19），但**这份文件没有过期**
+>
+> 代码作废不等于坑没踩过。下面 26 条里，只有版本约束类（D-001/D-002/D-014）随 Java 8 一起失效，
+> **其余全部仍是面试素材**，尤其是「静默失败」那一族（D-002/D-003/D-010/D-013/D-015/D-024/D-025）
+> 和「分数尺度不可比」那条主线（D-013 → D-016）。
+>
+> 已提炼进 **[`../03-HANDOFF-rag-v2.md`](../03-HANDOFF-rag-v2.md) §2**（七条跨项目经验）。
+> 那一节是摘要，**这里是原始现场**——面试被追问细节时回来查这份。
+
 > 边做边记，不事后补。面试官最爱问「为什么选 X 不选 Y」，
 > 而**踩坑 + 定位根因 + 做出取舍**的过程比「一次就成功」有说服力得多。
 
@@ -649,7 +658,638 @@ M4 的 40 条评估集正好可以顺带检验路由准确率，这也该是 M4 
 
 ---
 
+## D-017 — chunkSize / overlap 的真实依据（以及它在主策略下是死参数）
+
+**日期**：2026-08-11
+
+**背景**：被问「chunkSize 和 overlap 的依据是什么」。当时的答案是
+「700 是从 512 token 倒推的，80 是拍的」—— 这个答案在面试里站不住。
+
+### 于是去量了语料
+
+```
+小节长度（199 个）：中位数 174、p75 246、p90 347、p95 407、max 610 字符
+段落长度（532 个）：中位数  58、p95 184、max 576 字符
+```
+
+### 然后发现了一件更要紧的事
+
+| chunkSize | HEADING_PATH 切出的块数 | FIXED 切出的块数 |
+|---|---|---|
+| 300 | 114 | 118 |
+| 400 |  96 |  79 |
+| **700** |  **89** |  **41** |
+| 1200 |  **89** |  25 |
+
+**size 从 700 加到 1200，HEADING_PATH 纹丝不动。**
+
+原因：语料最长的小节才 610 字符，全都短于 700，
+`sliceBySize` 直接走 `length() <= size` 那个分支返回 ——
+**overlap 那段循环从来没被执行过**。
+
+**所以在主配置（HEADING_PATH）下，chunkSize 和 overlap 是死参数。**
+
+### 这不是 bug，是这个策略的本意
+
+标题路径切分的意义就是**让 chunk 边界由文档的语义结构决定，而不是由一个拍出来的数字决定**。
+参数只在 baseline（FIXED）那一行真正生效，而 baseline 本来就是用来当对照组的。
+
+**面试该这么答**：
+
+> 「在我的语料上这两个参数对主策略不起作用 —— 小节 p95 是 407 字符，
+> 而上限设的 700，从来没触发过切分。实际的 chunk 粒度是文档的标题结构决定的。
+> 参数只在 baseline 那一行生效。」
+
+这比「我设了 700」强得多，因为它显示**量过**。而且它自然引出下一个问题：
+换一份长文档语料（比如真实的平台手册，一节可能几千字），这两个参数就会开始起作用，
+那时才需要扫参。
+
+### 顺带修正 D-006 的一处事实错误
+
+D-006 写的理由是「Java 8 这边没有 bge-m3 的 tokenizer」—— **这句话是错的**。
+TEI 提供了 `/tokenize` 端点，用的就是 bge-m3 自己的 XLM-R 分词器：
+
+```
+中文 15 字 → 12 tokens        700 字符 → 中文 399~476 tokens
+日文 18 字 → 10 tokens                   日文 323~393 tokens
+```
+
+结论（用字符数）仍然成立，但**理由要改**：不是「拿不到 tokenizer」，
+而是「切分时每块都调一次网络不划算，而且在这个语料上精确 token 数不影响任何结果」。
+
+另外原来估的「700 字符约合 500~700 token」也是**高估**，实测 320~480。
+
+---
+
+## D-018 — 加入父子切块（small-to-big）作为第三种策略
+
+**日期**：2026-08-11
+
+**背景**：被问「有没有用父子切块」。答案是没有，而且这是个真实的缺失 ——
+不是「不需要」。
+
+### 为什么这个语料特别适合它
+
+D-017 量出来的数字：**小节中位数只有 174 字符**。
+
+短对检索是好事（语义集中、命中精准），对回答却是坏事 ——
+命中「优先使用 data-testid 属性，其次是 name」这一句，
+模型看不到同章节里的反例、理由和适用边界。
+
+### 与已有策略的关系
+
+`HEADING_PATH` 用**标题前缀**给小块补上下文，但前缀只说明「这段在讲什么」；
+`PARENT_CHILD` 用**父块正文**补，补的是「完整的论述」。
+两者解决同一个问题，深度不同 —— 所以它们该是消融表相邻的两行。
+
+### 实测效果（8 篇手册）
+
+| 策略 | 块数 | 平均 embed 文本 | 平均交出文本 |
+|---|---|---|---|
+| FIXED | 41 | 620 | 620 |
+| HEADING_PATH | 89 | 257 | **227** |
+| PARENT_CHILD | 89 | 257 | **593** |
+
+**索引粒度完全一样（257 字符），交给模型的上下文从 227 涨到 593。** 这就是 small-to-big。
+
+### 实现上的两个决定
+
+**父块取二级章节，不取整篇文档。** 整篇太长会把无关内容一起塞进 prompt，
+`##` 那一层是「一个完整论点」的天然边界。
+
+**检索层要按父块去重。** 同一章节下的多个子块常常一起被召回（它们语义相近，
+本来就该一起命中），但它们的 `rawText` 是同一份父块正文 ——
+不去重的话同一段话会被喂给模型好几遍，白白挤掉别的内容。
+为此 `RetrievedItem` 加了 `dedupeKey()`：有父块时按父块去重，否则按自身 anchor。
+
+---
+
+## D-019 — 图片转文字：做完整链路，但不部署 VLM
+
+**日期**：2026-08-11
+
+**背景**：被问「碰到图片要调用能识图的模型，图转文字描述才能落进向量库吧」。
+这个判断是对的 —— bge-m3 是**纯文本**模型，一张截图不转文字就等于不存在。
+而 ATP 的手册天然图很多，**图里往往就是答案**（报错长什么样、字段填在哪）。
+
+### 三个事实决定了做法
+
+1. 本项目语料是我生成的**纯文本**，一张图都没有
+2. 服务机余量 8.7G 显存，跑 Qwen2.5-VL-3B **够用，技术上没有障碍**
+3. DeepSeek 只有 `deepseek-v4-flash` / `deepseek-v4-pro`，**都不支持视觉**
+
+### 决定：抽象与链路做完整，模型不部署
+
+实现了：
+
+- `ImageDescriber` 接口
+- `AltTextImageDescriber` —— 降级实现，从 alt 文本 + **文件名关键词**提取信息。
+  `case-edit-wait-strategy.png` → `case edit wait strategy`，
+  原作者偷懒没写 alt 时，文件名往往是唯一线索
+- `VlmImageDescriber` —— 走 OpenAI 兼容的 vision 协议（base64 内联图片），
+  本地 vLLM / Ollama / 云端 VLM 都能接
+- markdown 解析时识别 `![alt](path)` 并**替换**成描述
+  （替换而非追加：图片语法本身对检索是纯噪音）
+- Spring 装配：配了 `atp.vlm.base-url` 就用 VLM，没配自动降级，启动时打日志说明用的哪种
+
+并且**造了一张 mock 截图放进《等待策略》验证链路**，实测输出：
+
+```
+［图片］案例编辑页里 CLICK 步骤的 wait_strategy 字段…（case edit wait strategy）
+```
+
+**为什么不部署模型**：为一条演示链路去部署、调通一个模型，投入产出比不划算 ——
+何况 Blackwell（sm_120）的容器兼容性这个项目已经踩过一次（TEI 的 CUDA compat 坑），
+再来一个模型就是再来一轮排查。接上真 VLM 只需在 `.env` 填一行 base-url。
+
+### 一个容易被忽略的合规点
+
+图片要以 base64 塞进请求体。**用云端 VLM 等于内部文档截图出网** ——
+截图里可能有账号、内网地址、业务数据。这和本项目
+「embedding / rerank 本地跑、只有生成走 API」的前提是冲突的。
+
+所以真要上，应优先本地 VLM。这一点比「会不会调 VLM」更值得在面试里讲：
+**多模态入库的合规边界比纯文本严格，因为截图携带的信息比文本更难预先审查。**
+
+### 单张图失败不能让整批入库失败
+
+`VlmImageDescriber` 捕获所有异常并降级成空描述。
+15 篇文档里有一张图调不通，不该导致 264 个点全部灌不进去。
+
+---
+
+## D-020 — 框架能力调研：langchain4j 1.18.1 的切分能力与 0.35 完全一样
+
+**日期**：2026-08-12
+
+**背景**：被问「这两个切分策略是框架自带的还是手搓的」。答案是手搓，
+顺手查了最新版有没有补上。
+
+### 版本事实
+
+`maven-metadata.xml` 的 `<latest>` = **1.18.1**（2026-08-11 更新）。
+
+> ⚠️ 查版本要看 `maven-metadata.xml`，**不要用 search.maven.org 的 solrsearch 接口**
+> —— 它的返回顺序不保证按版本排，我因此误报过「最新是 1.0.0」。
+
+### 切分能力：从 0.35 到 1.18.1，零变化
+
+两个版本的 splitter 完全相同，就六个：
+
+```
+DocumentByCharacter / ByLine / ByParagraph / ByRegex / BySentence / ByWord
++ HierarchicalDocumentSplitter（抽象基类）
+```
+
+搜 `markdown` / `heading` / `parent` 只匹配到那个抽象基类。
+**跨越一年多的迭代，按标题切和父子切块依然没有。**
+
+所以 `HeadingPathSplitter` 手搓是必要的，不是没找现成的。
+根本原因是 `DocumentSplitter` 接口一进一出（`List<TextSegment> split(Document)`），
+而这两个策略都要求**一块携带两份文本**（算向量的 vs 交给模型的），接口表达不了。
+
+### 生态对比（回答「Python 那边多什么」）
+
+| | Python LangChain | langchain4j 1.18.1 | Spring AI 1.1 |
+|---|---|---|---|
+| 按 Markdown 标题切 | ✅ | ❌ | ❌ |
+| 语义切分 | ✅ | ❌ | ❌ |
+| 父子 / small-to-big | ✅ | ❌ | ❌ |
+| 多路融合 + **RRF** | ✅ `EnsembleRetriever` | ❌ | ❌ |
+| 自查询（NL→filter） | ✅ | ❌ | ❌ |
+| 有状态图编排 | ✅ LangGraph | 社区移植 LangGraph4j | 不成熟 |
+| 评估平台 | ✅ LangSmith | ❌ | ❌ |
+
+**Java 生态在检索组件上整体落后。** 但这不全是劣势：langchain4j 的 provider /
+vectorstore 覆盖更广（20+ / 30+），Spring AI 的 Micrometer 可观测性更深。
+
+面试讲法：不是「Java 不行」，而是「我知道这些组件在 Python 生态叫什么、
+解决什么问题，并在没有现成实现的情况下自己落地了」。
+
+### 0.35 的工具调用是完整的
+
+顺带查证：**0.35 完整支持 tool calling**，不缺。
+`@Tool` / `@P` / `ToolSpecification` / `DefaultToolExecutor` / `ToolProvider` 都有，
+`AiServices.tools(...)` 跑完整的「调模型 → 执行工具 → 结果喂回 → 再调」循环，
+`ChatLanguageModel.generate(messages, toolSpecifications)` 也支持。
+
+1.18.1 新增的是**规模化之后的工程问题**，不是基础能力：
+
+| 新增 | 解决什么 |
+|---|---|
+| `VectorToolSearchStrategy` | 工具几十上百个时，先用向量检索挑候选再给模型 |
+| `ToolAwareRepromptExecutor` | 模型填错参数时的重试 |
+| `guardrail.*` | 输入输出护栏 |
+
+**这些对本项目都不构成损失** —— demo1 是纯 RAG 不调工具，demo2 用 Spring AI 2.0 不受 0.35 约束。
+被问「锁 0.35 的代价」时要说清这一点，别笼统地说「拿不到新特性」。
+
+---
+
+## D-021 — overlap 的机制，以及我一度理解错的地方
+
+**日期**：2026-08-12
+
+**背景**：给切分细节文档举例时，我画了一张「第 1 块结尾的 XPath 被切坏」的图。
+**那张图是编的**，被指出后回到原文验证。
+
+### 实测：overlap 不改变切点
+
+同一篇文档，只改 overlap：
+
+```
+overlap=80  第1块 677 字符，结尾 …- 按位置取第 n 个兄弟节点
+overlap=0   第1块 677 字符，结尾 …- 按位置取第 n 个兄弟节点   ← 完全相同
+```
+
+**切点由 `preferBoundary()` 找的换行边界决定，与 overlap 无关。**
+overlap 只决定「下一块从哪开始读」= `end1 - overlap`，而这个位置是**纯算术回退**，
+不过 `preferBoundary`。
+
+原文标注（`raw[560:760]`）：
+
+```
+- 按文本内容查找元素（`//button[te
+⟪第2块从这里开始⟫   ← 597 = 677-80，落在 text() 中间
+xt()="提交"]`）
+- 从子元素向上找父元素（…）
+- 按位置取第 n 个兄弟节点
+⟪第1块到这里结束⟫   ← 677，落在换行处
+```
+
+### 所以 overlap 的真实代价
+
+1. **冗余** —— 实测相邻块重叠正好 80 字符，同一段存两份（Chroma 扣 IoU 的原因）
+2. **块首碎片** —— `xt()="提交"]` 这 11 个字符进 embedding，不是有效 XPath 也不是完整句子
+
+### 一个更关键的发现：preferBoundary 和 overlap 功能重叠
+
+在这个切点上，overlap 拉回来的 80 字符**恰好是第 1 块已经完整包含的三行列表** ——
+零收益，纯冗余。
+
+因为 `preferBoundary` 已经让切点落在自然边界、语义已经完整，
+而 overlap 是为「切点可能落在句中」准备的保险。**有了前者，后者的收益被大幅削弱。**
+
+这解释了为什么 Chroma 实测 overlap=0 更好，也说明**这个取舍取决于有没有边界感知的切分**：
+纯字符硬切（无 preferBoundary）时 overlap 有价值，有边界感知时基本是纯成本。
+
+---
+
+## D-022 — 多格式语料链路：为什么 PDF/DOCX 是地基而不是加分项
+
+**日期** 2026-08-13　**分支** `demo1/m3e-multiformat`
+
+### 起因
+
+用户指出：企业里手册和规范都是 PDF/DOCX 交付的，**markdown 只有开发者看**。
+只支持 md 的链路在面试里等于没做 —— 「这个链路能不能吃我们公司的文档」是第一个会被问的问题。
+
+### 为什么这不只是「多一个 parser」
+
+现有的两个核心策略 **完全建立在 markdown 的 `##` 之上**：
+
+```java
+int level = headingLevel(line);          // 数 # 的个数
+stack.add(line.substring(level + 1));    // 层级路径从这来
+```
+
+`PDFTextStripper` 抽出来的是一坨扁平文本，没有任何 `#`。层级栈无米下锅
+→ `HEADING_PATH` 和 `PARENT_CHILD` **双双退化成 FIXED**。
+也就是说，消融表第 2、3 行在 PDF 语料上直接归零。
+
+### 依赖选型（都实测过字节码）
+
+| 依赖 | 版本 | major | 说明 |
+|---|---|---|---|
+| `org.apache.pdfbox:pdfbox` | 2.0.30 | 50 | **不能升 3.x**：API 全变（`PDDocument.load` → `PDFParser`+`RandomAccessRead`） |
+| `org.apache.poi:poi-ooxml` | 5.4.1 | 52 | Java 8 兼容 |
+| `langchain4j-document-parser-apache-pdfbox` | 0.35.0 | 52 | 查过但**没用** —— 它只给纯文本，拿不到 outline |
+
+### DOCX 为什么不走 Tika
+
+Spring AI 的 `TikaDocumentReader` 走 Tika，把 docx 抽成一坨扁平文本，
+**段落样式全丢**。而 docx 的层级恰恰存在样式里：
+
+```xml
+<w:pPr><w:pStyle w:val="Heading2"/><w:outlineLvl w:val="1"/></w:pPr>
+```
+
+POI 的 `XWPFParagraph.getStyle()` 直接能读。所以走 POI，不走 Tika。
+
+判据用了两条（缺一不可）：样式名 `Heading\d`，以及 `outlineLvl` ——
+后者是给「用自定义样式名的企业模板」兜底的，Word 导航窗格本身也靠它。
+
+### 结果
+
+三种格式入库，**chunk 数完全一致**：
+
+```
+atp_docs_heading       199 chunk   (markdown)
+atp_docs_heading_pdf   199 chunk
+atp_docs_heading_docx  199 chunk
+```
+
+层级三方对齐，所以 `golden_ids`（`sourceId#小节标题`）三种格式通用，
+消融表能加一组「同样的问题、同样的策略，只换语料格式」的单变量对照。
+
+---
+
+## D-023 — 移植 Spring AI 的 PDF outline 切块（以及不能照抄的地方）
+
+**日期** 2026-08-13
+
+### 出处与改动
+
+算法移植自 Spring AI 的 `ParagraphManager` / `ParagraphPdfDocumentReader`
+（Apache 2.0，作者 Christian Tzolov）。移植而非依赖：Spring AI 要 Java 17，
+且按 PDFBox 3.x 写。
+
+它的核心手法很漂亮 —— **不是按整页抽文本，而是按书签的 Y 坐标切矩形**，
+所以同一页上的几个小节能被正确分开。手册里一页放三四个小节是常态，
+只按页码的话它们会粘成一块。
+
+### ⚠️ 三处不能照抄
+
+**1. 坐标系原点不同（会静默出错）**
+
+```
+书签的 top（PDPageXYZDestination）   原点在左下角，Y 向上
+PDFTextStripperByArea 的 Rectangle  原点在左上角，Y 向下
+```
+
+必须 `Rectangle.y = pageHeight - pdfTop`。原版是直接填的。
+照抄会把区域搬到页面的另一半，抽出来的文本张冠李戴 —— **而且不报错**。
+这套换算由 `PdfSpikeTest` 第 3 个用例钉死。
+
+**2. 原版没有 headingPath**
+
+`Paragraph` 里有 `parent` 和 `children`，但 `get()` 只是 flatten 后按相邻对抽文本，
+**父子关系从没被用来生成标题路径**。而标题路径正是本项目 `HEADING_PATH` 的输入，
+所以补了 `Node.headingPath(skipLevelsAbove)` 沿 parent 链拼。
+
+**3. 原版没有图片处理**
+
+`ParagraphPdfDocumentReader` 只抽文本。PDF 内嵌图片的抽取、转文字、原图留存
+全部要自己做（见 D-025）。
+
+### Spring AI 也没做的：无 outline 降级
+
+原版直接 `Assert` 抛异常，让你改用 `PagePdfDocumentReader`。
+本项目同样抛异常但由调用方决定降级路径 —— **不静默返回空文档**，
+那会让一整篇内容凭空消失且无人察觉。
+
+（按字号启发式恢复标题的降级路径尚未实现，见「待决」。）
+
+---
+
+## D-024 — 生成 PDF/DOCX 测试语料时踩的三个坑
+
+**日期** 2026-08-13
+
+不能爬真实 PDF（项目红线），所以语料要自己造。本机没有 pandoc/libreoffice，
+但 PDFBox 能写 PDF、POI 能写 docx —— 生成器本身就是 Java，零外部工具。
+
+### 坑 1：Noto CJK 嵌不进去
+
+```
+UnsupportedOperationException: OTF fonts do not have a glyf table
+```
+
+`NotoSansCJK-Regular.ttc` 是 **OpenType/CFF**（PostScript 轮廓），
+而 **PDFBox 2.x 只能嵌 TrueType（glyf）** —— CFF 嵌入是 3.0 才支持的。
+
+系统上扫了一遍，唯一含 `glyf` 的 CJK 字体是 `DroidSansFallbackFull.ttf`。
+所以字体选择不能按「哪个好看」，要**按能力探测**：逐个候选真的 load 一次，
+第一个成功的用（`CjkFontLoader`）。
+
+### 坑 2：Droid Sans Fallback 没有 ASCII
+
+```
+No glyph for U+0043 (C) in font DroidSansFallback
+```
+
+它是 fallback 字体，**只有 CJK 字形，连大写 C 都没有**。而语料里满是
+`CLICK` / `CLICKABLE` / `data-testid`。
+
+解法是 `MixedFont`：CJK 走外挂字体、拉丁走内置 Helvetica，
+**按 encode 实际探测**而不是按 Unicode 范围猜 —— 全角标点、破折号、各种符号
+散落在十几个区段里，范围判断在真实语料上必碎。
+
+### 坑 3：书签坐标要在绘制前记
+
+`drawLine()` 会把 `cursorY` 往下推一整行。原来在 drawLine **之后**才算书签坐标，
+于是书签指到了标题文字的**下方** —— 解析侧从那个 Y 往下切，标题自己不在区域内，
+反而把下一节的标题吃了进去。
+
+症状：PDF 比 md 多出 4 个 section（那些「有标题无正文」的过渡层级
+抽到的正文正好是下一节的标题）。由 `PdfDocumentTest` 钉死。
+
+### 顺带发现的两个既存 bug
+
+**① `MarkdownDocument.flush()` 丢掉了每篇文档的引言**
+
+```java
+if (!content.isEmpty() && !stack.isEmpty()) {   // ← 第二个条件是错的
+```
+
+`# 标题` 之后、第一个 `##` 之前的引言，标题栈是空的，于是 **15 篇全被丢**，
+合计 1464 字符。丢的还都是高价值内容：
+
+```
+STD-001  制定日：2023-04-01 ／ 最終改訂：2025-11-20 ／ 管理：QA 基盤チーム
+```
+
+「这份规范谁维护、什么时候改的」在库里根本没有答案，且不报错。
+**这个 bug 一直存在于 md 入库链路**，是比对 md 与 PDF 文本层的字符差异才发现的。
+
+**② 图片路径 resolve 错了根**
+
+语料里 `img/manual/x.png` 相对的是 `docs/` 根，不是 md 文件所在目录。
+按后者 resolve 得到 `docs/manual/img/manual/…`，找不到文件 —— 静默跳过。
+改成按候选根目录依次试（`ImagePathResolver`）。
+
+---
+
+## D-025 — 图片链路：转文字进 embedding，原图进 payload
+
+**日期** 2026-08-13
+
+### 两样都要，缺一不可
+
+- **描述文本** → 拼进正文参与 embedding，让图里的内容可被检索
+- **原图地址** → 只进 payload，不参与 embedding，供引用展示
+
+因为**描述是有损的**。VLM 说「案例编辑页的步骤表单，wait_strategy 显示 CLICKABLE 且置灰」，
+用来检索够了，但用户看到引用时想确认的是「界面到底长什么样」。
+这也是 RAG 处理非文本内容的通行做法：**检索用文字投影，呈现用原件**。
+
+### ObjectStorage 抽象
+
+本地 demo 用文件系统，但企业里一定在 OSS/S3 上 —— 入库进程和查询进程通常不在
+一台机器上，本地路径在另一端打不开。payload 里存的**始终是 URL 而不是路径**，
+所以将来换 OSS，已入库的数据结构不用变。
+
+key 必须**稳定**（`images/{文档}/{文档}-img-N.png`，不掺时间戳）——
+消融实验会反复重跑，key 不稳就在存储里堆副本。由测试钉死。
+
+### ⚠️ 最坑的一个：裸 PDFStreamEngine 不注册操作符
+
+抽图必须带位置（一页多节时按页归属必然归错）。走 `PDFStreamEngine` 拦 `Do` 操作符，
+从 CTM 读位置。但：
+
+```
+[DIAG] 抽到图: page=2 top=1.0      ← translateY=0 + scalingFactorY=1，单位矩阵
+```
+
+**裸的 `PDFStreamEngine` 不注册任何操作符处理器**（`PDFTextStripper` 是在自己构造函数里注册的）。
+不注册的话 `cm`（矩阵变换）没有处理器，`super.processOperator` 直接忽略，
+CTM 永远停在单位矩阵 —— 所有图片位置都算成页面底部，全归到最后一个小节，**不报任何错**。
+
+补上 `Concatenate` / `Save` / `Restore` / `SetMatrix` / `SetGraphicsStateParameters`
+之后拿到 `top=781.89`，图片归进正确的小节。
+
+### 一个诚实的局限：PDF 下降级实现基本无效
+
+`AltTextImageDescriber` 从文件名榨关键词。md 场景下文件名是作者起的
+（`case-edit-wait-strategy`），有语义；**但 PDF 格式本身不存 alt**，
+文件名是我们自己编的，榨出来是「05 等待策略 img 1」，毫无信息量。
+
+DOCX 有救 —— 它能存 `docPr/@descr`。让生成器把 alt 写进去之后，零成本拿到：
+
+```
+［图片］案例编辑页里 CLICK 步骤的 wait_strategy 字段，显示 CLICKABLE 由平台自动补完
+```
+
+**结论：图片链路在 PDF 上真正依赖 VLM，降级实现只对 md 和 docx 有效。**
+这一点要在消融表里如实标注，不能拿 md 的图片效果去代表 PDF。
+
+---
+
+## D-026 — @Lazy 不是性能优化，是可用性问题
+
+**日期** 2026-08-13
+
+服务机被收回去用时（Qdrant 停了），发现**造语料这种纯本地的活也起不来**：
+
+```
+BeanCreationException: ... 连不上 Qdrant REST (http://…:6333)，服务没起？
+```
+
+`qdrantClient` 在构造时要连 Qdrant 做版本校验（D-002 的加固），而它是 eager singleton。
+
+只在 `@Bean` 方法上标 `@Lazy` **不够** —— `RetrieverFactory` 是无条件 `@Component`，
+构造注入 `QdrantClient`，一样会触发创建。注入点那一侧也得标，Spring 才会注入代理。
+
+两边都标之后：`--atp.qdrant.host=10.255.255.1`（不存在的地址）跑 `gen-corpus` 正常完成。
+版本校验该守的场景一个没少。
+
+---
+
+## D-027 — `settings.json` 的 `env` 是 JSON，不做 shell 变量展开
+
+**日期** 2026-08-19（归档当天发现）
+
+### 现象
+
+敲 `git` 报 `command not found`。`java` 和 `mvn` 一切正常。
+
+```
+PATH=[/home/kanashi/.sdkman/candidates/java/8.0.472-tem/bin:/home/kanashi/.sdkman/candidates/maven/3.9.16/bin:${PATH}]
+                                                                                                          ^^^^^^^^
+```
+
+**结尾是字面量 `${PATH}`，一个不存在的目录名。**
+整个系统 PATH 被这两个 sdkman 目录替换掉了 —— `/usr/bin` 不在里面，
+于是 `git` / `grep` / `head` / `ls` / `cat` 全部消失，只有 java 和 maven 活着。
+
+### 根因
+
+`demo1-atp-rag/.claude/settings.local.json` 里为了锁 JDK 8 写了：
+
+```json
+"PATH": "/home/kanashi/.sdkman/candidates/java/8.0.472-tem/bin:.../maven/3.9.16/bin:${PATH}"
+```
+
+**这个文件是 JSON，不是 shell 脚本。** `${PATH}` 不会被展开，原样当成路径的一段传给子进程。
+写的时候套用了 shell 里 `PATH="新目录:$PATH"` 的肌肉记忆，而那个语义在 JSON 里不存在。
+
+### 决定
+
+只保留 `JAVA_HOME`，删掉 `PATH`：
+
+```json
+{ "env": { "JAVA_HOME": "/home/kanashi/.sdkman/candidates/java/8.0.472-tem" } }
+```
+
+Maven 是按 `JAVA_HOME` 决定编译用哪个 JDK 的，所以**锁 JDK 8 的目的一点没丢**，
+只是 `java -version` 会显示 sdkman 的 current 版本。目录里的 `.sdkmanrc` + `sdk env`
+管的是交互式终端，那条路径不受影响。
+
+真要在 JSON 里追加 PATH，唯一正确的写法是把系统路径**全部写死**
+（`/usr/local/bin:/usr/bin:/bin:...`）。但那样很脆 —— nvm 的 node 版本一升就断。
+**能不设就不设。**
+
+### 为什么值得记
+
+**这是「静默失败」那一族的又一个实例，而且是最完整的一个**：
+
+| 特征 | 本条 | 对照 |
+|---|---|---|
+| 不报错 | 配置照常加载，`mvn` 照常跑 | D-003 slf4j 静默走 NOP |
+| 症状延迟 | 加进去那天起就坏了，**直到几天后敲 `git` 才暴露** | D-007 入库不报错，检索时才炸 |
+| 症状与根因无关 | 表现是「git 没装？」，根因在一个锁 JDK 版本的配置文件里 | D-015 `.env` 缺失，报错跑到 okhttp 上 |
+| **是为了改善而主动加的** | 锁工具链版本本身完全正当 | D-013 rerank 阈值，本意是过滤噪音，却把一整类查询清零 |
+
+最后一行是最刺的：**又一次，坏东西不是疏忽留下的，是我为了把事情做对而主动加的。**
+
+**教训**：跨语言的配置层（JSON / YAML / properties / `.env`）里出现 `${VAR}`，
+第一件事是确认**谁负责展开它**。shell 会、Spring 的占位符解析会，
+而 JSON 本身**永远不会** —— 它只是字符串。
+这和 D-004 记的那条是同一件事的两面：当时是「`.env` 里的 `${VAR}`，
+shell `source` 会展开但 Java 按行读文件不会，得自己实现」。
+
+**顺带**：这个坑正好卡在项目归档当天，逼出了一次完整的定位过程 ——
+`echo "PATH=[$PATH]"` 加方括号才看清结尾那串字面量。
+**打印可疑变量时加定界符**，否则尾部的空白和未展开的占位符看不出来。
+
+---
+
 ## 待决 / 下一步
+
+> 最后更新 2026-08-13。M0~M3 已合入 main，PR #14（父子切块 + 图片）待 review，
+> `demo1/m3e-multiformat`（PDF/DOCX 链路）开发中。
+
+**主线（核心交付物，尚未开始）**
+
+- **M4 评估框架** —— `eval/questions.jsonl` 40 条评估集 + Recall@5 / MRR@10 / nDCG@10。
+  这是交接文档 §5 说的核心交付物，目前 `eval/` 是空目录，README 的消融表 7 行全是空
+- **M5 消融表** —— 跑满 6~7 行真实数字
+
+**已知待修（按优先级）**
+
+1. **overlap 让 baseline 不公平** —— overlap 在 HEADING_PATH 下不触发、在 FIXED 下生效，
+   导致消融表第 1 行背着一个 Chroma 实测会掉 1.4pt recall 的负担，
+   「标题路径前缀」的提升会被高估。建议两边都设 0（见 D-017 / D-021）
+2. **手册与规范不区别处理** —— `doc_group` 字段已存但检索时没用。零成本可改
+3. **payload 存两份正文** —— `embed_text` 与 `text_segment` 内容重复
+4. ~~**两条链路未实现**~~ —— 链路 A 已完成（D-022~D-025）：PDF/DOCX/md 三格式入库，
+   chunk 数 199 三方一致，图片抽取+转文字+原图 URL 全通。链路 B（表格模型）仍未做
+
+**多格式链路的已知缺口**
+
+- **无 outline 的 PDF 没有降级路径** —— 目前直接抛异常。企业里扫描件之外，
+  第三方拼接的 PDF 也常常没书签。需要按字号/字重启发式恢复标题层级
+- **PDF 下图片描述基本无效** —— 格式不存 alt，降级实现榨不出语义，真正依赖 VLM（D-025）
+- **表格没有专门处理** —— 实测本项目语料 0 处碎片，但那是语料表格短（3~5 行）的运气。
+  单张表超过约 525 字符必被拦腰切断且下半截无表头。三档改法见对话记录
+- **PDF 文本层与 md 不逐字一致** —— 34 处符号（→ ❌ ✅ ⚠ ★ ≠）因字体缺字形被丢弃。
+  跨格式对照出现差异时，这是第一个要排除的原因
+
+**留给 M5 的**
+
+- hybrid 检索 + RRF —— langchain4j 不支持 sparse vector，需自实现 EmbeddingStore（D-002 方案 B）。
+  注意 RRF 正好能优雅解决 D-013/D-016 那个「分数尺度不可比」的问题
+- Qwen3-Embedding 对比（消融表第 7 行）—— 非对称模型，需处理 instruction prefix
 
 - **hybrid search（sparse + dense）** — langchain4j 0.35 不支持，必须自己实现。
   计划在 M5 连同 D-002 的方案 B 一起做，作为消融表的一行。

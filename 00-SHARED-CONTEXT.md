@@ -3,6 +3,11 @@
 > 这份文档定义了两个 demo 共用的**虚构世界观、模型服务、法律边界**。
 > demo1 和 demo2 在各自的 session 里开发，但它们描述的是**同一个平台**。
 > 修改本文档中的任何"契约"(平台名、DB schema、Action 枚举)必须同步另一个 demo。
+>
+> **⚠️ 2026-08-19 更新**：demo1（Java 8 + langchain4j）已归档，
+> 知识侧改为在 Java 21 引擎上重做 —— 见 **[`03-HANDOFF-rag-v2.md`](03-HANDOFF-rag-v2.md)**。
+> 本文档的 **§1 世界观、§2 机器拓扑、§3 模型选型全部依然有效**；
+> 受影响的只有 §2.1(b) 的 Qdrant 版本约束和 §4 的技术栈标注，各自已就地加注。
 
 ---
 
@@ -25,9 +30,9 @@
 ### 1.1 它是什么
 
 - 测试工程师通过 Web 界面编写**测试案例**，不写代码
-- 案例存在 **MySQL** 里，是**关系型结构**（不是 YAML/脚本文件）
+- 案例存在 **PostgreSQL** 里，是**关系型结构**（不是 YAML/脚本文件）
 - 独立的**执行器 (Executor)** 服务从 DB 读案例，驱动 Selenium Grid 执行
-- 平台已运行多年，技术栈是 **Java 8 + Spring 4 + MySQL 5.7**（这是 demo1 用 Java 8 的现实理由）
+- 平台已运行多年，技术栈是 **Java 8 + Spring 4 + PostgreSQL**（这是 demo1 用 Java 8 的现实理由）
 
 ### 1.2 案例的领域模型（**这是两个 demo 的共享契约**）
 
@@ -295,6 +300,10 @@ docker run -d --name qdrant --restart unless-stopped \
 
 > ⚠️⚠️ **tag 必须钉死 `v1.11.5`，不要用 `latest`。**
 >
+> **（2026-08-19 补充：`v1.11.5` 这个具体版本是 langchain4j 0.35 带来的，
+> demo1 归档后不再需要 —— v2 用 Java 21 + Spring AI，可以升到当前版本。
+> 但「**钉死 tag、不要用 `latest`**」这条永远有效，那次踩坑的直接原因就是 `latest`。）**
+>
 > Qdrant **1.12 起**把 dense 向量从 `Vector.data`(field 1) 挪进了 oneof 的 `dense`(field 101)。
 > langchain4j-qdrant **0.35.0** 传递依赖的 qdrant-client 1.11.0 不认识 field 101，
 > 会把它当 unknown field 丢掉 → 检索时拿到**空向量**。
@@ -436,19 +445,24 @@ curl -s http://192.168.0.101:8082/rerank -H 'Content-Type: application/json' -d 
 
 > ⚠️ `deepseek-chat` / `deepseek-reasoner` 已于 **2026-07-24 废弃**，不要再用这两个名字。
 > ⚠️ DeepSeek V4 **默认开启 thinking 模式**，更慢更贵且响应带 reasoning 字段。
-> 规范化是确定性任务，建议关掉（`LLM_THINKING=false`）。
+> 案例生成是确定性偏强的任务，建议关掉（`LLM_THINKING=false`）。
 
-**这个能力差异是 demo2 的核心设计约束，不是小事**：
+**这个能力差异约束的是「调模型的那一侧」，不是 demo2 本身**：
+
+⚠️ **`atp` CLI 全部命令零模型调用** —— 模型由 agent（opencode / Claude Code）调，
+CLI 只收 agent 写好的 JSON 文件。所以下面这段现在描述的是 **agent 侧**的约束，
+而 CLI 的 `atp validate` 正是那道**不依赖任何 provider 特性**的保险。
 
 DeepSeek 只有 `json_object`（保证是合法 JSON，**不保证符合你的 schema**）；
 Kimi 才有 `json_schema` + `strict`。而且 DeepSeek 的 function calling strict 模式
 有 [返回 malformed JSON](https://github.com/deepseek-ai/DeepSeek-V3/issues/1069) 和
 [拒绝 tool_choice=required](https://github.com/deepseek-ai/DeepSeek-V3/issues/1376) 两个已知缺陷。
 
-**结论：demo2 不依赖任何 provider 的结构化输出特性。**
-用最低公分母 `json_object` + 自己做 JSON Schema 校验 + 带错误重试。
-provider 支持 strict 时作为**额外保险**开启，但本地校验永不跳过。
-详见 `02-HANDOFF-demo2-mcp.md` §3-L3。
+**结论：整条链路不依赖任何 provider 的结构化输出特性。**
+agent 用最低公分母 `json_object`，产物一律过 `atp validate`（纯本地 JSON Schema + 规则校验）。
+provider 支持 strict 时作为**额外保险**开启，但 `atp validate` 永不跳过 ——
+**它是唯一一道换 provider 不会变的防线。**
+详见 `06-atp-cli-设计.md`。
 
 ### 2.3 为什么是 TEI，不是 llama.cpp / Ollama / Infinity
 
@@ -533,25 +547,36 @@ Qwen3-Embedding 是**非对称**的 —— query 侧要加 instruction prefix，
 ```
         ┌──────────────────────────────────────────────┐
         │              ATP 遗留测试平台                  │
-        │           Java 8 / Spring 4 / MySQL          │
+        │        Java 8 / Spring 4 / PostgreSQL        │
         └──────────────────────────────────────────────┘
                  ▲                          ▲
                  │                          │
     ┌────────────┴──────────┐   ┌───────────┴─────────────┐
-    │  demo1: 知识侧          │   │  demo2: 生产侧            │
-    │  RAG 知识助手           │   │  MCP 规范化服务            │
+    │  知识侧 (atp-rag)      │   │  生产侧 (atp-cli)         │
+    │  RAG 知识助手           │   │  atp 案例编写 CLI          │
     │                       │   │                          │
-    │  让人更快学会用平台      │   │  让 agent 产出能进平台     │
-    │  Java 8 + langchain4j │   │  Java 17 + MCP SDK       │
+    │  让人更快学会用平台      │   │  让 agent 产出能安全进平台  │
+    │  Java 21 + langchain4j│   │  Java 21，无 AI 框架       │
     │  "读"                  │   │  "写"                    │
     └───────────────────────┘   └──────────────────────────┘
 ```
 
+> **2026-08-19**：知识侧原为 Java 8 + langchain4j（已归档），现改为在买来的 Java 21 引擎上重做。
+>
+> **2026-08-27**：生产侧的 MCP server 方案**已废弃并删除**，改做 `atp` CLI ——
+> 仲裁点放回平台自己的案例表，不外挂 server。见 `05-CLI-并发幂等答辩稿.md`。
+> ⭐ **框架统一问题因此消失**：CLI 全部命令**零模型调用**，生产侧根本不需要 LLM 框架。
+>
+> 「读 + 写」这条主线不变 —— 它才是面试骨架，技术栈只是实现。
+
 **一句话主线**：
 > "我们的老平台有两个瓶颈：新人上手慢，以及 AI 生成的案例进不了库。
-> 第一个是**检索问题**，我用 RAG 解决；第二个是**结构化输出的可靠性问题**，我用 MCP + schema 约束解决。
+> 第一个是**检索问题**，我用 RAG 解决；
+> 第二个是**并发写入的一致性问题** —— 我把幂等键做成平台案例表的主键，
+> 用唯一约束加一条 CAS UPDATE 当仲裁点。
 > 它们看起来都是'接大模型'，但工程重点完全不同 ——
-> 前者的难点是**召回质量怎么量化**，后者的难点是**怎么让模型少做事**。"
+> 前者的难点是**召回质量怎么量化**，
+> 后者的难点是**同一个意图被 agent 重复投递时，怎么保证只落库一次**。"
 
 这句话就是你整场面试的骨架。两个 demo 都是为了支撑它。
 
@@ -562,10 +587,12 @@ Qwen3-Embedding 是**非对称**的 —— query 侧要加 instruction prefix，
 ```
 /home/kanashi/Applications/interview-demos/
 ├── 00-SHARED-CONTEXT.md          ← 本文档
-├── 01-HANDOFF-demo1-rag.md       ← demo1 session 的入口文档
-├── 02-HANDOFF-demo2-mcp.md       ← demo2 session 的入口文档
-├── demo1-atp-rag/                ← demo1 session 在此目录启动
-└── demo2-atp-mcp/                ← demo2 session 在此目录启动
+├── 01-HANDOFF-demo1-rag.md       ← 🗄️ 已归档（Java 8 路线）
+├── 05-CLI-并发幂等答辩稿.md        ← demo2 (CLI) 的入口文档
+├── 06-atp-cli-设计.md            ← CLI 命令表与接入方式
+├── 03-HANDOFF-rag-v2.md          ← ⭐ 知识侧当前的入口文档
+├── demo1-atp-rag/                ← 🗄️ 已归档。语料与 DECISIONS.md 仍在用
+└── demo2-atp-cli/                ← demo2 session 在此目录启动
 ```
 
 两个 session 各自 `git init`，互不干扰。共享契约（§1.2 领域模型、§1.3 Action 枚举）

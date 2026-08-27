@@ -81,6 +81,22 @@ public final class RetrievedItem {
                 : segment.metadata().getString("anchor");
     }
 
+    /**
+     * 去重用的键。
+     *
+     * <p>普通情况下就是 {@link #identity()}。但<b>父子切块</b>时不同 ——
+     * 同一章节下的多个子块常常一起被召回（它们语义相近，本来就该一起命中），
+     * 而它们的 {@code rawText} 是<b>同一份父块正文</b>。
+     * 按 identity 去重的话这些子块都会留下，等于把同一段话喂给模型好几遍，
+     * 白白挤掉别的内容、也浪费 token。
+     *
+     * <p>所以有父块时按父块去重：一个章节最多贡献一条上下文。
+     */
+    public String dedupeKey() {
+        String parent = segment.metadata().getString("parent_anchor");
+        return parent != null && !parent.isEmpty() ? parent : identity();
+    }
+
     /** 引用展示用的一行标题。 */
     public String citationLabel() {
         if (isCase()) {

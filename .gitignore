@@ -32,3 +32,8 @@ eval/results/raw/
 .claude/worktrees/
 .claude/settings.local.json
 # 注意：.claude/settings.json 是项目级共享配置，**可以**提交，故不在此忽略
+
+# 从 PDF / DOCX 抽出来的原图 —— 运行产物，由 ingest 重新生成。
+# 生成的 PDF/DOCX 语料本身**要提交**（clone 下来就能跑三格式对照），
+# 但抽出的图不必：它们只是语料里那张图的副本。
+demo1-atp-rag/corpus/extracted/

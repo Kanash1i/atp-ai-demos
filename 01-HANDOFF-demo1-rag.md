@@ -1,5 +1,13 @@
 # demo1 交接文档 — ATP 知识助手 (Java 8 + langchain4j RAG)
 
+> ## 🗄️ 已归档（2026-08-19）— 新 session 请勿以本文档开工
+>
+> Java 8 + langchain4j 这条路线已停止。当前的入口文档是 **[`03-HANDOFF-rag-v2.md`](03-HANDOFF-rag-v2.md)**。
+>
+> 本文档保留供追溯。其中**仍然有效**的部分（已全部提炼进 v2 文档）：
+> §4 语料设计、§5 评估体系（评估集四类配比、指标选择、消融表方法论）、§10 面试预演问题。
+> **已失效**的部分：§2 的全部版本约束（Java 8 / langchain4j 0.35 / Qdrant v1.11.5）、§6 目录结构、§7 里程碑。
+
 > **给新 session 的第一条指令**：先完整读 `../00-SHARED-CONTEXT.md`，再读本文档。
 > 工作目录：`/home/kanashi/Applications/interview-demos/demo1-atp-rag/`
 > 本文档是自包含的，不需要回头问上一个 session。

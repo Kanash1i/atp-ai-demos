@@ -25,15 +25,19 @@ public class AtpProperties {
     private final Qdrant qdrant;
     private final Corpus corpus;
     private final Rag rag;
+    private final Vlm vlm;
+    private final Storage storage;
 
     public AtpProperties(Embedding embedding, Rerank rerank, Llm llm,
-                         Qdrant qdrant, Corpus corpus, Rag rag) {
+                         Qdrant qdrant, Corpus corpus, Rag rag, Vlm vlm, Storage storage) {
         this.embedding = embedding;
         this.rerank = rerank;
         this.llm = llm;
         this.qdrant = qdrant;
         this.corpus = corpus;
         this.rag = rag;
+        this.vlm = vlm;
+        this.storage = storage;
     }
 
     public Embedding getEmbedding() {
@@ -58,6 +62,86 @@ public class AtpProperties {
 
     public Rag getRag() {
         return rag;
+    }
+
+    public Vlm getVlm() {
+        return vlm;
+    }
+
+    public Storage getStorage() {
+        return storage;
+    }
+
+    // ── storage（原图的对象存储）──────────────────────────────
+
+    /**
+     * 从 PDF / DOCX 抽出来的原图存哪。
+     *
+     * <p>为什么图转文字之后还要留原图：描述文本是有损的。检索靠描述，
+     * 但用户点开引用时想看的是「界面到底长什么样」。
+     *
+     * <p>{@code baseUrl} 和 {@code root} 分开，是为了让 payload 里存的始终是 URL
+     * 而不是本地路径 —— 将来换成 OSS，已入库的数据结构不用变。
+     */
+    public static class Storage {
+
+        private final String root;
+        private final String baseUrl;
+
+        public Storage(String root, String baseUrl) {
+            this.root = root == null || root.isEmpty() ? "corpus/extracted" : root;
+            // 默认给个 file:// 前缀 —— demo 场景下点开就能看，
+            // 而且它是个真 URL，将来换 OSS 时 payload 结构不用动
+            this.baseUrl = baseUrl == null || baseUrl.isEmpty()
+                    ? java.nio.file.Paths.get(this.root).toAbsolutePath().toUri().toString()
+                    : baseUrl;
+        }
+
+        public String getRoot() {
+            return root;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+    }
+
+    // ── vlm（图片转文字描述）─────────────────────────────────
+
+    /** 视觉模型配置。{@code baseUrl} 为空表示不启用，图片描述降级成 alt 文本。 */
+    public static class Vlm {
+        private final String baseUrl;
+        private final String apiKey;
+        private final String model;
+        private final int timeoutSeconds;
+
+        public Vlm(String baseUrl, String apiKey, String model, int timeoutSeconds) {
+            this.baseUrl = baseUrl == null ? "" : baseUrl;
+            this.apiKey = apiKey == null ? "" : apiKey;
+            this.model = model;
+            this.timeoutSeconds = timeoutSeconds;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public int getTimeoutSeconds() {
+            return timeoutSeconds;
+        }
+
+        /** 没配 base-url 就是没启用 —— 这是正常状态，不是错误。 */
+        public boolean isEnabled() {
+            return !baseUrl.trim().isEmpty();
+        }
     }
 
     // ── embedding ────────────────────────────────────────────
@@ -293,6 +377,7 @@ public class AtpProperties {
 
     public static class Rag {
         private final RagConfig.ChunkStrategy chunkStrategy;
+        private final RagConfig.CorpusFormat corpusFormat;
         private final RagConfig.CollectionMode collectionMode;
         private final int chunkSizeChars;
         private final int chunkOverlapChars;
@@ -302,11 +387,15 @@ public class AtpProperties {
         private final int finalTopK;
         private final int fallbackTopK;
 
-        public Rag(RagConfig.ChunkStrategy chunkStrategy, RagConfig.CollectionMode collectionMode,
+        public Rag(RagConfig.ChunkStrategy chunkStrategy, RagConfig.CorpusFormat corpusFormat,
+                   RagConfig.CollectionMode collectionMode,
                    int chunkSizeChars, int chunkOverlapChars, boolean queryRewriteEnabled,
                    boolean refusalPromptEnabled, int candidateTopK, int finalTopK,
                    int fallbackTopK) {
             this.chunkStrategy = chunkStrategy;
+            // 语料格式默认 markdown —— 已有的 collection 名和评估脚本都基于它
+            this.corpusFormat = corpusFormat == null
+                    ? RagConfig.CorpusFormat.MARKDOWN : corpusFormat;
             this.collectionMode = collectionMode;
             this.chunkSizeChars = chunkSizeChars;
             this.chunkOverlapChars = chunkOverlapChars;
@@ -319,6 +408,11 @@ public class AtpProperties {
 
         public RagConfig.ChunkStrategy getChunkStrategy() {
             return chunkStrategy;
+        }
+
+        /** 语料来源格式。命令行覆盖：{@code --atp.rag.corpus-format=PDF} */
+        public RagConfig.CorpusFormat getCorpusFormat() {
+            return corpusFormat;
         }
 
         public RagConfig.CollectionMode getCollectionMode() {

@@ -2,6 +2,11 @@ package com.atp.rag.ingest;
 
 import com.atp.rag.config.AtpProperties;
 import com.atp.rag.config.RagConfig;
+import com.atp.rag.ingest.docx.DocxDocument;
+import com.atp.rag.ingest.image.AltTextImageDescriber;
+import com.atp.rag.ingest.image.ImageDescriber;
+import com.atp.rag.ingest.pdf.PdfDocument;
+import com.atp.rag.storage.ObjectStorage;
 import dev.langchain4j.data.document.Metadata;
 import dev.langchain4j.data.embedding.Embedding;
 import dev.langchain4j.data.segment.TextSegment;
@@ -17,6 +22,8 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.FilenameFilter;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -50,14 +57,36 @@ public final class CorpusIngestor {
     private final QdrantClient client;
     private final Path corpusRoot;
     private final int dimension;
+    /** 图片转文字描述。默认降级实现，Spring 装配时会注入配置好的那个 */
+    private final ImageDescriber imageDescriber;
+
+    /**
+     * 原图存放处。PDF / DOCX 里的内嵌图会被抽出来存到这里，
+     * 地址进 payload 供引用展示。为 null 时只转描述、不留原图。
+     */
+    private final ObjectStorage objectStorage;
 
     public CorpusIngestor(RagConfig config, EmbeddingModel embeddingModel,
                           QdrantClient client, AtpProperties props) {
+        this(config, embeddingModel, client, props, new AltTextImageDescriber(), null);
+    }
+
+    public CorpusIngestor(RagConfig config, EmbeddingModel embeddingModel,
+                          QdrantClient client, AtpProperties props,
+                          ImageDescriber imageDescriber) {
+        this(config, embeddingModel, client, props, imageDescriber, null);
+    }
+
+    public CorpusIngestor(RagConfig config, EmbeddingModel embeddingModel,
+                          QdrantClient client, AtpProperties props,
+                          ImageDescriber imageDescriber, ObjectStorage objectStorage) {
         this.config = config;
         this.embeddingModel = embeddingModel;
         this.client = client;
         this.corpusRoot = Paths.get(props.getCorpus().getDir());
         this.dimension = props.getEmbedding().getDimension();
+        this.imageDescriber = imageDescriber;
+        this.objectStorage = objectStorage;
     }
 
     /**
@@ -164,7 +193,7 @@ public final class CorpusIngestor {
      *
      * <pre>
      *   遍历 manual/ 和 standards/ 两个目录
-     *     └─ 每个 .md：解析出标题层级
+     *     └─ 每个文件（.md / .pdf / .docx，看配置）：解析出标题层级
      *          └─ 按当前切分策略切成 chunk
      *               └─ 给每个 chunk 挂上 metadata，攒进列表
      *   最后统一算向量 + 写库
@@ -175,25 +204,30 @@ public final class CorpusIngestor {
     private int ingestDocuments(String collection) {
         // splitter 持有 config，所以它知道该用 FIXED 还是 HEADING_PATH。
         // 同一批文档，两种策略切出来的块数差一倍多（78 vs 184）
-        HeadingPathSplitter splitter = new HeadingPathSplitter(config);
+        HeadingPathSplitter splitter = new HeadingPathSplitter(config, imageDescriber);
 
         // 先全部攒进内存再统一写。15 篇文档最多 184 块，量很小；
         // 攒起来的好处是能一次性批量算向量，比逐篇调 TEI 少很多次往返
         List<TextSegment> segments = new ArrayList<TextSegment>();
 
+        // 语料格式由配置决定。三种格式的目录、后缀、解析器都不同，
+        // 但产出的都是 ParsedDocument —— 后面的切分和入库一行都不用改
+        RagConfig.CorpusFormat format = config.corpusFormat();
+        Path formatRoot = corpusRoot.resolve(formatDirName(format));
+
         // 两个子目录分开遍历，而不是递归扫 docs/ ——
         // 因为 group（manual / standards）本身要作为 metadata 存进去，
         // 检索时可以据此区分「手册」和「规范」
         for (String group : Arrays.asList("manual", "standards")) {
-            Path dir = corpusRoot.resolve("docs").resolve(group);
+            Path dir = formatRoot.resolve(group);
 
-            for (File file : listFiles(dir, ".md")) {
+            for (File file : listFiles(dir, format.suffix())) {
                 // sourceId 形如 manual/04-定位器指南.md。
                 // 它是这篇文档的稳定标识，评估集的 golden_ids 以它为前缀
                 String sourceId = group + "/" + file.getName();
 
-                // 解析 markdown：抽出一级标题当文档名，其余标题切成带层级路径的小节
-                MarkdownDocument doc = MarkdownDocument.parse(file.toPath(), sourceId);
+                // 按格式选解析器。三者产出同一个接口，差异全收在这一行里
+                ParsedDocument doc = parse(format, file.toPath(), sourceId);
 
                 // 按策略切块。HEADING_PATH 下每块带 [文档 > 章 > 节] 前缀，FIXED 下不带
                 for (Chunk chunk : splitter.split(doc)) {
@@ -222,6 +256,24 @@ public final class CorpusIngestor {
                     // 两者的分离正是这一行消融的全部内容
                     metadata.put("embed_text", chunk.embedText());
 
+                    // 父子切块时，rawText 已经是父块正文了（见 Chunk.withParent）。
+                    // 这里额外存父块标识，供检索层去重 —— 同一章节下的多个子块常常一起被召回，
+                    // 但父块正文只该交给模型一次
+                    if (chunk.hasParent()) {
+                        metadata.put("parent_anchor", chunk.parentAnchor());
+                    }
+
+                    // 原图地址。⚠️ 它**不参与 embedding** ——
+                    // 图片的可检索形式是它的文字描述，那份已经在 embed_text 里了。
+                    // 这里存 URL 只为了引用展示：描述是有损的，
+                    // 用户想确认「界面到底长什么样」时需要点开原件。
+                    //
+                    // Qdrant 的 payload 值这里统一用字符串，所以多张图用换行连接 ——
+                    // langchain4j 0.35 的 Metadata 只支持标量值，存不了数组
+                    if (chunk.hasImages()) {
+                        metadata.put("image_urls", String.join("\n", chunk.imageUrls()));
+                    }
+
                     // TextSegment 的正文用 rawText —— 它会成为 payload 里的展示文本，
                     // 也是最终喂给 LLM 的上下文。带前缀的那份只用来算向量
                     segments.add(TextSegment.from(chunk.rawText(), metadata));
@@ -233,6 +285,45 @@ public final class CorpusIngestor {
         embedAndStore(collection, segments, true);
         log.info("文档 → {}：{} 个 chunk", collection, segments.size());
         return segments.size();
+    }
+
+    /**
+     * 按格式选解析器。
+     *
+     * <p>三种格式的解析差别极大 —— markdown 数 {@code #}、DOCX 读 {@code w:pStyle}、
+     * PDF 遍历 outline 书签再按 Y 坐标切矩形 —— 但产出的都是 {@link ParsedDocument}，
+     * 所以差异只存在于这个方法里，切分和入库完全不知道语料原本是什么格式。
+     *
+     * <p>PDF 和 DOCX 会额外处理内嵌图片：转文字描述拼进正文（参与 embedding），
+     * 原图存进对象存储（只进 payload 供展示）。markdown 的图片是磁盘上的独立文件，
+     * 由切分器在 {@code withImagesDescribed} 里处理，路径不同但目的一样。
+     */
+    private ParsedDocument parse(RagConfig.CorpusFormat format, Path file, String sourceId) {
+        try {
+            switch (format) {
+                case PDF:
+                    return PdfDocument.parse(file, sourceId, imageDescriber, objectStorage);
+                case DOCX:
+                    return DocxDocument.parse(file, sourceId, imageDescriber, objectStorage);
+                default:
+                    return MarkdownDocument.parse(file, sourceId);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("解析失败：" + file, e);
+        }
+    }
+
+    /**
+     * 格式对应的语料目录名。
+     *
+     * <p>{@code CorpusFormat.defaultDir()} 里带了 {@code corpus/} 前缀，
+     * 但这里的 {@code corpusRoot} 本身就是语料根，所以只取最后一段拼上去 ——
+     * 免得语料目录被配置到别处时拼出 {@code corpus/corpus/docs-pdf}。
+     */
+    private static String formatDirName(RagConfig.CorpusFormat format) {
+        String dir = format.defaultDir();
+        int slash = dir.lastIndexOf('/');
+        return slash >= 0 ? dir.substring(slash + 1) : dir;
     }
 
     // ── 案例 ──────────────────────────────────────────────────
