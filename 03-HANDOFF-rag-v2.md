@@ -288,44 +288,58 @@ demo1 手搓 PDF/DOCX 那四条决策（CJK 字体嵌入、书签坐标系、CTM
 
 ### 4.1 ⭐ 框架统一 —— M0 的第一个决策点
 
-**结论：一个仓库、Maven 多模块、只用一个 LLM 框架。**
+> ⚠️ **2026-08-27 就地修正：这一节的前提已经不成立了。**
+> 当时假设生产侧是一个 Spring AI 的 MCP server，所以整节在论证「两个 LLM 框架能不能共存」。
+> **MCP 方案已废弃并删除**，生产侧改为 `atp` CLI（`demo2-atp-cli/`）——
+> **它全部命令零模型调用，根本不需要 LLM 框架。**
+> 下面保留原文是因为"为什么不塞两个框架"的论证本身仍然值得讲，但**结论已改**。
+
+**结论（现行）：一个仓库、Maven 多模块，只有知识侧用 LLM 框架。**
 
 ```
 atp-ai-demos/
 ├── atp-common/   领域模型、Action 枚举、配置加载   ← 共享契约从文档落成代码
-├── atp-rag/      知识侧（买来的引擎 + ATP 语料）
-└── atp-mcp/      生产侧（现有 demo2，几乎不动）
+├── atp-rag/      知识侧（买来的引擎，langchain4j 1.11.0）
+└── atp-cli/      生产侧（atp CLI，picocli + JDBC，**无 AI 框架**）
 ```
+
+⭐ **框架统一这道题现在不存在了。** 不是"两个框架怎么共存"，而是
+**生产侧压根不需要框架** —— 模型由 agent 调，CLI 只做确定性的规则与落库。
+这个答案比原来任何一版都干净，**而且在面试里更好讲**：
+
+> 「生产侧我没有用任何 LLM 框架。因为在这个设计里 CLI 不调模型 ——
+> 调模型的是 agent，CLI 负责的是校验和幂等落库，那是确定性代码。
+> 接了框架反而是给一段不需要它的代码增加依赖。」
+
+---
+
+<details>
+<summary>原文存档：当时论证「两个框架能不能共存」的三处传递依赖冲突（结论已作废，论证仍可复用）</summary>
 
 **Spring AI 和 langchain4j 能不能一起加载**：技术上能（包名完全不同，
 连 `EmbeddingModel` 这种同名接口都是两个不同类型，容器不会互相顶掉），**但不该**。
 
 真正的冲突在传递依赖，三处：
 
-1. **Jackson 分裂** —— demo2 已在 Spring Boot 4.1 + Jackson 3（`tools.jackson`），
+1. **Jackson 分裂** —— Spring Boot 4.1 用 Jackson 3（`tools.jackson`），
    langchain4j 1.x 还在 Jackson 2（`com.fasterxml`）。两套 ObjectMapper 并存不会崩，
-   但排查任何序列化问题都要先分清是谁的。demo2 的 pom 里已经有一条这方面的注释。
-2. **Qdrant client / gRPC / protobuf** —— 两边各带一份，版本不齐时爆 `NoSuchMethodError`。
+   但排查任何序列化问题都要先分清是谁的。
+2. **向量库 client / gRPC / protobuf** —— 两边各带一份，版本不齐时爆 `NoSuchMethodError`。
    demo1 的 D-002 已经被一模一样的东西咬过。必须在 `dependencyManagement` 里 pin 一份。
 3. 两套 HTTP 栈（RestClient vs okhttp），无功能冲突，纯冗余。
 
 **但不该做的理由不是技术，是叙事**：面试官看到一个应用里塞两个 LLM 框架，
 第一个问题是「为什么」，而唯一诚实的答案是「历史原因」—— 在从零搭的 demo 里站不住。
 
-**默认选 Spring AI 2.0**，三条理由：
+**当时的默认选择是 Spring AI 2.0**，理由之一是「MCP server 是 Spring AI 的主场」。
+**这条随 MCP 方案一起作废。**
 
-- MCP server 是 Spring AI 的主场（langchain4j 侧重 MCP **client**），
-  demo2 已经在 `spring-ai-starter-mcp-server-webmvc` 上跑通
-- **langchain4j 没有不可替代的东西** —— demo1 的 D-020 查证过：
-  按 Markdown 标题切、语义切分、父子/small-to-big、多路融合 RRF、自查询，
-  **langchain4j 1.18.1 和 Spring AI 1.1 全都没有**，都得手搓。手搓代码不依赖框架，直接移植
-- Java 21 之后，锁 langchain4j 0.35 的理由（Java 8 字节码）整个消失
+**当时列的例外分支**：如果买来的项目已经用 langchain4j 深度实现了意图识别和混合检索，
+统一到 Spring AI 就等于重写核心 —— 那种情况反过来统一 langchain4j。
+→ **`04-M0-engine-audit.md` 查证结论：例外分支成立**，know-engine 是纯 langchain4j 1.11.0 且耦合很深。
+所以知识侧留在 langchain4j。
 
-**唯一的例外**：如果买来的项目已经用 langchain4j 深度实现了意图识别和混合检索，
-统一到 Spring AI 就等于重写核心。那种情况反过来 —— **统一 langchain4j**，
-MCP server 改用官方 MCP Java SDK（Spring AI 那个 starter 底层本来就是它）。
-
-→ **拉下代码后第一件事：确认它用的是哪个框架、耦合有多深，然后定这个。记进 DECISIONS。**
+</details>
 
 ### 4.2 MinerU 带来的变化（含新增的账要算）
 

@@ -445,18 +445,23 @@ curl -s http://192.168.0.101:8082/rerank -H 'Content-Type: application/json' -d 
 
 > ⚠️ `deepseek-chat` / `deepseek-reasoner` 已于 **2026-07-24 废弃**，不要再用这两个名字。
 > ⚠️ DeepSeek V4 **默认开启 thinking 模式**，更慢更贵且响应带 reasoning 字段。
-> 规范化是确定性任务，建议关掉（`LLM_THINKING=false`）。
+> 案例生成是确定性偏强的任务，建议关掉（`LLM_THINKING=false`）。
 
-**这个能力差异是 demo2 的核心设计约束，不是小事**：
+**这个能力差异约束的是「调模型的那一侧」，不是 demo2 本身**：
+
+⚠️ **`atp` CLI 全部命令零模型调用** —— 模型由 agent（opencode / Claude Code）调，
+CLI 只收 agent 写好的 JSON 文件。所以下面这段现在描述的是 **agent 侧**的约束，
+而 CLI 的 `atp validate` 正是那道**不依赖任何 provider 特性**的保险。
 
 DeepSeek 只有 `json_object`（保证是合法 JSON，**不保证符合你的 schema**）；
 Kimi 才有 `json_schema` + `strict`。而且 DeepSeek 的 function calling strict 模式
 有 [返回 malformed JSON](https://github.com/deepseek-ai/DeepSeek-V3/issues/1069) 和
 [拒绝 tool_choice=required](https://github.com/deepseek-ai/DeepSeek-V3/issues/1376) 两个已知缺陷。
 
-**结论：demo2 不依赖任何 provider 的结构化输出特性。**
-用最低公分母 `json_object` + 自己做 JSON Schema 校验 + 带错误重试。
-provider 支持 strict 时作为**额外保险**开启，但本地校验永不跳过。
+**结论：整条链路不依赖任何 provider 的结构化输出特性。**
+agent 用最低公分母 `json_object`，产物一律过 `atp validate`（纯本地 JSON Schema + 规则校验）。
+provider 支持 strict 时作为**额外保险**开启，但 `atp validate` 永不跳过 ——
+**它是唯一一道换 provider 不会变的防线。**
 详见 `06-atp-cli-设计.md`。
 
 ### 2.3 为什么是 TEI，不是 llama.cpp / Ollama / Infinity
@@ -547,24 +552,31 @@ Qwen3-Embedding 是**非对称**的 —— query 侧要加 instruction prefix，
                  ▲                          ▲
                  │                          │
     ┌────────────┴──────────┐   ┌───────────┴─────────────┐
-    │  知识侧 (atp-rag)      │   │  生产侧 (atp-mcp)         │
-    │  RAG 知识助手           │   │  MCP 规范化服务            │
+    │  知识侧 (atp-rag)      │   │  生产侧 (atp-cli)         │
+    │  RAG 知识助手           │   │  atp 案例编写 CLI          │
     │                       │   │                          │
-    │  让人更快学会用平台      │   │  让 agent 产出能进平台     │
-    │  Java 21 + Spring AI  │   │  Java 17 + Spring AI 2.0 │
+    │  让人更快学会用平台      │   │  让 agent 产出能安全进平台  │
+    │  Java 21 + langchain4j│   │  Java 21，无 AI 框架       │
     │  "读"                  │   │  "写"                    │
     └───────────────────────┘   └──────────────────────────┘
 ```
 
 > **2026-08-19**：知识侧原为 Java 8 + langchain4j（已归档），现改为在买来的 Java 21 引擎上重做。
-> 两侧计划合并进**同一个 Maven 多模块仓库**、**统一 Spring AI**，理由见 `03-HANDOFF-rag-v2.md` §4.1。
+>
+> **2026-08-27**：生产侧的 MCP server 方案**已废弃并删除**，改做 `atp` CLI ——
+> 仲裁点放回平台自己的案例表，不外挂 server。见 `05-CLI-并发幂等答辩稿.md`。
+> ⭐ **框架统一问题因此消失**：CLI 全部命令**零模型调用**，生产侧根本不需要 LLM 框架。
+>
 > 「读 + 写」这条主线不变 —— 它才是面试骨架，技术栈只是实现。
 
 **一句话主线**：
 > "我们的老平台有两个瓶颈：新人上手慢，以及 AI 生成的案例进不了库。
-> 第一个是**检索问题**，我用 RAG 解决；第二个是**结构化输出的可靠性问题**，我用 MCP + schema 约束解决。
+> 第一个是**检索问题**，我用 RAG 解决；
+> 第二个是**并发写入的一致性问题** —— 我把幂等键做成平台案例表的主键，
+> 用唯一约束加一条 CAS UPDATE 当仲裁点。
 > 它们看起来都是'接大模型'，但工程重点完全不同 ——
-> 前者的难点是**召回质量怎么量化**，后者的难点是**怎么让模型少做事**。"
+> 前者的难点是**召回质量怎么量化**，
+> 后者的难点是**同一个意图被 agent 重复投递时，怎么保证只落库一次**。"
 
 这句话就是你整场面试的骨架。两个 demo 都是为了支撑它。
 

@@ -90,12 +90,16 @@ TeiScoringModel                      → implements dev.langchain4j.model.scorin
 
 ### 2.2 建议：统一 langchain4j —— 但这个问题比 §4.1 设想的小得多
 
-`03-HANDOFF` §4.1 担心的是「一个应用里塞两个 LLM 框架」。
-**但 MCP server 本来就是独立进程**（stdio 或 SSE 起一个独立 Spring Boot），
-它和知识侧根本不在同一个 JVM、不在同一个 Spring 上下文、不共享 classpath。
+> ⚠️ **2026-08-27 就地修正**：本节写于生产侧还是 Spring AI MCP server 的时候。
+> **MCP 方案已废弃并删除**，生产侧改为 `atp` CLI，**零模型调用、无 AI 框架**。
+> 结论从「冲突面积很小」变成「**冲突根本不存在**」—— 全仓只有知识侧一个 LLM 框架。
 
-所以 §4.1 列的三处传递依赖冲突（Jackson 2/3 分裂、Qdrant client、双 HTTP 栈）
-**在多模块 + 独立进程的结构下不会发生** —— 各自打各自的 boot jar。
+`03-HANDOFF` §4.1 担心的是「一个应用里塞两个 LLM 框架」。
+**但生产侧现在没有 LLM 框架** —— `atp` CLI 是 picocli + JDBC 的确定性代码，
+模型由 agent 调，CLI 只做校验和幂等落库。
+
+所以 §4.1 列的三处传递依赖冲突（Jackson 2/3 分裂、向量库 client、双 HTTP 栈）
+**一处都不会发生**。
 
 推荐结构：
 
@@ -103,7 +107,7 @@ TeiScoringModel                      → implements dev.langchain4j.model.scorin
 atp-ai-demos/
 ├── atp-common/   纯 POJO：领域模型、Action 枚举、STD 规范常量。零 AI 框架依赖
 ├── atp-rag/      知识侧 = know-engine 改造，langchain4j 1.11.0     ← 独立进程 :8009
-├── atp-mcp/      生产侧 = demo2 现状，Spring AI MCP server        ← 独立进程
+├── atp-cli/      生产侧 = atp CLI，picocli + JDBC，无 AI 框架      ← 命令行进程
 └── eval/         评估集 + 消融跑批（可以是 atp-rag 的 test 或独立 CLI）
 ```
 
@@ -115,14 +119,17 @@ atp-ai-demos/
   两个 AI 框架的 BOM 各自留在自己的模块里，不往上提。
 - **不要照搬 LLMentor 的根 pom** —— 它管着 18 个模块（agentscope、dodo-agent、gogo-agent…），
   跟我们无关。只搬 `know-engine` 一个模块，重写父 pom。
-- demo2 保持 Spring AI **不动**。它已经跑通了，动它是纯风险。
+- 生产侧 `atp-cli` **刻意不继承 `spring-boot-starter-parent`** ——
+  CLI 被 agent 高频反复调用，冷启动是真实成本（Spring Boot ≈ 1.5s / picocli fat jar ≈ 300ms）。
+  见 `demo2-atp-cli/DECISIONS.md` D-103。
 
 **面试叙事**（这个版本比「历史原因」诚实且更强）：
 
-> 「两个 demo 是两个独立进程，各选各的主场：知识侧是在一个 langchain4j 引擎上改的，
-> 它的 RAG 管道抽象（QueryRouter / ContentAggregator）我直接复用了；
-> 生产侧 MCP server 用 Spring AI，因为 MCP server 是它的主场。
-> 共享的领域模型抽在一个零框架依赖的 common 模块里，所以两边的依赖树不接触。」
+> 「知识侧是在一个 langchain4j 引擎上改的，它的 RAG 管道抽象
+> （QueryRouter / ContentAggregator）我直接复用了。
+> **生产侧我没有用任何 LLM 框架** —— 那条链路里 CLI 不调模型，调模型的是 agent，
+> CLI 负责校验和幂等落库，是确定性代码。给不需要框架的代码接框架，只是增加依赖。
+> 共享的领域模型抽在一个零框架依赖的 common 模块里。」
 
 ### 2.3 顺带：`03-HANDOFF` §4.1 有两处需要就地修正
 
@@ -372,13 +379,16 @@ MinerU 那一步在本地手工跑一次、把产物 commit 进 `corpus/`。
    - `.env.example` 里 TEI/MinerU/视觉模型的注释是英文且写明「Windows host」
    - 有一份 414 行的 `know-engine面经答案-自动化测试平台AI赋能版.md`，开头明确写「把汽车客服案例统一替换成自动化测试平台 AI 赋能场景」
    - `mcp/mcp-case-authoring-server/` 里有 `prepare_case_draft` / `commit_case_draft(changeSetId)`，
-     跟 demo2 的生产侧**完全对得上**
+     跟当时 demo2 的 MCP 形态**完全对得上**（该形态已于 2026-08-27 废弃，见下方第 2 条）
 
    → 如果这些是你自己（或另一个 session）做的，我需要知道做到哪一步了，避免重复劳动。
      如果是课程自带的，那这份面经答案是**现成的面试叙事素材**，值得单独归档。
 
-2. **`mcp-case-authoring-server` 和 demo2 是什么关系？** 两边都在做「案例草稿生成 + 幂等入库」。
-   M4 合并时是二选一，还是 demo2 继续独立？
+2. ~~**`mcp-case-authoring-server` 和 demo2 是什么关系？**~~
+   ✅ **2026-08-27 已解决**：两边都做「案例草稿生成 + 幂等入库」，最后**两边都没留**。
+   MCP 形态整体废弃（`demo2-atp-mcp/` 已删除），生产侧改做 `atp` CLI ——
+   幂等键做成平台案例表的主键，用唯一约束 + CAS UPDATE 当仲裁点，不外挂 server。
+   `mcp-case-authoring-server` 的 ChangeSet 设计有效结论已并入 `05-CLI-并发幂等答辩稿.md`。
 
 3. **意图分类砍到 3~4 个（§4.3）可以吗？** 6 个汽车意图对应 6 份领域 prompt，
    ATP 场景用不了那么多，而 40 条评估集也撑不起 6 分类的路由准确率统计。
