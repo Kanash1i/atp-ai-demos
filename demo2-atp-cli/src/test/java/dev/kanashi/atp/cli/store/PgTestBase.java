@@ -3,6 +3,7 @@ package dev.kanashi.atp.cli.store;
 import dev.kanashi.atp.cli.model.CaseDraft;
 import dev.kanashi.atp.cli.model.CaseType;
 import dev.kanashi.atp.cli.model.Priority;
+import dev.kanashi.atp.cli.model.StepRow;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -15,6 +16,9 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
 
 /**
  * 起一个真 PostgreSQL，按 V0 → V1 的顺序跑迁移。
@@ -75,9 +79,22 @@ abstract class PgTestBase {
 
     /** 一份能通过 ck_case_complete 的完整草稿。module_id 必须是 tc_module 里真实存在的值。 */
     static CaseDraft completeDraft(String title) {
+        return completeDraft(title, 2);
+    }
+
+    /** 同上，但指定步骤数 —— 步骤现在直接进 tc_step，父表不再存整包 JSON。 */
+    static CaseDraft completeDraft(String title, int stepCount) {
         return new CaseDraft(
                 "ATP-CART-0001", title, "M003", Priority.P1, "qa.kanashi",
-                "已登录且购物车非空",
-                "{\"title\":\"" + title + "\",\"steps\":[]}");
+                "已登录且购物车非空", steps(stepCount));
+    }
+
+    static List<StepRow> steps(int count) {
+        List<StepRow> out = new ArrayList<>(count);
+        for (int i = 1; i <= count; i++) {
+            out.add(new StepRow(UUID.randomUUID().toString(), i,
+                    "{\"seq\":%d,\"action\":\"CLICK\",\"wait_strategy\":\"VISIBLE\"}".formatted(i)));
+        }
+        return out;
     }
 }

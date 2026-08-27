@@ -128,8 +128,9 @@ ALTER TABLE tc_case
   ALTER COLUMN author    DROP NOT NULL,
   ALTER COLUMN title     DROP NOT NULL,
 
-  ADD COLUMN version    INT   NOT NULL DEFAULT 0,
-  ADD COLUMN draft_json JSONB NULL,
+  ADD COLUMN version    INT NOT NULL DEFAULT 0,
+  -- ⚠️ 这里【不加】draft_json 之类的整包 JSON 列。步骤的正位是 tc_step.step_json，
+  --    父表再存一份 blob 就是同一份数据存两遍，必然要同步。见 §3.5
   ADD COLUMN created_by VARCHAR(64) NULL,
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整
@@ -229,6 +230,39 @@ ALTER TYPE tc_status ADD VALUE 'AI_DRAFT';
 
 ---
 
+### 3.5 ⭐ 步骤只住 `tc_step`，父表不存整包 JSON
+
+一个自然的诱惑是在 `tc_case` 上加一列 `draft_json` 把整份草稿塞进去，
+落地时再展开到 `tc_step`。**我一开始就是这么做的，后来删掉了。**
+
+**理由：那是同一份数据存两遍。** `tc_step` 本来就是步骤的正位
+（老平台的人工案例一直存在那儿），父表再存一个 blob，
+两边就必须同步 —— 而"必须同步的两份数据"迟早会不一致。
+
+删掉之后，责任边界反而清楚了：
+
+| | 写什么 | 事务要求 |
+|---|---|---|
+| `atp update` | 表头进 `tc_case`，步骤**整批替换** `tc_step` | ⭐ **跨两张表，必须一个事务** |
+| `atp commit` | 只翻状态 | 单条 UPDATE，天然原子 |
+
+**⭐ 值得讲的一点：原子性的压力从 `commit` 移到了 `update`，而 `commit` 反而回归纯粹。**
+它现在真的只收 `id` 和 `version`，不带内容、也不搬运任何数据 ——
+步骤在 `update` 时就已经落好了。
+
+**步骤为什么用「全删再全插」而不是逐条 diff**：草稿的步骤量级是个位数，
+diff 的复杂度换不来任何收益，而全量替换的语义要简单得多 ——
+**库里的步骤永远等于最后一次 `update` 传进来的那一份**，没有中间态可推理。
+
+**那"确认的和提交的是同一份"还成立吗？成立。**
+`update` 是**唯一**写 `tc_step` 的路径，而它每次都 CAS 掉 `tc_case.version`。
+所以 version 依然罩得住「表头 + 步骤」这个整体：谁动了步骤，version 就跳，commit 就失败。
+
+> ⚠️ 前提和 §3.3（不建外键）、§3.4（枚举存 int）是同一条：**所有写入都走 CLI 或平台代码。**
+> 有人直连库改 `tc_step`，version 不会跳，这层保护就没了。
+
+---
+
 ## 4. 完整流程（按时间顺序讲）
 
 ```
@@ -241,7 +275,8 @@ ALTER TYPE tc_status ADD VALUE 'AI_DRAFT';
 
 ④ atp validate -f draft.json               → 纯本地规则校验，不打网络、毫秒级
 
-⑤ atp update <id> --version 0 -f draft.json  → CAS 写入，version 0→1
+⑤ atp update <id> --version 0 -f draft.json  → CAS 写表头 + 整批换 tc_step，version 0→1
+                                              （跨两张表，一个事务）
 
 ⑥ atp preview <id>                         → 从库里读出来渲染，打印 version=1
                                               ↑ 用户看的是库里的，不是本地文件
@@ -290,8 +325,10 @@ INSERT 成功 → 响应超时丢失 → agent 重试 → 又一条草稿、另�
 ### 5.2 `update` —— CAS 乐观锁
 
 ```sql
-UPDATE tc_case SET draft_json = ?, version = version + 1
+UPDATE tc_case SET case_code = ?, title = ?, module_id = ?, priority = ?,
+                   author = ?, precondition = ?, version = version + 1
  WHERE case_id = ? AND status = 'AI_DRAFT' AND version = ?
+-- 同一事务里紧接着：DELETE FROM tc_step WHERE case_id = ?  然后整批 INSERT
 ```
 
 `affectedRows = 0` → 说明有人在你之前改过 → 让 agent 重新 `show` 再改。
@@ -322,7 +359,7 @@ UPDATE tc_case SET status='DRAFT', version=version+1 WHERE case_id = ?;   // ←
 用户 preview 时拿到 version = 3，点了确认
 
 线程A (commit):  SELECT  → status=AI_DRAFT, version=3   ✓ 两项检查都通过
-线程B (agent):   UPDATE draft_json, version 3 → 4     ← agent 又改了一版
+线程B (agent):   UPDATE 表头+步骤, version 3 → 4      ← agent 又改了一版
 线程A (commit):  UPDATE SET status='DRAFT' WHERE id=x ← 把 version=4 的内容提交了
 ```
 

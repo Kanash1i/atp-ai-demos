@@ -53,13 +53,11 @@ public final class Output {
             data.put("status", row.status().name());
             data.put("version", row.version());
             data.put("title", row.title());
-            if (row.draftJson() != null) {
-                try {
-                    data.set("draftJson", MAPPER.readTree(row.draftJson()));
-                } catch (Exception ignore) {
-                    data.put("draftJson", row.draftJson());
-                }
-            }
+            // ⭐ draft 是把库里那行原样还原成可编辑的草稿 JSON：
+            //    atp show --json | jq .data.draft > draft.json  改完直接喂回 atp update。
+            //    少任何一个字段，这条来回就断了。
+            data.set("draft", draftOf(row));
+            data.put("steps", row.steps().size());
         }
         if (json) {
             return print(envelope(ExitCode.OK, replayed, data, null, null), ExitCode.OK);
@@ -119,6 +117,26 @@ public final class Output {
     }
 
     // ---------------------------------------------------------------- 内部
+
+    /** 把 tc_case 表头 + tc_step 子行拼回一份符合 schema 的草稿。 */
+    private static ObjectNode draftOf(CaseRow row) {
+        ObjectNode draft = MAPPER.createObjectNode();
+        draft.put("case_code", row.caseCode());
+        draft.put("title", row.title());
+        draft.put("module_id", row.moduleId());
+        draft.put("priority", row.priority() == null ? null : row.priority().name());
+        draft.put("author", row.author());
+        draft.put("precondition", row.precondition());
+        ArrayNode steps = draft.putArray("steps");
+        for (var step : row.steps()) {
+            try {
+                steps.add(MAPPER.readTree(step.stepJson()));
+            } catch (Exception ignore) {
+                steps.add(step.stepJson());
+            }
+        }
+        return draft;
+    }
 
     private ObjectNode envelope(ExitCode code, boolean replayed,
                                 com.fasterxml.jackson.databind.JsonNode data,

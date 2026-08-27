@@ -7,6 +7,7 @@ import dev.kanashi.atp.cli.model.CaseDraft;
 import dev.kanashi.atp.cli.model.ExitCode;
 import dev.kanashi.atp.cli.model.Priority;
 import dev.kanashi.atp.cli.rule.DraftValidator;
+import dev.kanashi.atp.cli.rule.StepProjector;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -64,7 +65,13 @@ public final class UpdateCommand implements Callable<Integer> {
                         "字段值不合法，请按下列 violations 修正后重试", r.invalid());
             }
         }
-        return parent.output().emit(parent.caseStore().update(caseId, expectedVersion, toDraft(draft)));
+        try {
+            return parent.output().emit(
+                    parent.caseStore().update(caseId, expectedVersion, toDraft(draft)));
+        } catch (IllegalArgumentException e) {
+            // StepProjector 抛的（seq 非法等）—— 属于内容问题，agent 自己能改
+            return parent.output().fail(ExitCode.VALIDATION_FAILED, e.getMessage(), List.of());
+        }
     }
 
     private CaseDraft toDraft(JsonNode n) {
@@ -72,7 +79,7 @@ public final class UpdateCommand implements Callable<Integer> {
                 text(n, "case_code"), text(n, "title"), text(n, "module_id"),
                 n.hasNonNull("priority") ? Priority.valueOf(n.get("priority").asText()) : null,
                 text(n, "author"), text(n, "precondition"),
-                n.toString());
+                StepProjector.project(n));
     }
 
     private static String text(JsonNode n, String field) {

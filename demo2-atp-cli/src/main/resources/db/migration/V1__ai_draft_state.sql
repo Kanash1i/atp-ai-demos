@@ -40,8 +40,9 @@ ALTER TABLE tc_case
   -- 用户 preview 拿到 version=N，commit 带 N，中间任何人改一下 version 就跳，commit 必失败。
   ADD COLUMN version INT NOT NULL DEFAULT 0,
 
-  -- 编写期的原始内容（含 steps）。落地时投影到正式列 + tc_step。
-  ADD COLUMN draft_json JSONB NULL,
+  -- ⚠️ 这里【不加】draft_json 之类的整包 JSON 列。
+  --    步骤的正位是 tc_step.step_json —— 父表再存一份 blob 就是同一份数据存两遍，
+  --    必然要同步，迟早不一致。tc_case 只留基本信息。
   ADD COLUMN created_by VARCHAR(64) NULL,
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整。

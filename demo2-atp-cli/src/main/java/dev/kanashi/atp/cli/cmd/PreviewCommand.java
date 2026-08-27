@@ -26,6 +26,10 @@ public final class PreviewCommand implements Callable<Integer> {
     @Parameters(index = "0", paramLabel = "CASE_ID")
     private String caseId;
 
+    private static String nz(String v) {
+        return v == null ? "—" : v;
+    }
+
     @Override
     public Integer call() {
         StoreResult r = parent.caseStore().show(caseId);
@@ -39,8 +43,23 @@ public final class PreviewCommand implements Callable<Integer> {
         out.printf("平台    : %s%n", r.row().caseType());
         out.printf("状态    : %s%n", r.row().status());
         out.printf("标题    : %s%n", r.row().title());
-        out.println("内容    :");
-        out.println(r.row().draftJson() == null ? "  (还没写入内容，先跑 atp update)" : r.row().draftJson());
+        out.printf("编号    : %s%n", nz(r.row().caseCode()));
+        out.printf("模块    : %s   优先级: %s   作者: %s%n",
+                nz(r.row().moduleId()),
+                r.row().priority() == null ? "—" : r.row().priority(),
+                nz(r.row().author()));
+        if (r.row().precondition() != null) {
+            out.printf("前置    : %s%n", r.row().precondition());
+        }
+        var steps = r.row().steps();
+        if (steps.isEmpty()) {
+            out.println("步骤    : (还没写入内容，先跑 atp update)");
+        } else {
+            out.printf("步骤    : 共 %d 步%n", steps.size());
+            for (var step : steps) {
+                out.printf("  %2d. %s%n", step.seq(), step.stepJson());
+            }
+        }
         out.println("────────────────────────────────────────────────");
         out.printf("确认无误后执行：atp commit %s --version %d%n", r.row().caseId(), r.row().version());
         return dev.kanashi.atp.cli.model.ExitCode.OK.code();

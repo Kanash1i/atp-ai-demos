@@ -88,7 +88,7 @@ class SchemaShapeTest extends PgTestBase {
         store.draft(caseId, PC_WEB, "购物车结算", "agent-a");
 
         var fabricated = new dev.kanashi.atp.cli.model.CaseDraft(
-                "ATP-CART-0002", "购物车结算", "M999", Priority.P1, "qa.kanashi", null, "{}");
+                "ATP-CART-0002", "购物车结算", "M999", Priority.P1, "qa.kanashi", null, steps(1));
 
         // 不建外键，所以 M999 照样写得进去。
         // 这个断言不是在庆祝，是在钉死一条责任转移：

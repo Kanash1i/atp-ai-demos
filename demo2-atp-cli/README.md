@@ -37,6 +37,9 @@ export ATP_DB_URL=jdbc:postgresql://127.0.0.1:5432/atp ATP_DB_USER=atp ATP_DB_PA
 
 状态机：`AI_DRAFT --commit--> DRAFT`（落地成老平台原生的草稿状态，执行器无感知）
 
+数据落点：**表头进 `tc_case`，步骤进 `tc_step.step_json`**。
+父表不存整包 JSON —— 同一份数据存两遍必然要同步（见 `DECISIONS.md` D-118）。
+
 ## 跑测试
 
 ```bash
@@ -44,7 +47,7 @@ export DOCKER_HOST=unix:///var/run/docker.sock     # ~/.docker 的 currentContex
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn test
 ```
 
-69 个用例（18 状态机 + 5 CLI 端到端 + 1 架构不变式 + 45 Action 契约表），起真 **PostgreSQL 17**（Testcontainers），
+75 个用例（18 状态机 + 6 步骤存放与事务边界 + 5 CLI 端到端 + 1 架构不变式 + 45 Action 契约表），起真 **PostgreSQL 17**（Testcontainers），
 **先建老表再跑改造脚本** —— V1 能不能在老平台的形状上执行得下去，本身就被测到了。
 
 | 测试类 | 锁定的不变式 |
@@ -57,6 +60,7 @@ JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn test
 | `ActionContractTableTest` | Action 枚举与 locator/input/expected 的契约表（`00-SHARED-CONTEXT` §1.3）|
 | `CliEndToEndTest` | 七步全流程；退出码 10/11/12/14 的契约；幂等重放退出码为 0 |
 | `SqlContainmentTest` | ⭐ 架构不变式：SQL 只出现在 `store` 包（机械检查，不靠约定）|
+| `StepStorageTest` | ⭐ 步骤只住 `tc_step`；`update` 跨表单事务；写步骤失败必须连表头一起回滚 |
 
 ### 变异检验（这些测试有牙齿）
 

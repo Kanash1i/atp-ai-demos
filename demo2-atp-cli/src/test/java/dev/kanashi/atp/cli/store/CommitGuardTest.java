@@ -22,7 +22,7 @@ class CommitGuardTest extends PgTestBase {
 
         // 只写了标题，case_code / module_id / priority / author 全空
         CaseDraft partial = new CaseDraft(
-                null, "只有标题", null, null, null, null, "{}");   // priority 也是 null
+                null, "只有标题", null, null, null, null, steps(1));   // priority 也是 null
         StoreResult updated = store.update(caseId, 0, partial);
         assertThat(updated.code())
                 .as("编写期允许残缺，update 本身不该失败")
