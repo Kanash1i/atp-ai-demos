@@ -157,7 +157,7 @@ schema 文件在 M3 做 `atp schema` 时一并改。
 step_id   VARCHAR(36) PK      子表主键 UUID
 case_id   VARCHAR(36)         对应父表 UUID —— 逻辑外键，无 FK 约束（D-109）
 seq       INT                 1..n 连续无跳号，UNIQUE(case_id, seq)
-step_json JSON                步骤内容
+step_json JSONB               步骤内容 —— ⭐ 这是步骤在库里【唯一】的存放处（D-118）
 ```
 
 **`seq` 为什么没被省掉**：步骤是有序的，顺序不能靠"插入顺序"隐式表达。
@@ -451,3 +451,145 @@ D-103 当时的估算是「Spring Boot ≈ 1.5s / picocli fat jar ≈ 300ms」�
 fat jar 5.0 MB。
 
 `bin/atp` 带 `-XX:TieredStopAtLevel=1`：进程只活几百毫秒，C2 编译来不及产生收益。
+
+---
+
+## D-118 · 编辑期只写 `tc_step`，`tc_case` 只在 commit 被写一次
+
+这一处改了三版，每一版都是被上一版的实测问题推着走的。
+
+| 版本 | 形状 | 为什么废掉 |
+|---|---|---|
+| ① | 草稿整包塞 `tc_case.draft_json`，commit 时展开到 `tc_step` | **同一份数据存两遍**，必然要同步 |
+| ② | 步骤一步一行写 `tc_step`，表头写 `tc_case` 正式列 | `update` 变跨表事务，而它是**最高频**的路径（草稿要反复改）|
+| ③ 现行 | 编辑期只写 `tc_step` 一行；`tc_case` 只在 commit 被写一次 | —— |
+
+### 现行形状
+
+```
+tc_case   表头 + 平台侧状态。编辑期只有骨架，commit 那一刻才被填齐
+tc_step   一比一。step_json 是完整草稿，编辑期的状态机与乐观锁也在这
+```
+
+| 路径 | 写什么 | 形状 |
+|---|---|---|
+| `draft` | 两条 INSERT | 都是新行，无争用 |
+| `update` | **只写 `tc_step`** | ⭐ 单表单行 CAS |
+| `commit` | CAS `tc_step` → 投影表头到 `tc_case` | 跨表事务，一份草稿只一次 |
+
+**最高频的路径不跨表** —— 跨表事务与加锁顺序问题在"反复改草稿"这条路上根本不存在。
+
+### 两个 version 两个生命周期
+
+- `tc_step.version` —— **编辑期**乐观锁。preview 给用户看的、commit 要带回来的就是它
+- `tc_case.version` —— 案例落地后**平台侧**修改用的。编辑期一动不动
+
+实测（`atp update` 之后）：`tc_case status=4 version=0 case_code=(NULL)` / `tc_step status=4 version=1 3 步`。
+
+### 步骤为什么一行一案例
+
+**老平台的执行器读整份步骤跑**，不会按 `seq` 逐条查库。既然没有按步查询的需求，
+一步一行只是在制造 N 倍的行、N 倍的删插、和一个本可不存在的 `seq` 列 ——
+顺序本来就是数组顺序。
+
+**代价**：`UNIQUE(case_id, seq)` 没了，"seq 不重复、连续无跳号"交给 `atp validate`。
+跟 D-109（撤外键）、D-112（枚举存 int）是同一类取舍。
+
+### 加锁顺序统一 `tc_step → tc_case`
+
+跨表路径只有 `commit` 和 M5 清理任务，两边同序才不会死锁（见 D-120）。
+
+### 白捡的快照
+
+commit 之后 `step_json` 留着提交那一刻的完整内容。这就是 ChangeSet 方案里的「冻结快照」，
+现在零成本拿到 —— **被追问"用户到底确认了什么"时，库里查得到。**
+
+### 测试钉死的（`StepStorageTest`）
+
+- `update` 只写 `tc_step`，`tc_case` 的 version 与表头一动不动
+- `tc_step` 一比一，反复 update 也只有一行
+- commit 把表头投影进 `tc_case` 的正式列
+- 提交后 `step_json` 仍在（快照）
+- ⭐ 表头残缺时 CHECK 拦下 commit，**`tc_step` 的状态翻转必须一起回滚**
+- 草稿 JSON 非法时提交回滚，不留半截状态
+
+---
+
+## D-119 · 我把 tc_step 为空误判成「设计如此」
+
+**经过**：用户问「为什么 `tc_step` 没有数据」，我第一反应答「这是设计如此，投影是 M3 的活」。
+查下来是错的 —— 主代码里搜 `tc_step` 一次写入都没有，M3 的里程碑里也没这一项，
+**它根本没被排进任何一个里程碑**。而我自己的文档还互相矛盾：
+`CaseDraft.java` 写着「投影在 M2」（M2 已完成），V1 的注释写着「落地时投影」。
+
+**严重性**：`commit` 承诺「落地为老平台原生的 DRAFT 案例，执行器无感知」，
+而执行器读的就是 `tc_step`。步骤没落地 =
+**一条看起来提交成功、实际跑不了的空壳案例**。属于静默失败。
+
+**教训有两条，第二条更值钱**：
+
+1. 跨表的写入路径，光看单表的测试全绿说明不了问题 —— 得有一条端到端断言"**下游真的能用**"。
+2. **被问到"为什么 X 没发生"时，先去代码里 grep 一遍再回答。**
+   我当时是凭对设计的印象答的，而印象和实现已经分叉了。
+   凭印象回答比不回答更糟，因为它会让对方停止追问。
+
+---
+
+## D-120 · 加锁顺序统一为 `tc_step → tc_case`
+
+**起因**：用户问「`update` 两张表会不会锁表，高并发会不会卡住后面的请求」。
+实测下来跨表写本身不是瓶颈，但**这一问挖出了一个真的死锁风险**。
+
+### 实测：不是表锁，是行锁
+
+事务未提交时持有的锁：
+
+```
+tc_case | relation      | RowExclusiveLock | t
+tc_step | relation      | RowExclusiveLock | t
+        | transactionid | ExclusiveLock    | t
+```
+
+`RowExclusiveLock` **不和其他 `RowExclusiveLock` 冲突** —— 它挡的是
+`CREATE INDEX` / `ALTER TABLE` / `VACUUM FULL` 那一档。并发写同一张表在表级从不互斥。
+
+对照实验（会话 1 占着案例 A 的行锁不提交）：
+
+| 会话 2 改**另一条** B | **0.09 s** 秒过 |
+|---|---|
+| 会话 3 改**同一条** A | 被挡到 3s `statement_timeout`，`while updating tuple (0,6) in relation "tc_case"` |
+
+锁持有时间 = 事务时长：
+
+| | 平均 |
+|---|---|
+| 跨表 update（表头 CAS + 删步骤 + 插 3 步） | **0.103 ms** |
+| 单条 commit | **0.056 ms** |
+
+**真正卡死系统的从来不是"事务碰了两张表"，是事务里含等待外部的东西**
+（调模型、调 HTTP、等用户点确认）。本设计里没有 —— 用户确认发生在
+**两次 CLI 调用之间**，不占锁。
+
+### 真问题：加锁顺序
+
+死锁的成因不是锁得久，是**加锁顺序不一致**。原来的 M5 清理任务草案是
+「先删 `tc_step` 再删 `tc_case`」，而当时的 `update` 是「先 `tc_case` 后 `tc_step`」——
+两者撞在同一条边界草稿上就能 `40P01 deadlock detected`。
+
+**决策**：所有跨表路径统一 **`tc_step → tc_case`**。
+`draft` 的两条 INSERT 都是新行、无争用，顺序无所谓。
+
+清理任务据此改成：
+
+```sql
+SELECT s.case_id FROM tc_step s
+  JOIN tc_case c ON c.case_id = s.case_id
+ WHERE s.status = 4 AND c.created_at < ?
+ ORDER BY c.created_at LIMIT 1000
+ FOR UPDATE OF s SKIP LOCKED;
+```
+
+`SKIP LOCKED` 白送一个好处：**正在被 agent 编辑的草稿直接跳过**，下个月再清。
+
+> **教训**：性能担忧未必成立，但**顺着它查下去经常能挖到别的东西**。
+> 这次挖到的不是吞吐问题，是一个还没写出来就已经注定要踩的死锁。

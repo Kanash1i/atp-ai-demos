@@ -1,6 +1,5 @@
 package dev.kanashi.atp.cli.store;
 
-import dev.kanashi.atp.cli.model.CaseDraft;
 import dev.kanashi.atp.cli.model.CaseStatus;
 import dev.kanashi.atp.cli.model.ExitCode;
 import dev.kanashi.atp.cli.model.StoreResult;
@@ -21,8 +20,7 @@ class CommitGuardTest extends PgTestBase {
         store.draft(caseId, PC_WEB, "只有标题", "agent-a");
 
         // 只写了标题，case_code / module_id / priority / author 全空
-        CaseDraft partial = new CaseDraft(
-                null, "只有标题", null, null, null, null, "{}");   // priority 也是 null
+        String partial = "{\"title\":\"只有标题\",\"steps\":[{\"seq\":1,\"action\":\"CLICK\"}]}";
         StoreResult updated = store.update(caseId, 0, partial);
         assertThat(updated.code())
                 .as("编写期允许残缺，update 本身不该失败")
@@ -52,9 +50,10 @@ class CommitGuardTest extends PgTestBase {
         store.update(caseId, 0, completeDraft("登录成功"));
         store.commit(caseId, 1);        // → DRAFT, version=2
 
-        // 模拟平台侧后续编辑，把 version 推到 3
+        // 模拟提交之后又有人动了这份快照，把 tc_step 的 version 推到 3。
+        // ⚠️ CAS 现在在 tc_step 上 —— 编辑期的乐观锁住在那张表。
         try (var c = connections.open(); var st = c.createStatement()) {
-            st.executeUpdate("UPDATE tc_case SET version = version + 1 WHERE case_id = '" + caseId + "'");
+            st.executeUpdate("UPDATE tc_step SET version = version + 1 WHERE case_id = '" + caseId + "'");
         }
 
         StoreResult retry = store.commit(caseId, 1);

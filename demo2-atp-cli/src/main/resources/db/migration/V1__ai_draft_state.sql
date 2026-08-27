@@ -21,7 +21,19 @@ BEGIN;
 ALTER TABLE tc_case ALTER COLUMN case_id TYPE VARCHAR(36);
 ALTER TABLE tc_step
   ALTER COLUMN case_id TYPE VARCHAR(36),
-  ALTER COLUMN step_id TYPE VARCHAR(36);
+  ALTER COLUMN step_id TYPE VARCHAR(36),
+
+  -- ⭐ 编辑期的状态机与乐观锁放在【这里】，不放 tc_case。
+  --    编辑期的高频写因此全部落在 tc_step 一张表、一行上 —— 单表单行 CAS。
+  --    tc_case 只在 commit 那一刻被写一次。
+  --    两张表各有自己的 version：tc_step 管编辑期，tc_case 管落地后平台侧的修改，
+  --    两个生命周期互不干扰。
+  ADD COLUMN status  SMALLINT NOT NULL DEFAULT 1,
+  ADD COLUMN version INT      NOT NULL DEFAULT 0,
+  ADD COLUMN updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT now();
+
+COMMENT ON COLUMN tc_step.status  IS '编辑期状态 4=AI_DRAFT（编写中）1=DRAFT（已提交）';
+COMMENT ON COLUMN tc_step.version IS '编辑期乐观锁 —— preview 给用户看的、commit 要带回来的就是它';
 
 -- ── 放宽必填 + 乐观锁 + 编写期内容 ────────────────────────────
 ALTER TABLE tc_case
@@ -40,8 +52,9 @@ ALTER TABLE tc_case
   -- 用户 preview 拿到 version=N，commit 带 N，中间任何人改一下 version 就跳，commit 必失败。
   ADD COLUMN version INT NOT NULL DEFAULT 0,
 
-  -- 编写期的原始内容（含 steps）。落地时投影到正式列 + tc_step。
-  ADD COLUMN draft_json JSONB NULL,
+  -- ⚠️ 这里【不加】draft_json 之类的整包 JSON 列。
+  --    步骤的正位是 tc_step.step_json —— 父表再存一份 blob 就是同一份数据存两遍，
+  --    必然要同步，迟早不一致。tc_case 只留基本信息。
   ADD COLUMN created_by VARCHAR(64) NULL,
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整。

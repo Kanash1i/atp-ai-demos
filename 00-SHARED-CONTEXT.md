@@ -51,19 +51,23 @@ tc_case  (测试案例主表)
 ├── created_at     DATETIME
 └── updated_at     DATETIME
 
-tc_step  (案例步骤表)
-├── step_id        VARCHAR(32)   PK
-├── case_id        VARCHAR(32)   FK -> tc_case
-├── seq            INT           NOT NULL, 从 1 开始连续无跳号
-├── action         ENUM          见下方 Action 枚举, NOT NULL
-├── locator_type   ENUM          XPATH|CSS|ID|NAME|LINK_TEXT, NULLABLE
-├── locator_value  VARCHAR(512)  NULLABLE
-├── input_data     VARCHAR(1024) NULLABLE
-├── expected       VARCHAR(1024) NULLABLE
-├── wait_strategy  ENUM          NONE|PRESENCE|VISIBLE|CLICKABLE, NOT NULL
-├── wait_timeout_sec INT         默认 10, 范围 1..120
-├── on_failure     ENUM          ABORT|CONTINUE|RETRY, 默认 ABORT
-└── description    VARCHAR(500)  NULLABLE
+tc_step  (案例步骤表 —— ⚠️ 与 tc_case 一比一，不是一步一行)
+├── step_id        VARCHAR(36)   PK
+├── case_id        VARCHAR(36)   UNIQUE, 逻辑外键 -> tc_case（不建 FK 约束）
+├── step_json      JSONB         NOT NULL, 全量步骤数组
+├── status         SMALLINT      编辑期状态 4=AI_DRAFT 1=DRAFT
+└── version        INT           编辑期乐观锁
+
+   为什么一比一：老平台的执行器读整份步骤跑，不会按 seq 逐条查库。
+   顺序是数组元素里的 seq key，不抽成列。
+   step_json 元素的字段见下（原一步一行时的列，现为 JSON 的 key）：
+     seq / action / locator_type / locator_value / input_data / expected
+     / wait_strategy / wait_timeout_sec / on_failure / description
+
+   ⭐ 编辑期的状态机与乐观锁在【这张表】，不在 tc_case ——
+      于是"反复改草稿"这条最高频的路径是单表单行 CAS，不跨表。
+      tc_case 只在 commit 那一刻被写一次（表头投影 + 翻状态）。
+      详见 05-CLI-并发幂等答辩稿.md §3.5。
 
 tc_module  (模块字典表, 只读)
 ├── module_id      VARCHAR(32)   PK

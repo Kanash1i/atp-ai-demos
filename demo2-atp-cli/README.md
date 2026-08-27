@@ -37,6 +37,12 @@ export ATP_DB_URL=jdbc:postgresql://127.0.0.1:5432/atp ATP_DB_USER=atp ATP_DB_PA
 
 状态机：`AI_DRAFT --commit--> DRAFT`（落地成老平台原生的草稿状态，执行器无感知）
 
+数据落点：
+- **编辑期只写 `tc_step` 一行**（`step_json` = 完整草稿，状态机与乐观锁也在这）
+- **`tc_case` 只在 commit 那一刻被写一次**（表头投影 + 翻状态）
+
+最高频的路径（反复改草稿）因此是单表单行 CAS，不跨表。见 `DECISIONS.md` **D-118**。
+
 ## 跑测试
 
 ```bash
@@ -44,7 +50,7 @@ export DOCKER_HOST=unix:///var/run/docker.sock     # ~/.docker 的 currentContex
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn test
 ```
 
-69 个用例（18 状态机 + 5 CLI 端到端 + 1 架构不变式 + 45 Action 契约表），起真 **PostgreSQL 17**（Testcontainers），
+74 个用例（17 状态机 + 6 编辑期隔离与投影 + 5 CLI 端到端 + 1 架构不变式 + 45 Action 契约表），起真 **PostgreSQL 17**（Testcontainers），
 **先建老表再跑改造脚本** —— V1 能不能在老平台的形状上执行得下去，本身就被测到了。
 
 | 测试类 | 锁定的不变式 |
@@ -57,6 +63,7 @@ JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn test
 | `ActionContractTableTest` | Action 枚举与 locator/input/expected 的契约表（`00-SHARED-CONTEXT` §1.3）|
 | `CliEndToEndTest` | 七步全流程；退出码 10/11/12/14 的契约；幂等重放退出码为 0 |
 | `SqlContainmentTest` | ⭐ 架构不变式：SQL 只出现在 `store` 包（机械检查，不靠约定）|
+| `StepStorageTest` | ⭐ `update` 只写 `tc_step`；commit 投影表头；CHECK 拦下时两张表一起回滚 |
 
 ### 变异检验（这些测试有牙齿）
 

@@ -1,8 +1,6 @@
 package dev.kanashi.atp.cli.store;
 
-import dev.kanashi.atp.cli.model.CaseDraft;
 import dev.kanashi.atp.cli.model.CaseType;
-import dev.kanashi.atp.cli.model.Priority;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -73,11 +71,22 @@ abstract class PgTestBase {
     /** 执行平台，老平台原有概念。 */
     static final CaseType PC_WEB = CaseType.PC_WEB;
 
-    /** 一份能通过 ck_case_complete 的完整草稿。module_id 必须是 tc_module 里真实存在的值。 */
-    static CaseDraft completeDraft(String title) {
-        return new CaseDraft(
-                "ATP-CART-0001", title, "M003", Priority.P1, "qa.kanashi",
-                "已登录且购物车非空",
-                "{\"title\":\"" + title + "\",\"steps\":[]}");
+    /** 一份能通过 ck_case_complete 的完整草稿（原始 JSON —— 整份写进 tc_step.step_json）。 */
+    static String completeDraft(String title) {
+        return completeDraft(title, 2);
     }
+
+    static String completeDraft(String title, int stepCount) {
+        StringBuilder steps = new StringBuilder("[");
+        for (int i = 1; i <= stepCount; i++) {
+            steps.append(i > 1 ? "," : "")
+                 .append("{\"seq\":%d,\"action\":\"CLICK\",\"wait_strategy\":\"VISIBLE\"}".formatted(i));
+        }
+        steps.append("]");
+        return """
+                {"case_code":"ATP-CART-0001","title":"%s","module_id":"M003","priority":"P1",
+                 "author":"qa.kanashi","precondition":"已登录且购物车非空","steps":%s}
+                """.formatted(title, steps);
+    }
+
 }

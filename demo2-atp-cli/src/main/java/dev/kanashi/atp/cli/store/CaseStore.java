@@ -1,12 +1,12 @@
 package dev.kanashi.atp.cli.store;
 
-import dev.kanashi.atp.cli.model.CaseDraft;
+import dev.kanashi.atp.cli.model.CaseHeader;
 import dev.kanashi.atp.cli.model.CaseRow;
 import dev.kanashi.atp.cli.model.CaseStatus;
 import dev.kanashi.atp.cli.model.CaseType;
-import dev.kanashi.atp.cli.model.Priority;
 import dev.kanashi.atp.cli.model.ExitCode;
 import dev.kanashi.atp.cli.model.StoreResult;
+import dev.kanashi.atp.cli.rule.DraftHeader;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -15,32 +15,38 @@ import java.sql.SQLException;
 import java.util.Optional;
 
 /**
- * ⭐ 全项目<b>唯一</b>持有 SQL 的类。并发正确性全部落在这一个文件里，
- * 面试时翻这一个文件就能把设计讲完。
+ * ⭐ 全项目<b>唯一</b>持有 SQL 的包（{@code SqlContainmentTest} 机械守住这条）。
  *
- * <p>三条不变式：
+ * <p><b>数据落点</b>：
+ * <pre>
+ * tc_case   表头 + 平台侧状态。编辑期只有骨架，commit 那一刻才被填齐
+ * tc_step   一比一。step_json 是完整草稿，编辑期的状态机与乐观锁也在这
+ * </pre>
+ *
+ * <p><b>因此三条路径的形状完全不同</b>：
+ * <ul>
+ *   <li>{@code draft}  —— 两条 INSERT（都是新行，无争用）</li>
+ *   <li>{@code update} —— <b>单表单行 CAS</b>，只写 tc_step。编辑期的高频写全在这</li>
+ *   <li>{@code commit} —— 跨表事务，但一份草稿只发生一次</li>
+ * </ul>
+ *
+ * <p>五条不变式：
  * <ol>
- *   <li><b>主键唯一约束就是幂等约束</b> —— UUID 由 CLI 本地生成，重试复用同一个，
- *       撞唯一键说明上次其实成功了，读回来当成功返回。</li>
- *   <li><b>检查和写入必须在同一条 UPDATE 里</b> —— 状态和版本都写进 WHERE。
- *       拆成"先 SELECT 判断再 UPDATE"会有 TOCTOU 窗口：检查通过之后、写入之前，
- *       内容可能已经被改掉了。</li>
- *   <li><b>{@code affectedRows == 0} 不能直接抛错</b> —— 必须读回来分情况，
- *       否则幂等重放永远过不去，agent 会无限重试。</li>
+ *   <li><b>主键唯一约束就是幂等约束</b> —— UUID 由 CLI 本地生成，重试复用同一个。</li>
+ *   <li><b>检查和写入必须在同一条 UPDATE 里</b> —— 状态和版本都写进 WHERE，杜绝 TOCTOU。</li>
+ *   <li><b>{@code affectedRows == 0} 不能直接抛错</b> —— 读回来分情况，否则重放永远过不去。</li>
+ *   <li><b>加锁顺序统一为 tc_step → tc_case</b> —— 跨表的路径只有 commit 和清理任务，
+ *       两边同序才不会死锁。</li>
+ *   <li><b>事务里不含任何等外部的东西</b> —— 不调模型、不等用户。
+ *       用户确认发生在两次 CLI 调用<b>之间</b>，不占锁。</li>
  * </ol>
  *
- * <p>数据库是 PostgreSQL。错误判定一律走 <b>SQLSTATE</b> 而不是厂商 errorCode ——
- * SQLSTATE 是 SQL 标准的一部分，这样这段逻辑换库也不用改。
+ * <p>数据库是 PostgreSQL。错误判定走 <b>SQLSTATE</b> 而不是厂商 errorCode。
  */
 public final class CaseStore {
 
-    /** SQL 标准：唯一约束冲突。 */
     private static final String SQLSTATE_UNIQUE_VIOLATION = "23505";
-    /** SQL 标准：CHECK 约束冲突。 */
     private static final String SQLSTATE_CHECK_VIOLATION = "23514";
-
-    private static final String SELECT_COLS =
-            "case_id, case_type, status, version, title, draft_json";
 
     private final ConnectionFactory connections;
 
@@ -51,27 +57,41 @@ public final class CaseStore {
     // ------------------------------------------------------------------ draft
 
     /**
-     * 建草稿行。{@code caseId} 由<b>调用方</b>生成并在重试时复用 —— 这是幂等的全部来源。
+     * 建草稿：{@code tc_case} 一行骨架 + {@code tc_step} 一行初始内容。
      *
-     * <p>如果 UUID 改由数据库生成，那么"INSERT 成功但响应丢失 → 重试"会产生
-     * 两条各自合法的草稿，而版本号救不了它们（是两行不同的记录）。
-     * 把生成动作挪到客户端，这个洞就免费消失了。
+     * <p>{@code caseId} 由<b>调用方</b>生成并在重试时复用 —— 这是幂等的全部来源。
+     * 若改由数据库生成，"INSERT 成功但响应丢失 → 重试"会产生两条各自合法的草稿，
+     * 而版本号救不了它们（是两行不同的记录）。
      */
     public StoreResult draft(String caseId, CaseType caseType, String title, String createdBy) {
         try (Connection conn = connections.open()) {
-            try (PreparedStatement ps = conn.prepareStatement("""
-                    INSERT INTO tc_case (case_id, case_type, status, version,
-                                         title, created_by, created_at, updated_at)
-                    VALUES (?, ?, ?, 0, ?, ?, now(), now())
-                    """)) {
-                ps.setString(1, caseId);
-                ps.setInt(2, caseType.code());
-                ps.setInt(3, CaseStatus.AI_DRAFT.code());
-                ps.setString(4, title);
-                ps.setString(5, createdBy);
-                ps.executeUpdate();
+            conn.setAutoCommit(false);
+            try {
+                try (PreparedStatement ps = conn.prepareStatement("""
+                        INSERT INTO tc_case (case_id, case_type, status, version,
+                                             created_by, created_at, updated_at)
+                        VALUES (?, ?, ?, 0, ?, now(), now())
+                        """)) {
+                    ps.setString(1, caseId);
+                    ps.setInt(2, caseType.code());
+                    ps.setInt(3, CaseStatus.AI_DRAFT.code());
+                    ps.setString(4, createdBy);
+                    ps.executeUpdate();
+                }
+                try (PreparedStatement ps = conn.prepareStatement("""
+                        INSERT INTO tc_step (step_id, case_id, step_json, status, version, updated_at)
+                        VALUES (?, ?, ?::jsonb, ?, 0, now())
+                        """)) {
+                    ps.setString(1, java.util.UUID.randomUUID().toString());
+                    ps.setString(2, caseId);
+                    ps.setString(3, DraftHeader.initial(title));
+                    ps.setInt(4, CaseStatus.AI_DRAFT.code());
+                    ps.executeUpdate();
+                }
+                conn.commit();
 
             } catch (SQLException e) {
+                conn.rollback();
                 if (!isUniqueViolation(e)) {
                     throw e;
                 }
@@ -83,8 +103,6 @@ public final class CaseStore {
                             "唯一约束冲突但读不回该行，请检查隔离级别与连接是否同库");
                 }
                 if (!existing.isAiDraft()) {
-                    // 不是我们的编写态行 —— 要么撞上了一条既有案例，
-                    // 要么这个草稿已经提交过了，两种都不该当成重放。
                     return StoreResult.fail(ExitCode.STATE_CONFLICT,
                             "case_id 已被占用且不处于编写态（当前 status=%s）：%s"
                                     .formatted(existing.status(), caseId));
@@ -103,27 +121,27 @@ public final class CaseStore {
 
     // ----------------------------------------------------------------- update
 
-    /** 写内容。CAS：状态必须仍是 AI_DRAFT，且版本号必须与调用方手上的一致。 */
-    public StoreResult update(String caseId, int expectedVersion, CaseDraft draft) {
+    /**
+     * 写内容 —— ⭐ <b>只碰 {@code tc_step} 一张表、一行</b>。
+     *
+     * <p>表头字段这时还只活在 {@code step_json} 里，等到 commit 才投影进 tc_case 的正式列。
+     * 所以编辑期不管改多少次，都不会去动那张最终要落地的表，
+     * <b>跨表事务与随之而来的加锁顺序问题在这条最高频的路径上根本不存在</b>。
+     *
+     * <p>CAS：状态必须仍是 {@code AI_DRAFT}，且版本号必须与调用方手上的一致。
+     */
+    public StoreResult update(String caseId, int expectedVersion, String draftJson) {
         try (Connection conn = connections.open()) {
             int affected;
             try (PreparedStatement ps = conn.prepareStatement("""
-                    UPDATE tc_case
-                       SET draft_json = ?::jsonb, case_code = ?, title = ?, module_id = ?,
-                           priority = ?, author = ?, precondition = ?,
-                           version = version + 1, updated_at = now()
+                    UPDATE tc_step
+                       SET step_json = ?::jsonb, version = version + 1, updated_at = now()
                      WHERE case_id = ? AND status = ? AND version = ?
                     """)) {
-                ps.setString(1, draft.rawJson());
-                ps.setString(2, draft.caseCode());
-                ps.setString(3, draft.title());
-                ps.setString(4, draft.moduleId());
-                setNullableInt(ps, 5, draft.priority() == null ? null : draft.priority().code());
-                ps.setString(6, draft.author());
-                ps.setString(7, draft.precondition());
-                ps.setString(8, caseId);
-                ps.setInt(9, CaseStatus.AI_DRAFT.code());
-                ps.setInt(10, expectedVersion);
+                ps.setString(1, draftJson);
+                ps.setString(2, caseId);
+                ps.setInt(3, CaseStatus.AI_DRAFT.code());
+                ps.setInt(4, expectedVersion);
                 affected = ps.executeUpdate();
             }
 
@@ -142,48 +160,88 @@ public final class CaseStore {
     // ----------------------------------------------------------------- commit
 
     /**
-     * 提交：{@code AI_DRAFT → DRAFT}。
+     * 提交：{@code AI_DRAFT → DRAFT}，并把表头从冻结快照投影到 {@code tc_case} 的正式列。
      *
-     * <p><b>不携带任何内容</b>，只有 id 和 version —— 它是一次纯状态迁移。
-     * 用户 preview 的和最终落库的，物理上就是同一行，
-     * 从结构上消灭了内容漂移，而不是靠提示词约束 agent 别乱改。
+     * <p>⭐ 只收 caseId 和 version，<b>不接受任何外部内容</b> ——
+     * 投影的输入是库里那一行，也就是用户已经确认过的那份快照。
      *
-     * <p>落地为普通的 {@code DRAFT}，执行器和既有列表页完全无感知。
+     * <p>⭐ 加锁顺序固定 <b>tc_step → tc_case</b>。清理任务（M5）必须同序，
+     * 否则两者撞在同一条边界草稿上会死锁。
+     *
+     * <p>{@code ck_case_complete} 正好在这一刻校验必填 —— 编辑期允许残缺，
+     * 一离开 AI_DRAFT 就必须完整，数据库直接守门。
      */
     public StoreResult commit(String caseId, int expectedVersion) {
         try (Connection conn = connections.open()) {
-            int affected;
-            try (PreparedStatement ps = conn.prepareStatement("""
-                    UPDATE tc_case
-                       SET status = ?, version = version + 1, updated_at = now()
-                     WHERE case_id = ? AND status = ? AND version = ?
-                    """)) {
-                ps.setInt(1, CaseStatus.DRAFT.code());
-                ps.setString(2, caseId);
-                ps.setInt(3, CaseStatus.AI_DRAFT.code());
-                ps.setInt(4, expectedVersion);
-                affected = ps.executeUpdate();
+            conn.setAutoCommit(false);
+            try {
+                int affected;
+                try (PreparedStatement ps = conn.prepareStatement("""
+                        UPDATE tc_step
+                           SET status = ?, version = version + 1, updated_at = now()
+                         WHERE case_id = ? AND status = ? AND version = ?
+                        """)) {
+                    ps.setInt(1, CaseStatus.DRAFT.code());
+                    ps.setString(2, caseId);
+                    ps.setInt(3, CaseStatus.AI_DRAFT.code());
+                    ps.setInt(4, expectedVersion);
+                    affected = ps.executeUpdate();
+                }
+
+                if (affected != 1) {
+                    conn.rollback();
+                    return diagnoseMiss(conn, caseId, expectedVersion, "提交");
+                }
+
+                CaseRow row = findById(conn, caseId).orElse(null);
+                if (row == null) {
+                    conn.rollback();
+                    return StoreResult.fail(ExitCode.INFRA_ERROR, "提交成功但读不回");
+                }
+                projectHeader(conn, caseId, DraftHeader.parse(row.draftJson()));
+                conn.commit();
+
+                return findById(conn, caseId)
+                        .map(StoreResult::ok)
+                        .orElseGet(() -> StoreResult.fail(ExitCode.INFRA_ERROR, "提交成功但读不回"));
 
             } catch (SQLException e) {
+                conn.rollback();
                 if (isCheckViolation(e)) {
-                    // ck_case_complete：约束随状态而变 —— 残缺的案例迁不出 AI_DRAFT。
-                    // 数据库直接守门，应用层不必再写一遍"提交前检查必填"。
                     return StoreResult.fail(ExitCode.VALIDATION_FAILED,
                             "案例必填字段不完整（case_code / title / module_id / priority / author），"
                                     + "被约束 ck_case_complete 拦下");
                 }
                 throw e;
+            } catch (RuntimeException e) {
+                conn.rollback();
+                return StoreResult.fail(ExitCode.VALIDATION_FAILED,
+                        "表头投影失败，提交已回滚：" + e.getMessage());
             }
-
-            if (affected == 1) {
-                return findById(conn, caseId)
-                        .map(StoreResult::ok)
-                        .orElseGet(() -> StoreResult.fail(ExitCode.INFRA_ERROR, "提交成功但读不回"));
-            }
-            return diagnoseMiss(conn, caseId, expectedVersion, "提交");
 
         } catch (SQLException e) {
             return infra(e);
+        }
+    }
+
+    /** 把冻结快照里的表头写进 tc_case 的正式列，同时翻状态。 */
+    private void projectHeader(Connection conn, String caseId, CaseHeader h) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                UPDATE tc_case
+                   SET case_code = ?, title = ?, module_id = ?, priority = ?,
+                       author = ?, precondition = ?,
+                       status = ?, version = version + 1, updated_at = now()
+                 WHERE case_id = ?
+                """)) {
+            ps.setString(1, h.caseCode());
+            ps.setString(2, h.title());
+            ps.setString(3, h.moduleId());
+            setNullableInt(ps, 4, h.priority() == null ? null : h.priority().code());
+            ps.setString(5, h.author());
+            ps.setString(6, h.precondition());
+            ps.setInt(7, CaseStatus.DRAFT.code());
+            ps.setString(8, caseId);
+            ps.executeUpdate();
         }
     }
 
@@ -214,9 +272,7 @@ public final class CaseStore {
             return StoreResult.fail(ExitCode.NOT_FOUND,
                     "案例不存在，或草稿已被每月清理任务回收：" + caseId);
         }
-
         if (!row.isAiDraft()) {
-            // 已经离开编写态。区分"干净的重放"和"提交后又被改过"。
             if (row.version() == expectedVersion + 1) {
                 return StoreResult.replayed(row);   // ← 退出码 0
             }
@@ -224,7 +280,6 @@ public final class CaseStore {
                     "案例已提交（当前状态 %s，version=%d），此后又被修改过，本次%s不予执行"
                             .formatted(row.status(), row.version(), op));
         }
-
         return StoreResult.fail(ExitCode.VERSION_CONFLICT,
                 "版本不一致：库中 version=%d，你手上是 %d。内容在你确认之后被改过，请重新 show/preview 再确认"
                         .formatted(row.version(), expectedVersion));
@@ -233,8 +288,15 @@ public final class CaseStore {
     // -------------------------------------------------------------- 内部工具
 
     private Optional<CaseRow> findById(Connection conn, String caseId) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT " + SELECT_COLS + " FROM tc_case WHERE case_id = ?")) {
+        try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT c.case_id, c.case_type,
+                       c.status  AS case_status,  c.version AS case_version,
+                       s.status  AS draft_status, s.version AS draft_version,
+                       s.step_json
+                  FROM tc_case c
+                  LEFT JOIN tc_step s ON s.case_id = c.case_id
+                 WHERE c.case_id = ?
+                """)) {
             ps.setString(1, caseId);
             try (ResultSet rs = ps.executeQuery()) {
                 if (!rs.next()) {
@@ -243,10 +305,11 @@ public final class CaseStore {
                 return Optional.of(new CaseRow(
                         rs.getString("case_id"),
                         CaseType.fromCode(rs.getInt("case_type")),
-                        CaseStatus.fromCode(rs.getInt("status")),
-                        rs.getInt("version"),
-                        rs.getString("title"),
-                        rs.getString("draft_json")));
+                        CaseStatus.fromCode(rs.getInt("draft_status")),
+                        rs.getInt("draft_version"),
+                        CaseStatus.fromCode(rs.getInt("case_status")),
+                        rs.getInt("case_version"),
+                        rs.getString("step_json")));
             }
         }
     }
@@ -264,8 +327,7 @@ public final class CaseStore {
     }
 
     private static boolean isCheckViolation(SQLException e) {
-        return hasSqlState(e, SQLSTATE_CHECK_VIOLATION)
-                || messageContains(e, "ck_case_complete");
+        return hasSqlState(e, SQLSTATE_CHECK_VIOLATION) || messageContains(e, "ck_case_complete");
     }
 
     private static boolean hasSqlState(SQLException e, String sqlState) {

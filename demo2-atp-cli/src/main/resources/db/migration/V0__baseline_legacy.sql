@@ -61,23 +61,22 @@ COMMENT ON COLUMN tc_case.case_type IS '执行平台 1=IOS 2=ANDROID 3=PC_WEB（
 COMMENT ON COLUMN tc_case.priority  IS '优先级 0=P0 1=P1 2=P2 3=P3';
 COMMENT ON COLUMN tc_case.status    IS '状态 1=DRAFT 2=ACTIVE 3=DEPRECATED';
 
--- ── 步骤子表 ──────────────────────────────────────────────
+-- ── 步骤表：与 tc_case 一比一 ──────────────────────────────
+-- ⚠️ 一个案例一行，step_json 是【全量步骤数组】，不是一步一行。
+--    因为老平台的执行器就是读整份步骤跑，不会按 seq 逐条查库。
+--    顺序是数组元素里的 seq key，不抽成列 —— 抽出来只有"一步一行"时才有意义。
 CREATE TABLE tc_step (
   step_id   VARCHAR(32) NOT NULL,
   case_id   VARCHAR(32) NOT NULL,
-  seq       INT         NOT NULL,
   step_json JSONB       NOT NULL,
-  CONSTRAINT pk_step           PRIMARY KEY (step_id),
-  -- 同一案例内 seq 不重复。这条是【唯一键】不是外键 —— 它约束的是本表内部，
-  -- 与"不建外键"不冲突，该由数据库保证的仍然由数据库保证。
-  -- 顺带：case_id 是这个联合唯一索引的最左列，删步骤时能走到它，不必再单建索引。
-  CONSTRAINT uk_step_case_seq  UNIQUE (case_id, seq)
+  CONSTRAINT pk_step         PRIMARY KEY (step_id),
+  -- 一比一由这个唯一键保证。它约束的是本表内部，与"不建外键"（D-109）不冲突。
+  CONSTRAINT uk_step_case_id UNIQUE (case_id)
 );
 
 COMMENT ON COLUMN tc_step.step_id   IS '子表主键';
-COMMENT ON COLUMN tc_step.case_id   IS '父表主键（逻辑外键，无约束）';
-COMMENT ON COLUMN tc_step.seq       IS '1..n 连续无跳号';
-COMMENT ON COLUMN tc_step.step_json IS '步骤内容';
+COMMENT ON COLUMN tc_step.case_id   IS '父表主键（逻辑外键，无约束）；一比一';
+COMMENT ON COLUMN tc_step.step_json IS '全量步骤数组，seq 是元素里的 key';
 
 -- ── 字典数据（00-SHARED-CONTEXT.md §1.2 的模块表，补上项目归属）──
 INSERT INTO tc_project (project_id, project_code, project_name) VALUES

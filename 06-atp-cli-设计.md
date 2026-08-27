@@ -30,8 +30,8 @@
 | `atp validate -f <json>` | ✗ | ✓ | **纯本地规则校验，零网络零模型** |
 | `atp lint-locator <glob...>` | ✗ | ✓ | XPath/CSS 静态检查，**支持批量**（CLI 相对 MCP 的收益就在这条） |
 | `atp draft --id <uuid> --title <s>` | ✓ 写 | ✅ | INSERT 草稿行，返回 `{caseId,status,version}` |
-| `atp show <id>` | ✓ 读 | ✓ | 输出当前 `draft_json` + `version` |
-| `atp update <id> --version N -f <json>` | ✓ 写 | CAS | 写内容，`version+1` |
+| `atp show <id>` | ✓ 读 | ✓ | 输出 `tc_step.step_json`（本身就是可编辑的草稿）+ `version` |
+| `atp update <id> --version N -f <json>` | ✓ 写 | CAS | ⭐ **只写 `tc_step` 一行**，单表单行 CAS，`version+1` |
 | `atp preview <id>` | ✓ 读 | ✓ | 人读渲染 + 高亮存疑字段 |
 | `atp commit <id> --version N` | ✓ 写 | ✅ | `AI_DRAFT → DRAFT`，**不携带内容** |
 
