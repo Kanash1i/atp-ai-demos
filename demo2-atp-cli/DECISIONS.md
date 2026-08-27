@@ -454,49 +454,64 @@ fat jar 5.0 MB。
 
 ---
 
-## D-118 · 删掉 `tc_case.draft_json`，步骤只住 `tc_step`
+## D-118 · 编辑期只写 `tc_step`，`tc_case` 只在 commit 被写一次
 
-**原方案**（已废）：`tc_case` 上加一列 `draft_json JSONB` 存整份草稿，
-`commit` 时再展开投影到 `tc_step`。
+这一处改了三版，每一版都是被上一版的实测问题推着走的。
 
-**问题**：**同一份数据存两遍。** `tc_step` 本来就是步骤的正位 ——
-老平台的人工案例一直存在那儿。父表再存一个 blob，两边就必须同步，
-而"必须同步的两份数据"迟早不一致。
-
-**决策**：`tc_case` 只留基本信息（表头字段），步骤在 `atp update` 时直接写进 `tc_step`。
-不管是老平台的人工案例还是 AI 写的案例，走同一条路。
-
-### 连带：原子性的压力从 `commit` 移到 `update`
-
-| | 写什么 | 事务要求 |
+| 版本 | 形状 | 为什么废掉 |
 |---|---|---|
-| `update` | 表头进 `tc_case`，步骤**整批替换** `tc_step` | ⭐ 跨两张表，**必须一个事务** |
-| `commit` | 只翻状态 | 单条 UPDATE，天然原子 |
+| ① | 草稿整包塞 `tc_case.draft_json`，commit 时展开到 `tc_step` | **同一份数据存两遍**，必然要同步 |
+| ② | 步骤一步一行写 `tc_step`，表头写 `tc_case` 正式列 | `update` 变跨表事务，而它是**最高频**的路径（草稿要反复改）|
+| ③ 现行 | 编辑期只写 `tc_step` 一行；`tc_case` 只在 commit 被写一次 | —— |
 
-**`commit` 反而回归纯粹** —— 它现在真的只收 `id` 和 `version`，
-不带内容也不搬运数据。这正是原设计想要的样子，之前的投影方案反而把它弄脏了。
+### 现行形状
 
-### 全删再全插，不做 diff
+```
+tc_case   表头 + 平台侧状态。编辑期只有骨架，commit 那一刻才被填齐
+tc_step   一比一。step_json 是完整草稿，编辑期的状态机与乐观锁也在这
+```
 
-草稿的步骤量级是个位数，diff 的复杂度换不来收益。全量替换的语义简单得多：
-**库里的步骤永远等于最后一次 `update` 传进来的那一份**，没有中间态可推理。
+| 路径 | 写什么 | 形状 |
+|---|---|---|
+| `draft` | 两条 INSERT | 都是新行，无争用 |
+| `update` | **只写 `tc_step`** | ⭐ 单表单行 CAS |
+| `commit` | CAS `tc_step` → 投影表头到 `tc_case` | 跨表事务，一份草稿只一次 |
 
-### 「确认的和提交的是同一份」还成立吗
+**最高频的路径不跨表** —— 跨表事务与加锁顺序问题在"反复改草稿"这条路上根本不存在。
 
-成立。`update` 是**唯一**写 `tc_step` 的路径，而它每次都 CAS 掉 `tc_case.version` ——
-version 依然罩得住「表头 + 步骤」这个整体。谁动了步骤，version 就跳，commit 就失败。
+### 两个 version 两个生命周期
 
-前提和 D-109（不建外键）、D-112（枚举存 int）是同一条：**所有写入都走 CLI 或平台代码。**
+- `tc_step.version` —— **编辑期**乐观锁。preview 给用户看的、commit 要带回来的就是它
+- `tc_case.version` —— 案例落地后**平台侧**修改用的。编辑期一动不动
 
-### 测试钉死的四条（`StepStorageTest`）
+实测（`atp update` 之后）：`tc_case status=4 version=0 case_code=(NULL)` / `tc_step status=4 version=1 3 步`。
 
-- `update` 写进 `tc_step`，seq 不变
-- 再次 `update` 是全量替换，旧步骤不残留
-- **CAS 失败时步骤一步都不能动**（拿过期 version 写入，旧步骤原封不动）
-- ⭐ **步骤写入失败必须连表头一起回滚**（seq 重复撞 `uk_step_case_seq` → 标题与 version 都不变）
+### 步骤为什么一行一案例
 
-另外 `seq` 重复被映射成 `VALIDATION_FAILED(12)` 而不是 `INFRA_ERROR(20)` ——
-那是内容问题，agent 自己能改，别让它去傻等重试。
+**老平台的执行器读整份步骤跑**，不会按 `seq` 逐条查库。既然没有按步查询的需求，
+一步一行只是在制造 N 倍的行、N 倍的删插、和一个本可不存在的 `seq` 列 ——
+顺序本来就是数组顺序。
+
+**代价**：`UNIQUE(case_id, seq)` 没了，"seq 不重复、连续无跳号"交给 `atp validate`。
+跟 D-109（撤外键）、D-112（枚举存 int）是同一类取舍。
+
+### 加锁顺序统一 `tc_step → tc_case`
+
+跨表路径只有 `commit` 和 M5 清理任务，两边同序才不会死锁（见 D-120）。
+
+### 白捡的快照
+
+commit 之后 `step_json` 留着提交那一刻的完整内容。这就是 ChangeSet 方案里的「冻结快照」，
+现在零成本拿到 —— **被追问"用户到底确认了什么"时，库里查得到。**
+
+### 测试钉死的（`StepStorageTest`）
+
+- `update` 只写 `tc_step`，`tc_case` 的 version 与表头一动不动
+- `tc_step` 一比一，反复 update 也只有一行
+- commit 把表头投影进 `tc_case` 的正式列
+- 提交后 `step_json` 仍在（快照）
+- ⭐ 表头残缺时 CHECK 拦下 commit，**`tc_step` 的状态翻转必须一起回滚**
+- 草稿 JSON 非法时提交回滚，不留半截状态
 
 ---
 
@@ -517,3 +532,64 @@ version 依然罩得住「表头 + 步骤」这个整体。谁动了步骤，ver
 2. **被问到"为什么 X 没发生"时，先去代码里 grep 一遍再回答。**
    我当时是凭对设计的印象答的，而印象和实现已经分叉了。
    凭印象回答比不回答更糟，因为它会让对方停止追问。
+
+---
+
+## D-120 · 加锁顺序统一为 `tc_step → tc_case`
+
+**起因**：用户问「`update` 两张表会不会锁表，高并发会不会卡住后面的请求」。
+实测下来跨表写本身不是瓶颈，但**这一问挖出了一个真的死锁风险**。
+
+### 实测：不是表锁，是行锁
+
+事务未提交时持有的锁：
+
+```
+tc_case | relation      | RowExclusiveLock | t
+tc_step | relation      | RowExclusiveLock | t
+        | transactionid | ExclusiveLock    | t
+```
+
+`RowExclusiveLock` **不和其他 `RowExclusiveLock` 冲突** —— 它挡的是
+`CREATE INDEX` / `ALTER TABLE` / `VACUUM FULL` 那一档。并发写同一张表在表级从不互斥。
+
+对照实验（会话 1 占着案例 A 的行锁不提交）：
+
+| 会话 2 改**另一条** B | **0.09 s** 秒过 |
+|---|---|
+| 会话 3 改**同一条** A | 被挡到 3s `statement_timeout`，`while updating tuple (0,6) in relation "tc_case"` |
+
+锁持有时间 = 事务时长：
+
+| | 平均 |
+|---|---|
+| 跨表 update（表头 CAS + 删步骤 + 插 3 步） | **0.103 ms** |
+| 单条 commit | **0.056 ms** |
+
+**真正卡死系统的从来不是"事务碰了两张表"，是事务里含等待外部的东西**
+（调模型、调 HTTP、等用户点确认）。本设计里没有 —— 用户确认发生在
+**两次 CLI 调用之间**，不占锁。
+
+### 真问题：加锁顺序
+
+死锁的成因不是锁得久，是**加锁顺序不一致**。原来的 M5 清理任务草案是
+「先删 `tc_step` 再删 `tc_case`」，而当时的 `update` 是「先 `tc_case` 后 `tc_step`」——
+两者撞在同一条边界草稿上就能 `40P01 deadlock detected`。
+
+**决策**：所有跨表路径统一 **`tc_step → tc_case`**。
+`draft` 的两条 INSERT 都是新行、无争用，顺序无所谓。
+
+清理任务据此改成：
+
+```sql
+SELECT s.case_id FROM tc_step s
+  JOIN tc_case c ON c.case_id = s.case_id
+ WHERE s.status = 4 AND c.created_at < ?
+ ORDER BY c.created_at LIMIT 1000
+ FOR UPDATE OF s SKIP LOCKED;
+```
+
+`SKIP LOCKED` 白送一个好处：**正在被 agent 编辑的草稿直接跳过**，下个月再清。
+
+> **教训**：性能担忧未必成立，但**顺着它查下去经常能挖到别的东西**。
+> 这次挖到的不是吞吐问题，是一个还没写出来就已经注定要踩的死锁。

@@ -3,11 +3,8 @@ package dev.kanashi.atp.cli.cmd;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import dev.kanashi.atp.cli.AtpCli;
-import dev.kanashi.atp.cli.model.CaseDraft;
 import dev.kanashi.atp.cli.model.ExitCode;
-import dev.kanashi.atp.cli.model.Priority;
 import dev.kanashi.atp.cli.rule.DraftValidator;
-import dev.kanashi.atp.cli.rule.StepProjector;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 import picocli.CommandLine.Parameters;
@@ -65,24 +62,11 @@ public final class UpdateCommand implements Callable<Integer> {
                         "字段值不合法，请按下列 violations 修正后重试", r.invalid());
             }
         }
-        try {
-            return parent.output().emit(
-                    parent.caseStore().update(caseId, expectedVersion, toDraft(draft)));
-        } catch (IllegalArgumentException e) {
-            // StepProjector 抛的（seq 非法等）—— 属于内容问题，agent 自己能改
-            return parent.output().fail(ExitCode.VALIDATION_FAILED, e.getMessage(), List.of());
-        }
+        // ⭐ 整份草稿原样写进 tc_step.step_json —— 单表单行 CAS，不碰 tc_case。
+        //    表头字段到 commit 那一刻才投影进 tc_case 的正式列。
+        return parent.output().emit(
+                parent.caseStore().update(caseId, expectedVersion, draft.toString()));
     }
 
-    private CaseDraft toDraft(JsonNode n) {
-        return new CaseDraft(
-                text(n, "case_code"), text(n, "title"), text(n, "module_id"),
-                n.hasNonNull("priority") ? Priority.valueOf(n.get("priority").asText()) : null,
-                text(n, "author"), text(n, "precondition"),
-                StepProjector.project(n));
-    }
 
-    private static String text(JsonNode n, String field) {
-        return n.hasNonNull(field) ? n.get(field).asText() : null;
-    }
 }

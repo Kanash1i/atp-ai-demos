@@ -1,5 +1,6 @@
 package dev.kanashi.atp.cli.out;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
@@ -19,7 +20,7 @@ import java.util.List;
  *   "data": {...}, "violations": [...], "questions": [...] }
  * </pre>
  *
- * <p>⚠️ 返回的退出码才是 agent 的主要分流依据（见 {@link ExitCode}）。
+ * <p>⚠️ 退出码才是 agent 的主要分流依据（见 {@link ExitCode}）。
  * 信封里的 {@code code} 是给人和日志看的冗余，两者必须一致。
  */
 public final class Output {
@@ -50,28 +51,24 @@ public final class Output {
         if (row != null) {
             data.put("caseId", row.caseId());
             data.put("caseType", row.caseType().name());
+            // status / version 来自 tc_step —— 编辑期状态机与乐观锁都在那里。
+            // commit 要带回来的就是这个 version。
             data.put("status", row.status().name());
             data.put("version", row.version());
-            data.put("title", row.title());
-            // ⭐ draft 是把库里那行原样还原成可编辑的草稿 JSON：
+            data.put("platformStatus", row.platformStatus().name());
+            // ⭐ draft 就是 tc_step.step_json 本身，不用拼装：
             //    atp show --json | jq .data.draft > draft.json  改完直接喂回 atp update。
-            //    少任何一个字段，这条来回就断了。
-            data.set("draft", draftOf(row));
-            data.put("steps", row.steps().size());
+            data.set("draft", parseOrText(row.draftJson()));
         }
         if (json) {
             return print(envelope(ExitCode.OK, replayed, data, null, null), ExitCode.OK);
         }
         if (row != null) {
             out.printf("%s  status=%s  version=%d%n", row.caseId(), row.status(), row.version());
-            if (row.title() != null) {
-                out.printf("  %s%n", row.title());
-            }
         }
         if (replayed) {
             out.println("  (幂等重放：该操作此前已成功，未产生新的变更)");
-        }
-        if (note != null && !replayed) {
+        } else if (note != null) {
             out.println("  " + note);
         }
         return ExitCode.OK.code();
@@ -80,8 +77,8 @@ public final class Output {
     /** 任意 JSON 载荷的成功输出（schema / modules 这类只读命令用）。 */
     public int okRaw(Object payload, String humanText) {
         if (json) {
-            ObjectNode env = envelope(ExitCode.OK, false, MAPPER.valueToTree(payload), null, null);
-            return print(env, ExitCode.OK);
+            return print(envelope(ExitCode.OK, false, MAPPER.valueToTree(payload), null, null),
+                    ExitCode.OK);
         }
         out.println(humanText);
         return ExitCode.OK.code();
@@ -118,28 +115,18 @@ public final class Output {
 
     // ---------------------------------------------------------------- 内部
 
-    /** 把 tc_case 表头 + tc_step 子行拼回一份符合 schema 的草稿。 */
-    private static ObjectNode draftOf(CaseRow row) {
-        ObjectNode draft = MAPPER.createObjectNode();
-        draft.put("case_code", row.caseCode());
-        draft.put("title", row.title());
-        draft.put("module_id", row.moduleId());
-        draft.put("priority", row.priority() == null ? null : row.priority().name());
-        draft.put("author", row.author());
-        draft.put("precondition", row.precondition());
-        ArrayNode steps = draft.putArray("steps");
-        for (var step : row.steps()) {
-            try {
-                steps.add(MAPPER.readTree(step.stepJson()));
-            } catch (Exception ignore) {
-                steps.add(step.stepJson());
-            }
+    private static JsonNode parseOrText(String raw) {
+        if (raw == null) {
+            return MAPPER.nullNode();
         }
-        return draft;
+        try {
+            return MAPPER.readTree(raw);
+        } catch (Exception ignore) {
+            return MAPPER.getNodeFactory().textNode(raw);
+        }
     }
 
-    private ObjectNode envelope(ExitCode code, boolean replayed,
-                                com.fasterxml.jackson.databind.JsonNode data,
+    private ObjectNode envelope(ExitCode code, boolean replayed, JsonNode data,
                                 List<String> violations, List<String> questions) {
         ObjectNode env = MAPPER.createObjectNode();
         env.put("ok", code == ExitCode.OK);

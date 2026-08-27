@@ -21,7 +21,19 @@ BEGIN;
 ALTER TABLE tc_case ALTER COLUMN case_id TYPE VARCHAR(36);
 ALTER TABLE tc_step
   ALTER COLUMN case_id TYPE VARCHAR(36),
-  ALTER COLUMN step_id TYPE VARCHAR(36);
+  ALTER COLUMN step_id TYPE VARCHAR(36),
+
+  -- ⭐ 编辑期的状态机与乐观锁放在【这里】，不放 tc_case。
+  --    编辑期的高频写因此全部落在 tc_step 一张表、一行上 —— 单表单行 CAS。
+  --    tc_case 只在 commit 那一刻被写一次。
+  --    两张表各有自己的 version：tc_step 管编辑期，tc_case 管落地后平台侧的修改，
+  --    两个生命周期互不干扰。
+  ADD COLUMN status  SMALLINT NOT NULL DEFAULT 1,
+  ADD COLUMN version INT      NOT NULL DEFAULT 0,
+  ADD COLUMN updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT now();
+
+COMMENT ON COLUMN tc_step.status  IS '编辑期状态 4=AI_DRAFT（编写中）1=DRAFT（已提交）';
+COMMENT ON COLUMN tc_step.version IS '编辑期乐观锁 —— preview 给用户看的、commit 要带回来的就是它';
 
 -- ── 放宽必填 + 乐观锁 + 编写期内容 ────────────────────────────
 ALTER TABLE tc_case

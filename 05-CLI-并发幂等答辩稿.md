@@ -13,6 +13,7 @@
 |---|---|
 | 核心动作 | 先在**老平台的案例表**里插一条 AI_DRAFT 行拿到 UUID，一切围绕这行做 |
 | 幂等键 | 就是那个 **UUID 主键**，由 CLI 本地生成 |
+| 编辑期写入 | **只碰 `tc_step` 一张表一行**；`tc_case` 只在 commit 被写一次 |
 | 并发仲裁点 | **PostgreSQL 的主键唯一约束 + 一条带 CAS 的 UPDATE** |
 | 防"确认后被偷改" | **version 乐观锁**（替代了 contentHash） |
 | 草稿清理 | **XXL-JOB 每月一次硬删除** |
@@ -115,7 +116,10 @@ BEGIN;
 ALTER TABLE tc_case ALTER COLUMN case_id TYPE VARCHAR(36);
 ALTER TABLE tc_step
   ALTER COLUMN case_id TYPE VARCHAR(36),
-  ALTER COLUMN step_id TYPE VARCHAR(36);
+  ALTER COLUMN step_id TYPE VARCHAR(36),
+  -- ⭐ 编辑期的状态机与乐观锁放在【这里】，不放 tc_case。见 §3.5
+  ADD COLUMN status  SMALLINT NOT NULL DEFAULT 1,
+  ADD COLUMN version INT      NOT NULL DEFAULT 0;
 
 ALTER TABLE tc_case
   -- 编写期填不出来，只能放宽 NOT NULL。
@@ -129,8 +133,7 @@ ALTER TABLE tc_case
   ALTER COLUMN title     DROP NOT NULL,
 
   ADD COLUMN version    INT NOT NULL DEFAULT 0,
-  -- ⚠️ 这里【不加】draft_json 之类的整包 JSON 列。步骤的正位是 tc_step.step_json，
-  --    父表再存一份 blob 就是同一份数据存两遍，必然要同步。见 §3.5
+  -- ⚠️ 这里【不加】任何整包 JSON 列。草稿的正位是 tc_step.step_json，见 §3.5
   ADD COLUMN created_by VARCHAR(64) NULL,
 
   -- ⭐ 约束随状态而变：编写期允许残缺，一旦离开 AI_DRAFT 就必须完整
@@ -230,36 +233,69 @@ ALTER TYPE tc_status ADD VALUE 'AI_DRAFT';
 
 ---
 
-### 3.5 ⭐ 步骤只住 `tc_step`，父表不存整包 JSON
+### 3.5 ⭐ 编辑期只写 `tc_step`，`tc_case` 只在 commit 被写一次
 
-一个自然的诱惑是在 `tc_case` 上加一列 `draft_json` 把整份草稿塞进去，
-落地时再展开到 `tc_step`。**我一开始就是这么做的，后来删掉了。**
+这是整套设计里**改动最多、也最值得讲**的一处。它经过两轮修正才落到现在的形状。
 
-**理由：那是同一份数据存两遍。** `tc_step` 本来就是步骤的正位
-（老平台的人工案例一直存在那儿），父表再存一个 blob，
-两边就必须同步 —— 而"必须同步的两份数据"迟早会不一致。
+**第一版**：草稿整包塞进 `tc_case.draft_json`，commit 时展开到 `tc_step`。
+删掉了 —— **同一份数据存两遍，必然要同步。**
 
-删掉之后，责任边界反而清楚了：
+**第二版**：步骤一步一行写 `tc_step`，表头写 `tc_case` 的正式列。
+问题是 `update` 变成跨表事务，而**它是整条链路上最高频的路径**（草稿要反复改）。
 
-| | 写什么 | 事务要求 |
+**现在这版**：
+
+```
+tc_case   表头 + 平台侧状态。编辑期只有骨架，commit 那一刻才被填齐
+tc_step   一比一。step_json 是完整草稿，编辑期的状态机与乐观锁也在这
+```
+
+| 路径 | 写什么 | 形状 |
 |---|---|---|
-| `atp update` | 表头进 `tc_case`，步骤**整批替换** `tc_step` | ⭐ **跨两张表，必须一个事务** |
-| `atp commit` | 只翻状态 | 单条 UPDATE，天然原子 |
+| `draft` | 两条 INSERT | 都是新行，无争用 |
+| `update` | **只写 `tc_step`** | ⭐ **单表单行 CAS** |
+| `commit` | CAS `tc_step` → 投影表头到 `tc_case` | 跨表事务，但一份草稿只发生一次 |
 
-**⭐ 值得讲的一点：原子性的压力从 `commit` 移到了 `update`，而 `commit` 反而回归纯粹。**
-它现在真的只收 `id` 和 `version`，不带内容、也不搬运任何数据 ——
-步骤在 `update` 时就已经落好了。
+> **最高频的路径不跨表** —— 跨表事务和随之而来的加锁顺序问题，
+> 在"反复改草稿"这条路上根本不存在。
 
-**步骤为什么用「全删再全插」而不是逐条 diff**：草稿的步骤量级是个位数，
-diff 的复杂度换不来任何收益，而全量替换的语义要简单得多 ——
-**库里的步骤永远等于最后一次 `update` 传进来的那一份**，没有中间态可推理。
+#### 两个 version，两个生命周期
 
-**那"确认的和提交的是同一份"还成立吗？成立。**
-`update` 是**唯一**写 `tc_step` 的路径，而它每次都 CAS 掉 `tc_case.version`。
-所以 version 依然罩得住「表头 + 步骤」这个整体：谁动了步骤，version 就跳，commit 就失败。
+| | 管什么 | 编辑期 |
+|---|---|---|
+| `tc_step.version` | **编辑期**乐观锁。preview 给用户看的、commit 要带回来的就是它 | 每改一次跳一次 |
+| `tc_case.version` | 案例落地后**平台侧**修改用的 | **一动不动** |
 
-> ⚠️ 前提和 §3.3（不建外键）、§3.4（枚举存 int）是同一条：**所有写入都走 CLI 或平台代码。**
-> 有人直连库改 `tc_step`，version 不会跳，这层保护就没了。
+实测（`atp update` 跑两次之后）：
+
+```
+tc_case  | status=4 | version=0 | case_code=(NULL)   ← 一动没动
+tc_step  | status=4 | version=1 | 3 步
+```
+
+#### 步骤为什么是「一行一案例」而不是「一步一行」
+
+因为**老平台的执行器就是读整份步骤跑的**，不会按 `seq` 逐条查库。
+既然没有按步查询的需求，一步一行就只是在制造 N 倍的行、N 倍的删插、
+和一个本可以不存在的 `seq` 列 —— **顺序本来就是数组顺序**。
+
+**代价**：`UNIQUE(case_id, seq)` 没了，"seq 不重复、连续无跳号"交给 `atp validate`。
+跟 §3.3（撤外键）、§3.4（枚举存 int）是同一类取舍 —— **能说出接管方就行**。
+
+#### 「确认的和提交的是同一份」还成立吗
+
+成立，而且更干净。`update` 是**唯一**写 `tc_step` 的路径，
+用户 preview 看到的 `version` 就是 `tc_step` 的。谁动了草稿，version 就跳，commit 就失败。
+
+**⭐ 白捡一个好处**：commit 之后 `step_json` 留着提交那一刻的完整快照。
+这就是当初 ChangeSet 方案里的「冻结快照」，现在不花额外代价就有了 ——
+**被追问"用户到底确认了什么"时，库里查得到。**
+
+#### 加锁顺序统一为 `tc_step → tc_case`
+
+跨表的路径只有 `commit` 和 M5 的清理任务。两边同序才不会死锁（见 §8）。
+
+> ⚠️ 前提和 §3.3、§3.4 是同一条：**所有写入都走 CLI 或平台代码。**
 
 ---
 
@@ -275,13 +311,14 @@ diff 的复杂度换不来任何收益，而全量替换的语义要简单得多
 
 ④ atp validate -f draft.json               → 纯本地规则校验，不打网络、毫秒级
 
-⑤ atp update <id> --version 0 -f draft.json  → CAS 写表头 + 整批换 tc_step，version 0→1
-                                              （跨两张表，一个事务）
+⑤ atp update <id> --version 0 -f draft.json  → 单表单行 CAS，只写 tc_step，version 0→1
+                                              （tc_case 一动不动）
 
 ⑥ atp preview <id>                         → 从库里读出来渲染，打印 version=1
                                               ↑ 用户看的是库里的，不是本地文件
 
-⑦ atp commit <id> --version 1              → CAS: AI_DRAFT → DRAFT
+⑦ atp commit <id> --version 1              → CAS tc_step → 投影表头进 tc_case
+                                              （跨表事务，一份草稿只一次）
 ```
 
 ### 讲这一段时要点出的两个设计决定
@@ -325,10 +362,9 @@ INSERT 成功 → 响应超时丢失 → agent 重试 → 又一条草稿、另�
 ### 5.2 `update` —— CAS 乐观锁
 
 ```sql
-UPDATE tc_case SET case_code = ?, title = ?, module_id = ?, priority = ?,
-                   author = ?, precondition = ?, version = version + 1
- WHERE case_id = ? AND status = 'AI_DRAFT' AND version = ?
--- 同一事务里紧接着：DELETE FROM tc_step WHERE case_id = ?  然后整批 INSERT
+UPDATE tc_step SET step_json = ?::jsonb, version = version + 1, updated_at = now()
+ WHERE case_id = ? AND status = 4 /* AI_DRAFT */ AND version = ?
+-- ⭐ 就这一条。单表、单行、不碰 tc_case
 ```
 
 `affectedRows = 0` → 说明有人在你之前改过 → 让 agent 重新 `show` 再改。
@@ -359,7 +395,7 @@ UPDATE tc_case SET status='DRAFT', version=version+1 WHERE case_id = ?;   // ←
 用户 preview 时拿到 version = 3，点了确认
 
 线程A (commit):  SELECT  → status=AI_DRAFT, version=3   ✓ 两项检查都通过
-线程B (agent):   UPDATE 表头+步骤, version 3 → 4      ← agent 又改了一版
+线程B (agent):   UPDATE tc_step, version 3 → 4        ← agent 又改了一版
 线程A (commit):  UPDATE SET status='DRAFT' WHERE id=x ← 把 version=4 的内容提交了
 ```
 
@@ -379,7 +415,7 @@ UPDATE tc_case SET status='DRAFT', version=version+1 WHERE case_id = ?;   // ←
 线程B 只有两种可能：
 
 - 排在前面 → 线程A 的 `AND version = 3` 不匹配 → `affectedRows = 0` → **正确拒绝**
-- 排在后面 → 线程A 已把 status 改成 DRAFT → 线程B 的 `AND status='AI_DRAFT'` 不匹配 → 失败
+- 排在后面 → 线程A 已把 `tc_step.status` 改成 DRAFT → 线程B 的 `AND status = 4` 不匹配 → 失败
 
 **没有中间态。把"检查"和"写入"压进一条语句，窗口就是零——这就是 CAS 在 SQL 里的样子。**
 
@@ -405,19 +441,25 @@ UPDATE tc_case SET status='DRAFT', version=version+1 WHERE case_id = ?;   // ←
 
 ⚠️ 没有外键级联，所以**必须自己删两次，且顺序不能反**。
 
+⚠️ **加锁顺序必须与 `commit` 一致（`tc_step` → `tc_case`）**，否则两者撞在同一条
+边界草稿上会死锁。`FOR UPDATE SKIP LOCKED` 顺带白送一个好处：
+正在被 agent 编辑的草稿直接跳过，下个月再清。
+
 ```java
 @XxlJob("atpDraftCleanupHandler")
 public void cleanup() {
     Timestamp cutoff = Timestamp.from(Instant.now().minus(30, ChronoUnit.DAYS));
     int total = 0, batch;
     do {
-        // ① 先圈出这一批要删的 case_id（走 idx_ai_draft_cleanup）
-        // ⚠️ PG 不支持 DELETE ... LIMIT（MySQL 支持），分批只能先 SELECT 出 id 再按 id 删，
-        //    或者用 WHERE ctid IN (SELECT ctid ... LIMIT n)。这里用前者，因为子表也要按 id 删。
+        // ① 先在【tc_step】上锁定这一批 —— 与 commit 同序，且跳过正在被编辑的草稿
+        // ⚠️ PG 不支持 DELETE ... LIMIT（MySQL 支持），分批只能先 SELECT 出 id 再按 id 删。
         List<String> ids = jdbc.queryForList("""
-                SELECT case_id FROM tc_case
-                 WHERE status = 'AI_DRAFT' AND created_at < ?
+                SELECT s.case_id FROM tc_step s
+                  JOIN tc_case c ON c.case_id = s.case_id
+                 WHERE s.status = 4 /* AI_DRAFT */ AND c.created_at < ?
+                 ORDER BY c.created_at
                  LIMIT 1000
+                 FOR UPDATE OF s SKIP LOCKED
                 """, String.class, cutoff);
         if (ids.isEmpty()) break;
 
@@ -435,8 +477,9 @@ Cron：`0 0 3 1 * ?`（每月 1 号 03:00）。
 
 要讲的四点：
 
-1. **⭐ 先子后父，顺序不能反。** 删完 `tc_case` 再想删步骤，`WHERE` 条件已经查不到了 ——
-   直接产生永久孤儿行，而且**没有任何报错**。
+1. **⭐ 先子后父，且加锁顺序要和 `commit` 一致（`tc_step` → `tc_case`）。**
+   删完 `tc_case` 再想删 `tc_step`，`WHERE` 条件已经查不到了 —— 永久孤儿行，**没有任何报错**。
+   顺序若与 `commit` 相反，两者撞在同一条边界草稿上会 `40P01 deadlock detected`。
    > 做清理设计时第一件事是问：**这行有没有子表？没有级联的话谁来删？**
    >
    > 这个坑我在写测试时真踩了：`@BeforeEach` 只 `DELETE FROM tc_case`，
