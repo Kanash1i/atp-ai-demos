@@ -95,7 +95,7 @@ TeiScoringModel                      → implements dev.langchain4j.model.scorin
 > 结论从「冲突面积很小」变成「**冲突根本不存在**」—— 全仓只有知识侧一个 LLM 框架。
 
 `03-HANDOFF` §4.1 担心的是「一个应用里塞两个 LLM 框架」。
-**但生产侧现在没有 LLM 框架** —— `atp` CLI 是 picocli + JDBC 的确定性代码，
+**但生产侧现在没有 LLM 框架，连 Java 都不是** —— `atp` CLI 是 Go + cobra + pgx 的确定性代码，
 模型由 agent 调，CLI 只做校验和幂等落库。
 
 所以 §4.1 列的三处传递依赖冲突（Jackson 2/3 分裂、向量库 client、双 HTTP 栈）
@@ -107,7 +107,7 @@ TeiScoringModel                      → implements dev.langchain4j.model.scorin
 atp-ai-demos/
 ├── atp-common/   纯 POJO：领域模型、Action 枚举、STD 规范常量。零 AI 框架依赖
 ├── atp-rag/      知识侧 = know-engine 改造，langchain4j 1.11.0     ← 独立进程 :8009
-├── atp-cli/      生产侧 = atp CLI，picocli + JDBC，无 AI 框架      ← 命令行进程
+└── （生产侧 atp CLI 是独立的 Go 模块，不进这个 Maven 多模块骨架）
 └── eval/         评估集 + 消融跑批（可以是 atp-rag 的 test 或独立 CLI）
 ```
 
@@ -119,9 +119,9 @@ atp-ai-demos/
   两个 AI 框架的 BOM 各自留在自己的模块里，不往上提。
 - **不要照搬 LLMentor 的根 pom** —— 它管着 18 个模块（agentscope、dodo-agent、gogo-agent…），
   跟我们无关。只搬 `know-engine` 一个模块，重写父 pom。
-- 生产侧 `atp-cli` **刻意不继承 `spring-boot-starter-parent`** ——
-  CLI 被 agent 高频反复调用，冷启动是真实成本（Spring Boot ≈ 1.5s / picocli fat jar ≈ 300ms）。
-  见 `demo2-atp-cli/DECISIONS.md` D-103。
+- 生产侧 `atp-cli` **已整体重写为 Go**（`demo2-atp-cli/DECISIONS.md` **D-121**），
+  不再是这个 Maven 骨架的一部分。仓库因此是 Java + Go 双语，
+  §2.2 原先设想的 `atp-common` 共享模块随之作废 —— 共享契约退回"文档 + DDL"。
 
 **面试叙事**（这个版本比「历史原因」诚实且更强）：
 

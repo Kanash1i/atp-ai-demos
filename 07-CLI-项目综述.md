@@ -182,17 +182,22 @@ agent 场景的"并发"不是大量用户做不同的事，而是**同一个意�
 
 | | |
 |---|---|
-| 语言 / 框架 | Java 21 + picocli，**刻意不用 Spring** |
-| 数据库 | PostgreSQL（平台原有），裸 JDBC，无连接池 |
+| 语言 / 框架 | **Go 1.25 + cobra**，单文件静态二进制 |
+| 数据库 | PostgreSQL（平台原有），**pgx/v5**，每次调用一条连接、无连接池 |
 | 命令 | 8 个，**全部零模型调用**；其中 2 个零数据库零网络 |
-| 代码量 | 主代码 2064 行 / 测试 1067 行 / DDL 177 行 |
-| 测试 | **74 个全绿**，跑在 Testcontainers 起的真实 PostgreSQL 17 上 |
-| 冷启动 | `atp --version` **0.34 s**（Spring Boot 约 1.5 s）|
+| 测试 | **27 个全绿**，跑在 testcontainers-go 起的真实 PostgreSQL 17 上 |
+| 冷启动 | **9 ms**（同一套设计的 Java 原型实测 349 ms —— 差 39 倍）|
 | 接入 | opencode（配置 + skill），`commit` 单独设为需要确认 |
 
-**为什么不用 Spring**：CLI 被 agent 高频反复调用，冷启动是真实成本 ——
-一次会话调 20 次，Spring Boot 要 30 秒，picocli fat jar 是 6 秒。
-同理不用连接池：进程只活 300 毫秒，连接池的预热比它省下的还多。
+**先用 Java 写了一版，再整体重写成 Go**（`DECISIONS.md` D-121）—— 这是可以主动讲的过程：
+
+- **冷启动**：Java 原型 349 ms，加 AppCDS 到 230 ms，Go 是 **9 ms**。
+  CLI 被 agent 高频反复调用，一轮任务调 20 次就是 7 秒 vs 0.2 秒。
+- **⭐ 真正决定选 Go 而不是 TypeScript 的是并发测试**：核心断言是
+  「10 个线程并发提交同一个 key，只创建一条」。TS 的 `Promise.all` 跑在单线程事件循环上，
+  是**并发不是并行**，测不出行锁与唯一约束的真实行为；
+  Go 的 goroutine 默认跑满 `GOMAXPROCS`，10 条连接是真的同时撞库。
+- 同理不用连接池：进程只活几毫秒，连接池的预热比它省下的还多。
 
 ---
 
@@ -204,7 +209,8 @@ agent 场景的"并发"不是大量用户做不同的事，而是**同一个意�
 > CLI 负责 agent 与数据库之间的全部确定性工作：生成前下发 schema 与模块字典以杜绝编造、
 > 生成后做纯本地规则校验、落库走带人工确认环节的状态机；以退出码作为 agent 的分派契约，
 > 并用主键唯一约束与乐观锁兜住 agent 重试、multiagent 并发导致的重复写入。
-> Java 21 + picocli（刻意不用 Spring，冷启动 0.34 s），74 个测试跑在真实 PostgreSQL 容器上。
+> Go + cobra + pgx，单文件二进制冷启动 9 ms（Java 原型 349 ms）；
+> 27 个测试跑在真实 PostgreSQL 容器上，含 10 goroutine 真并行的幂等验证。
 
 **中版（2 行）**
 

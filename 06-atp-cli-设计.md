@@ -10,16 +10,16 @@
 
 | 项 | 选择 | 理由 |
 |---|---|---|
-| 语言 | Java 21 | 与 know-engine 一致 |
-| CLI 框架 | **picocli 4.7.x** | 子命令、参数校验、自动 `--help` |
-| **不用 Spring Boot** | 裸 JDBC + Jackson | ⭐ CLI 被 agent **高频反复调用**，冷启动是真实成本：Spring Boot ≈ 1.5s，picocli fat jar ≈ 300ms。一次会话调 20 次就是 24s vs 6s |
-| DB | **PostgreSQL**，pgjdbc，**每次调用一条连接** | 进程活 300ms，连接池没有意义；错误判定走 SQLSTATE 不走厂商 errorCode |
-| 打包 | `maven-shade-plugin` fat jar + `bin/atp` 包装脚本 | 后续可上 GraalVM native（≈40ms），但不是 demo 必需 |
+| 语言 | **Go 1.25** | CLI 的主流栈；单文件静态二进制，冷启动 **9 ms** |
+| CLI 框架 | **cobra** | kubectl / gh / docker / terraform 同款，这一类工具的通用语 |
+| DB | **pgx/v5**，**每次调用一条连接** | Go 生态最好的 PG 驱动；进程只活几毫秒，连接池的预热比它省下的还多 |
+| JSON Schema | **santhosh-tekuri/jsonschema/v6** | draft 2020-12，且能区分「必填缺失」与「值非法」—— 退出码 14 / 12 的分流靠它 |
+| 资源打包 | **`go:embed`** | DDL 与 schema 编进二进制，单文件分发，不依赖运行时文件布局 |
+| 测试 | 标准库 `testing` + **testcontainers-go** | 起真 PostgreSQL 17；`sync.WaitGroup` + goroutine 做**真并行**的并发验证 |
 
-> **面试点**：这是个反直觉但正确的取舍——"我是 Spring 工程师，但这里我没用 Spring，
-> 因为 CLI 的性能画像和 web 服务完全不同"。主动讲这条比讲技术栈本身有价值。
-
----
+> ⚠️ **本项目最早是 Java 21 + picocli 写的，后整体重写为 Go**（见 `demo2-atp-cli/DECISIONS.md` **D-121**）。
+> 两个原因：冷启动 349 ms → 9 ms；以及 —— 更关键的 ——
+> **TypeScript 的事件循环并发测不出「10 个线程打同一行」的真实行为，而 Go 的 goroutine 可以。**
 
 ## 2. 命令表
 
@@ -79,26 +79,31 @@
 
 ```
 demo2-atp-cli/
-├─ pom.xml
-├─ bin/atp                                  # 包装脚本
-├─ src/main/java/com/atp/cli/
-│  ├─ AtpCli.java                           # picocli 根命令
-│  ├─ cmd/{Draft,Show,Update,Preview,Commit,Validate,LintLocator,Schema,Modules}Command.java
-│  ├─ store/CaseStore.java                  # ⭐ 所有 SQL 只在这一个类里
-│  ├─ rule/{RuleEngine,LocatorLinter,Violation}.java   # 纯本地，无 IO
-│  ├─ model/{CaseDraft,CaseRow,Result}.java
-│  └─ out/{Output,ExitCode}.java
-├─ src/main/resources/schema/tc_case.schema.json
-└─ src/test/java/com/atp/cli/
-   ├─ ConcurrentCommitTest.java             # ⭐ 10 线程并发
-   ├─ ConcurrentDraftTest.java
-   ├─ TocTouTest.java                       # preview 后被改 → commit 必须失败
-   └─ ZeroNetworkValidateTest.java
+├─ go.mod / go.sum
+├─ Makefile                      build / test / db-up
+├─ assets.go                     go:embed 把 DDL 与 schema 编进二进制
+├─ arch_test.go                  ⭐ 架构不变式：SQL 只出现在 internal/store
+├─ bin/atp                       构建产物（gitignore）
+├─ migrations/V0__, V1__.sql     老平台基线 + 改造脚本
+├─ schema/tc_case.schema.json
+├─ scripts/demo-db.sh            一条命令起 PG + 迁移 + 写 .env
+├─ opencode.json                 权限表：唯独 commit 是 ask
+├─ AGENTS.md
+├─ .opencode/skills/atp-case-authoring/SKILL.md
+├─ cmd/atp/main.go               入口，只做 os.Exit(cli.Execute(...))
+└─ internal/
+   ├─ cli/      root.go / readonly.go / write.go / e2e_test.go
+   ├─ store/    ⭐ 全项目唯一持有 SQL 的包
+   │            case_store.go（并发正确性全在这）/ dict_store.go / conn.go
+   │            concurrency_test.go / toctou_test.go / editing_test.go / guard_test.go
+   ├─ rule/     纯本地规则，零 IO：header.go / validate.go
+   ├─ model/    exitcode.go / enums.go / case.go
+   ├─ out/      output.go —— --json 信封 / 人类可读双通道
+   └─ config/   环境变量 > 仓库根 .env，取不到 fail fast
 ```
 
-**`store/CaseStore.java` 是唯一持有 SQL 的类** —— 面试时直接翻这一个文件就能讲完并发设计。
-
----
+**`internal/store` 是唯一持有 SQL 的包** —— 面试时翻这一个包就能把并发设计讲完，
+而且这条不变式由 `arch_test.go` 机械检查，不靠约定。
 
 ## 5. 两段核心代码
 
@@ -285,7 +290,7 @@ metadata:
 | # | 内容 | 产出 |
 |---|---|---|
 | ~~M1~~ ✅ | DDL 迁移脚本 + `CaseStore` 的 draft/show/update/commit | **已完成**：Testcontainers 起 PostgreSQL，并发与 TOCTOU 用例绿 |
-| ~~M2~~ ✅ | picocli 命令层 + 退出码 + `--json` 信封 + 本地校验 | **已完成**：`bin/atp` 七步跑通，69 用例绿，冷启动 0.34s |
+| ~~M2~~ ✅ | cobra 命令层 + 退出码 + `--json` 信封 + 本地校验 | **已完成**：`bin/atp` 七步跑通，27 用例绿，冷启动 9 ms |
 | M3 | `lint-locator` + 完整规则引擎（`validate` 的 JSON Schema 部分已在 M2 落地）| 断言零网络零模型 |
 | M4 | opencode 接入（`opencode.json` + SKILL.md） | 在 opencode 里走完演示脚本 |
 | M5 | XXL-JOB 清理任务 | 造 2500 条过期草稿，分 3 批删净 |
