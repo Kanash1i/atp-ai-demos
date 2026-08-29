@@ -32,7 +32,7 @@ up() {
   # V0 = 老平台现状基线，V1 = 我们的改造。顺序不能反。
   for f in V0__baseline_legacy V1__ai_draft_state; do
     docker exec -i "$NAME" psql -q -U atp -d atp -v ON_ERROR_STOP=1 \
-      < "$MODULE_DIR/src/main/resources/db/migration/$f.sql"
+      < "$MODULE_DIR/migrations/$f.sql"
     echo "→ 已应用 $f"
   done
 
