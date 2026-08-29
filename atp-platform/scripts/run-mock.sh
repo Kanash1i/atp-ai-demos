@@ -33,7 +33,11 @@ mvn -q -B -f "$PLATFORM_DIR/pom.xml" -pl mock-shop install -DskipTests
 
 stop
 LOG=/tmp/atp-mock-shop.log
-nohup java -jar "$PLATFORM_DIR/mock-shop/target/mock-shop-1.0.0-SNAPSHOT.jar" > "$LOG" 2>&1 &
+# ⚠️ 同样跑副本：后续 mvn install 覆盖 target 下的 jar 时，运行中的进程会因为
+#    惰性类加载失败而静默罢工（进程在、不干活）
+RUN_JAR=/tmp/atp-mock-shop.jar
+cp -f "$PLATFORM_DIR/mock-shop/target/mock-shop-1.0.0-SNAPSHOT.jar" "$RUN_JAR"
+nohup java -jar "$RUN_JAR" > "$LOG" 2>&1 &
 
 for _ in $(seq 1 40); do
   if curl -sf --max-time 2 "http://localhost:$PORT/login" >/dev/null 2>&1; then
