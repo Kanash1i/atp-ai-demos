@@ -1,6 +1,7 @@
 import type {
-  Approval, ApprovalStats, CaseDetail, Decision, ExecNode, ExecStats,
-  ProblemDetail, Project, RecentRun, RunningBatch, TaskDetail, TreeModule, ValidationResult,
+  Approval, ApprovalStats, CaseDetail, Decision, DispatchRequest, DispatchResponse,
+  ExecNode, ExecStats, ProblemDetail, Project, RecentRun, RunningBatch, TaskDetail,
+  TreeModule, ValidationResult,
 } from './types';
 
 /**
@@ -109,6 +110,22 @@ export const api = {
 
   approval: (requestId: string) => get<Approval>(`/api/approvals/${requestId}`),
 };
+
+/**
+ * 派发一批执行。接口立刻返回，不等执行完 —— 进度靠轮询 /running。
+ *
+ * ⚠️ 没有节点在线时任务会一直挂在队列里，这是故意的（任务不丢，节点起来接着跑）。
+ * 那时 /running 返回 doneCount: 0 的批次，而 /nodes 里没有 online: true 的节点 ——
+ * **两个信号合起来**才说明问题出在「没有执行节点」，任何单独一个都不够。
+ */
+export async function dispatchRun(body: DispatchRequest): Promise<DispatchResponse> {
+  const out = await request<DispatchResponse>('/api/executions/dispatch', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  if (out === NO_CONTENT) throw new ApiError(204, null, 'unexpected 204');
+  return out;
+}
 
 /** POST 单独写，避免上面 get<> 的语义被误用 */
 export async function decideApproval(

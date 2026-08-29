@@ -112,18 +112,48 @@ export interface ExecStats {
   avgDurationDelta: number | null;
 }
 
-export interface RunningBatch {
+export type Browser = 'CHROME' | 'FIREFOX' | 'EDGE';
+export type Trigger = 'MANUAL' | 'AGENT' | 'SCHEDULED';
+
+export interface DispatchRequest {
+  projectId: string;
+  /** 省略或空数组 = 跑该项目下全部案例 */
+  caseIds?: string[];
+  browser: Browser;
+  /** 自由文本，显示在批次卡片上 */
+  suiteName: string;
+  trigger: Trigger;
+  createdBy: string;
+}
+
+export interface DispatchResponse {
+  runId: string;
   runCode: string;
-  projectName?: string;
-  suiteName?: string;
-  browser?: string;
-  total: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-  running: number;
-  elapsed?: string;
-  remaining?: string;
+  totalCount: number;
+  status: string;
+}
+
+export interface RunningBatch {
+  runId: string;
+  runCode: string;
+  projectName: string;
+  suiteName: string;
+  browser: string;
+  triggerSource: Trigger;
+  /** = passedCount + failedCount + skippedCount，进度条用它除以 totalCount */
+  doneCount: number;
+  totalCount: number;
+  passedCount: number;
+  failedCount: number;
+  skippedCount: number;
+  /** 此刻正在跑的条数（实时查询，不是冗余计数），并发节点多时才 > 0 */
+  runningCount: number;
+  elapsedSec: number;
+  /**
+   * ⚠️ 可能为 null —— 还没有任何任务完成时推算不出来。
+   * 有值时也是按已完成任务的平均耗时外推的，所以显示成「≈ N 分钟」而不是精确值。
+   */
+  etaSec: number | null;
 }
 
 export interface RecentRun {

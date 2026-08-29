@@ -80,3 +80,20 @@ export function initials(name: string): string {
   if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
   return clean.slice(0, 2).toUpperCase();
 }
+
+/** 秒 → 人读的时长。执行记录里的 duration 后端已经格式化好了，这里只给 elapsedSec / etaSec 用 */
+export function humanSec(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+/**
+ * 剩余时间。**永远带「≈」** —— 它是按已完成任务的平均耗时外推的，
+ * 印成精确值会让人以为那是个承诺。null 表示还没有任务完成，推不出来。
+ */
+export function approxSec(sec: number | null): string | null {
+  if (sec === null || sec === undefined) return null;
+  return sec < 60 ? `≈ ${sec}s` : `≈ ${Math.round(sec / 60)}m`;
+}
