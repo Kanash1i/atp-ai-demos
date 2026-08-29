@@ -7,6 +7,12 @@
 
 ---
 
+> ⚠️ **先摆正定位**：这套设计的**主线是「把能力从提示词搬进确定性代码」** ——
+> 判据是「机器能不能判定这条规则被违反了」，能就下沉、下沉完从提示词里删掉。
+> **下面这整份讲的并发幂等，是为了兜住 agent 重试与 multiagent 并发导致的重复写入，
+> 是一个具体风险的应对，不是项目目的。**
+> 讲项目从 `07-CLI-项目综述.md` 开的头，这份是被追问细节时展开用的。
+
 ## 0. 一页速记
 
 | | |
@@ -445,35 +451,40 @@ UPDATE tc_case SET status='DRAFT', version=version+1 WHERE case_id = ?;   // ←
 边界草稿上会死锁。`FOR UPDATE SKIP LOCKED` 顺带白送一个好处：
 正在被 agent 编辑的草稿直接跳过，下个月再清。
 
-```java
-@XxlJob("atpDraftCleanupHandler")
-public void cleanup() {
-    Timestamp cutoff = Timestamp.from(Instant.now().minus(30, ChronoUnit.DAYS));
-    int total = 0, batch;
-    do {
-        // ① 先在【tc_step】上锁定这一批 —— 与 commit 同序，且跳过正在被编辑的草稿
+```go
+// 每月一次。⚠️ 加锁顺序必须与 commit 一致（tc_step → tc_case）。
+func CleanupAbandonedDrafts(ctx context.Context, db *pgx.Conn) (int, error) {
+    cutoff := time.Now().AddDate(0, 0, -30)
+    total := 0
+    for {
+        // ① 先在 tc_step 上锁定这一批 —— 与 commit 同序，
+        //    且 SKIP LOCKED 会跳过正在被 agent 编辑的草稿，下个月再清。
         // ⚠️ PG 不支持 DELETE ... LIMIT（MySQL 支持），分批只能先 SELECT 出 id 再按 id 删。
-        List<String> ids = jdbc.queryForList("""
-                SELECT s.case_id FROM tc_step s
-                  JOIN tc_case c ON c.case_id = s.case_id
-                 WHERE s.status = 4 /* AI_DRAFT */ AND c.created_at < ?
-                 ORDER BY c.created_at
-                 LIMIT 1000
-                 FOR UPDATE OF s SKIP LOCKED
-                """, String.class, cutoff);
-        if (ids.isEmpty()) break;
+        rows, err := db.Query(ctx, `
+            SELECT s.case_id FROM tc_step s
+              JOIN tc_case c ON c.case_id = s.case_id
+             WHERE s.status = 4 /* AI_DRAFT */ AND c.created_at < $1
+             ORDER BY c.created_at
+             LIMIT 1000
+             FOR UPDATE OF s SKIP LOCKED`, cutoff)
+        if err != nil { return total, err }
+        ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+        if err != nil { return total, err }
+        if len(ids) == 0 { return total, nil }
 
-        // ② 先删子表 —— 必须在删父表之前，父表没了就再也定位不到这些步骤
-        jdbc.update("DELETE FROM tc_step WHERE case_id IN (:ids)", Map.of("ids", ids));
-        // ③ 再删父表
-        batch = jdbc.update("DELETE FROM tc_case WHERE case_id IN (:ids)", Map.of("ids", ids));
-        total += batch;
-    } while (batch == 1000);
-    XxlJobHelper.log("清理弃置 AI 草稿 {} 条", total);
+        // ② 先删子表 ③ 再删父表 —— 顺序反了就定位不到要删的行
+        if _, err := db.Exec(ctx, `DELETE FROM tc_step WHERE case_id = ANY($1)`, ids); err != nil {
+            return total, err
+        }
+        if _, err := db.Exec(ctx, `DELETE FROM tc_case WHERE case_id = ANY($1)`, ids); err != nil {
+            return total, err
+        }
+        total += len(ids)
+    }
 }
 ```
 
-Cron：`0 0 3 1 * ?`（每月 1 号 03:00）。
+调度：每月 1 号 03:00（cron `0 0 3 1 * *`）。
 
 要讲的四点：
 

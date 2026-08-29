@@ -77,7 +77,7 @@ docker-java 只从**系统属性** `api.version` 取值。
 
 ---
 
-## D-103 · 不继承 `spring-boot-starter-parent`
+## ~~D-103~~ · 不继承 `spring-boot-starter-parent`（⚠️ 已作废，见 D-121：整体改用 Go）
 
 CLI 被 agent 高频反复调用，冷启动是真实成本：Spring Boot ≈ 1.5s，picocli fat jar ≈ 300ms。
 一次会话调 20 次差 24s。同理不用连接池 —— 进程只活 300ms，HikariCP 预热比它省下的还多。
@@ -593,3 +593,71 @@ SELECT s.case_id FROM tc_step s
 
 > **教训**：性能担忧未必成立，但**顺着它查下去经常能挖到别的东西**。
 > 这次挖到的不是吞吐问题，是一个还没写出来就已经注定要踩的死锁。
+
+---
+
+## D-121 · 从 Java 重写为 Go
+
+**动机**：Java 不是 CLI 的主流技术栈，而这个 demo 是给面试用的 ——
+"为什么用 Java 写 CLI" 会被问，且**最差的答案是"因为我熟"**。
+
+### 为什么是 Go 而不是 TypeScript
+
+这个 demo 的核心断言是「10 个线程并发提交同一个 key，只创建一条」。
+
+**TypeScript 做不了这个测试。** `Promise.all` 跑在单线程事件循环上，
+await 只是交错，**不是真并行** —— 测不出行锁与唯一约束的真实行为。
+要真并行就得上 `worker_threads`，那堆仪式反而把重点冲淡了。
+
+Go 的 goroutine 默认跑满 `GOMAXPROCS`，`internal/store/concurrency_test.go` 里
+10 个 goroutine 各开一条连接同时撞库 —— **是真的并行写**。
+
+另外三条：`pgx/v5` 是 Go 生态最好的 PG 驱动，DB 那层的可信度一点不掉；
+`cobra` 是 CLI 的通用语（kubectl / gh / docker / terraform）；
+单文件静态二进制，Java 那个唯一硬伤直接消失。
+
+### 实测：那个硬伤有多硬
+
+| | 冷启动 |
+|---|---|
+| Java fat jar（`-XX:TieredStopAtLevel=1`） | **349 ms** |
+| Java + AppCDS（零代码改动） | **230 ms** |
+| **Go 静态二进制** | **9 ms** |
+| 参照：`jq --version` | 3 ms |
+| 参照：`git --version` | 5 ms |
+
+**Go 比 Java 快 39 倍。** 一轮 agent 任务调 20 次 CLI，就是 0.2 秒 vs 7 秒。
+
+### 什么原样带过去了
+
+设计已经定死，这是**机械移植不是重新设计**：
+
+- `migrations/V0`、`V1`（DDL 一行没改）
+- `schema/tc_case.schema.json`
+- `opencode.json`、`AGENTS.md`、`SKILL.md` —— ⭐ **一个字没改**，
+  因为它们引用的是 `./bin/atp`，而 Go 构建产物就叫这个名字
+- `scripts/demo-db.sh`（只改了 migrations 的路径）
+- `DECISIONS.md` 与三份设计文档
+
+### 顺带变干净的几处
+
+- **`go:embed` 把 DDL 与 schema 编进二进制** —— 单文件分发，不依赖运行时的文件布局。
+  Java 那边靠 classpath 资源，换个打包方式就可能读不到。
+- **配置注入**：Go 测试直接 `os.Setenv`，比 Java 版本靠系统属性（D-101 的那套）干净。
+- **`bin/atp` 不再需要包装脚本**（D-113 那 34 行选 JVM + 查版本的逻辑整个消失）——
+  二进制自己就是入口，没有"用错 JDK"这个失败模式。
+- **错误处理**：Go 的 `error` 值 + `errors.As(&pgErr)` 判 SQLSTATE，
+  比 Java 那套遍历 `getNextException` 链清楚。
+
+### 代价
+
+- **仓库变成 Java + Go 双语**。`04-M0` §2.2 规划的 `atp-common` 共享 Maven 模块作废，
+  共享契约退回"文档 + DDL"。可以接受，而且更真实 —— 真实系统本来就常常是多语言的。
+- 二进制 9.6 MB（Go 的静态链接代价），比 5.0 MB 的 fat jar 大，但它不需要 JVM。
+
+### 面试怎么答"为什么用 Go"
+
+> 「语言不是这个设计的变量 —— 我要证明的是把规则下沉到确定性代码和数据库约束，
+> 那套论证换到任何语言都一字不改。
+> 但**并发测试是个例外**：我需要真并行地打同一行，才能证明唯一约束和 CAS 真的在起作用。
+> 事件循环式的并发测不出这个。所以选了 Go。」

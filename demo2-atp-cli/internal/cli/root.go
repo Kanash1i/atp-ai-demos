@@ -1,0 +1,84 @@
+// Package cli 是命令层：解析参数、调 store 或 rule、把结果交给 out。
+//
+// 每个命令都刻意很薄 —— 业务不变式在 store，纯规则在 rule，这里只做接线。
+package cli
+
+import (
+	"context"
+	"fmt"
+	"io"
+
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/config"
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/out"
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/store"
+	"github.com/jackc/pgx/v5"
+	"github.com/spf13/cobra"
+)
+
+const Version = "0.1.0"
+
+// app 持有一次调用的全部状态。
+//
+// code 是子命令写进来的退出码 —— cobra 的 RunE 只能返回 error，
+// 而我们需要的是 7 个有语义的码，所以让子命令直接写这里，Execute 最后读走。
+type app struct {
+	jsonOut bool
+	stdout  io.Writer
+	stderr  io.Writer
+	code    int
+}
+
+func (a *app) w() *out.Writer {
+	return &out.Writer{JSON: a.jsonOut, Out: a.stdout, Err: a.stderr}
+}
+
+// withDB 统一收口连接生命周期。配置缺失或库不通一律 INFRA_ERROR(20)。
+func (a *app) withDB(fn func(ctx context.Context, conn *pgx.Conn) int) error {
+	ctx := context.Background()
+	dsn, err := config.Load().DSN()
+	if err != nil {
+		a.code = a.w().Fail(model.InfraError, err.Error(), nil)
+		return nil
+	}
+	conn, err := store.Open(ctx, dsn)
+	if err != nil {
+		a.code = a.w().Fail(model.InfraError, "连不上数据库: "+err.Error(), nil)
+		return nil
+	}
+	defer conn.Close(ctx)
+	a.code = fn(ctx, conn)
+	return nil
+}
+
+// Execute 跑根命令并返回退出码。不在这里 os.Exit —— 测试要能直接调。
+func Execute(args []string, stdout, stderr io.Writer) int {
+	a := &app{stdout: stdout, stderr: stderr}
+
+	root := &cobra.Command{
+		Use:   "atp",
+		Short: "ATP 案例编写 CLI",
+		Long: "ATP 案例编写 CLI —— 幂等键做成平台案例表的主键，\n" +
+			"唯一约束加一条 CAS UPDATE 当并发仲裁点。所有命令均不调用模型。",
+		Version:       Version,
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE:          func(cmd *cobra.Command, _ []string) error { return cmd.Help() },
+	}
+	root.PersistentFlags().BoolVar(&a.jsonOut, "json", false,
+		"输出结构化信封（给 agent 用）。默认输出人类可读文本")
+	root.SetOut(stdout)
+	root.SetErr(stderr)
+	root.SetArgs(args)
+	root.AddCommand(
+		a.schemaCmd(), a.modulesCmd(), a.validateCmd(),
+		a.draftCmd(), a.showCmd(), a.updateCmd(), a.previewCmd(), a.commitCmd(),
+	)
+
+	if err := root.Execute(); err != nil {
+		// 参数错误归 VALIDATION_FAILED —— 别给 agent 打一整页 usage 当结果
+		fmt.Fprintf(stderr, "[%s] %s\n", model.ValidationFailed, err)
+		return int(model.ValidationFailed)
+	}
+	return a.code
+}

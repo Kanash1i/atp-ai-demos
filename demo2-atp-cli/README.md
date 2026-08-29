@@ -6,17 +6,36 @@
 - 命令表 / opencode 接入 / 里程碑：`../06-atp-cli-设计.md`
 - 实现过程中的决策与踩坑：`DECISIONS.md`
 
-## 当前进度：M4 完成（M1 / M2 / M4）
+## 技术栈
 
-M1 = 状态机与并发正确性；M2 = 命令行外壳、退出码契约、`--json` 信封、本地校验；
-M4 = opencode 接入（`opencode.json` + `AGENTS.md` + skill）。
+**Go 1.25 + cobra + pgx/v5**，单文件静态二进制。
 
-> M3（完整规则引擎）与 M5（XXL-JOB 清理）**刻意押后** —— 演示脚本不依赖它们，
-> 而知识侧的消融表才是核心交付物。见 `../CLAUDE.md` 的硬纪律。
+| | |
+|---|---|
+| CLI 框架 | `spf13/cobra`（kubectl / gh / docker / terraform 的同款）|
+| 数据库 | `jackc/pgx/v5`，**每次调用一条连接、不用连接池** —— 进程只活几毫秒 |
+| JSON Schema | `santhosh-tekuri/jsonschema/v6` |
+| 测试 | 标准库 `testing` + `testcontainers-go`（起真 PostgreSQL 17）|
+
+⭐ **为什么不是 Java**：CLI 被 agent 高频反复调用，冷启动是真实成本。
+同一套设计的 Java 实现实测冷启动 **349 ms**，Go 是 **9 ms** —— 差 39 倍。
+一轮 agent 任务调 20 次，就是 7 秒 vs 0.2 秒。
+
+⭐ **为什么不是 TypeScript**：这个 demo 的核心断言是「10 个线程并发提交同一个 key，
+只创建一条」。事件循环上的 `Promise.all` 是并发不是并行，**测不出行锁与唯一约束的真实行为**；
+Go 的 goroutine 默认跑满 `GOMAXPROCS`，是真的多条连接同时撞库。
+
+## 当前进度
+
+M1（状态机与并发正确性）/ M2（命令层与退出码契约）/ M4（opencode 接入）已完成。
+M3（完整规则引擎）与 M5（XXL-JOB 清理）**刻意押后** —— 演示脚本不依赖它们，
+而知识侧的消融表才是核心交付物。见 `../CLAUDE.md` 的硬纪律。
 
 ```bash
-mvn -pl demo2-atp-cli package -DskipTests
-export ATP_DB_URL=jdbc:postgresql://127.0.0.1:5432/atp ATP_DB_USER=atp ATP_DB_PASSWORD=...
+make build          # 构建 bin/atp
+make db-up          # 起演示库 + 跑迁移 + 写 .env
+make test           # 27 个用例，起真 PostgreSQL 17
+
 ./bin/atp modules -p ECSHOP
 ./bin/atp draft --json --id "$(uuidgen)" -p PC_WEB -t "购物车结算"
 ./bin/atp validate -f draft.json
@@ -27,15 +46,16 @@ export ATP_DB_URL=jdbc:postgresql://127.0.0.1:5432/atp ATP_DB_USER=atp ATP_DB_PA
 
 ⚠️ 配置取不到会 fail fast，**不给默认值** —— 默认值会把「配置漏了」变成「连到了错的库」。
 
+## 结构
+
 | | |
 |---|---|
-| `src/main/resources/db/migration/V0__baseline_legacy.sql` | 老平台现状基线（仅测试用） |
-| `src/main/resources/db/migration/V1__ai_draft_state.sql` | ⭐ 真正要执行到老平台的改造 |
-| `src/main/java/.../store/CaseStore.java` | ⭐ **全项目唯一持有 SQL 的类** |
-| `src/main/java/.../model/{CaseStatus,CaseType,Priority}.java` | 枚举语义（DB 只存 SMALLINT，见 D-112）|
-| `src/main/java/.../{model,rule}/` 里的 `Action` / `LocatorLinter` / `DiagnosticCodes` | 从已删除的 MCP 废案迁入，M3 用（见 D-111）|
-
-状态机：`AI_DRAFT --commit--> DRAFT`（落地成老平台原生的草稿状态，执行器无感知）
+| `migrations/V0__baseline_legacy.sql` | 老平台现状基线（仅测试用） |
+| `migrations/V1__ai_draft_state.sql` | ⭐ 真正要执行到老平台的改造 |
+| `internal/store/` | ⭐ **全项目唯一持有 SQL 的包**（`arch_test.go` 机械检查） |
+| `internal/rule/` | 纯本地规则：零网络、零 DB、零模型调用 |
+| `internal/cli/` | cobra 命令层，很薄 |
+| `assets.go` | 把 DDL 与 schema 嵌进二进制（`go:embed`），单文件分发 |
 
 数据落点：
 - **编辑期只写 `tc_step` 一行**（`step_json` = 完整草稿，状态机与乐观锁也在这）
@@ -43,40 +63,27 @@ export ATP_DB_URL=jdbc:postgresql://127.0.0.1:5432/atp ATP_DB_USER=atp ATP_DB_PA
 
 最高频的路径（反复改草稿）因此是单表单行 CAS，不跨表。见 `DECISIONS.md` **D-118**。
 
-## 跑测试
+状态机：`AI_DRAFT --commit--> DRAFT`（落地成老平台原生的草稿状态，执行器无感知）
 
-```bash
-export DOCKER_HOST=unix:///var/run/docker.sock     # ~/.docker 的 currentContext 是 remote 时必须
-JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn test
-```
+## 测试
 
-74 个用例（17 状态机 + 6 编辑期隔离与投影 + 5 CLI 端到端 + 1 架构不变式 + 45 Action 契约表），起真 **PostgreSQL 17**（Testcontainers），
-**先建老表再跑改造脚本** —— V1 能不能在老平台的形状上执行得下去，本身就被测到了。
+27 个用例，起真 **PostgreSQL 17**（testcontainers-go），**先建老表再跑改造脚本** ——
+V1 能不能在老平台的形状上执行得下去，本身就被测到了。
 
-| 测试类 | 锁定的不变式 |
+| 文件 | 锁定的不变式 |
 |---|---|
-| `ConcurrentDraftTest` | 10 线程同一 UUID → 只插 1 行，其余 9 个 `replayed=true` 且**退出码 0** |
-| `ConcurrentCommitTest` | 10 线程同一 id+version → 1 真提交 + 9 重放；落地状态是普通 `DRAFT` |
-| `TocTouTest` | ⭐ 确认后内容被改过 → `commit` 必须报 `VERSION_CONFLICT` |
-| `CommitGuardTest` | `ck_case_complete` 拦残缺案例；退出码取值契约 |
-| `SchemaShapeTest` | 多条 NULL `case_code` 并存；无级联的孤儿代价；`seq` 唯一；项目→模块→案例链路 |
-| `ActionContractTableTest` | Action 枚举与 locator/input/expected 的契约表（`00-SHARED-CONTEXT` §1.3）|
-| `CliEndToEndTest` | 七步全流程；退出码 10/11/12/14 的契约；幂等重放退出码为 0 |
-| `SqlContainmentTest` | ⭐ 架构不变式：SQL 只出现在 `store` 包（机械检查，不靠约定）|
-| `StepStorageTest` | ⭐ `update` 只写 `tc_step`；commit 投影表头；CHECK 拦下时两张表一起回滚 |
+| `internal/store/concurrency_test.go` | ⭐ **10 个 goroutine 真并行**打同一个 key → 只创建一条，其余 `replayed` 且退出码 0 |
+| `internal/store/toctou_test.go` | ⭐ 确认后内容被改过 → commit 必须报 `VERSION_CONFLICT` |
+| `internal/store/editing_test.go` | `update` 只写 `tc_step`；commit 投影表头；CHECK 拦下时两张表一起回滚 |
+| `internal/store/guard_test.go` | 退出码取值契约；提交后被改 → `STATE_CONFLICT` |
+| `internal/rule/validate_test.go` | ⭐ 必填缺失(14) 与值非法(12) 必须分开；缺信息优先 |
+| `internal/cli/e2e_test.go` | 完整七步；退出码 10/11/12/14；重放退出码为 0 |
+| `arch_test.go` | ⭐ 架构不变式：SQL 只出现在 `internal/store` |
 
 ### 变异检验（这些测试有牙齿）
 
-把 `CaseStore.commit` 的 `AND version = ?` 改成 `AND version >= ?`（放行过期版本），
-`TocTouTest.staleVersionRejected` 立刻红 —— 已实测。
-
-## 已知坑
-
-`Could not find a valid Docker environment` 十有八九**不是**没有 daemon，
-而是 docker-java 谈判到 API 1.32 而 Engine 29 最低要 1.40。见 `DECISIONS.md` **D-101**。
-
-
----
+把 `CaseStore.Commit` 的 `AND version = $4` 改成 `>= $4`（放行过期版本），
+`TestTocTou_StaleVersionRejected` 立刻红 —— 已实测。
 
 ## 用 opencode 验证（端到端演示）
 

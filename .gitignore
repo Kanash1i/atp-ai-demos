@@ -37,3 +37,6 @@ eval/results/raw/
 # 生成的 PDF/DOCX 语料本身**要提交**（clone 下来就能跑三格式对照），
 # 但抽出的图不必：它们只是语料里那张图的副本。
 demo1-atp-rag/corpus/extracted/
+
+# opencode 插件依赖（跑 opencode 时自动装的，不进仓库）
+node_modules/
