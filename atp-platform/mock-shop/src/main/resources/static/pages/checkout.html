@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>ご注文手続き · ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<div id="header-slot"></div>
+<main id="app"></main>
+<script src="/js/cart.js"></script>
+<script src="/js/orders.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  Shop.renderHeader(document.getElementById("header-slot"));
+  const app = document.getElementById("app");
+  const addresses = JSON.parse(localStorage.getItem("atp_addresses") || 'null')
+    || [{ name: "田中 直樹", zip: "1500001", detail: "東京都渋谷区神宮前1-2-3", phone: "09011112222" }];
+
+  function render(selectedIndex = 0) {
+    app.innerHTML = `
+      <div class="panel">
+        <h1>お届け先の選択</h1>
+        <div id="address-list">
+          ${addresses.map((a, i) => `
+            <label data-testid="address-option" class="address-option">
+              <input type="radio" name="addr" ${i === selectedIndex ? "checked" : ""} data-index="${i}">
+              <span>${a.name}　${a.detail}　${a.phone}</span>
+            </label>`).join("")}
+        </div>
+        <button data-testid="address-add-new" class="btn">新しい住所を追加</button>
+        <div data-testid="selected-address" class="selected-address">${addresses[selectedIndex].detail}</div>
+
+        <!-- ⚠️ 这个 id 是**故意**做成 Angular Material 那种自动生成样式的。
+             ATP-ORDER-0002 的定位器是 //div[@id="mat-input-7"]//button —— 违反 STD-002，
+             而 ATP-ORDER-0003 用的是 button[data-testid="checkout-next"]，指的是同一个按钮。
+             一个合规、一个不合规，指向同一个元素：这就是规范校验最好讲的一个对照。 -->
+        <div id="mat-input-7" class="next-wrap">
+          <button data-testid="checkout-next" class="btn btn-primary">次へ</button>
+        </div>
+      </div>
+
+      <div data-testid="order-confirm-panel" class="panel" hidden>
+        <h2>ご注文内容の確認</h2>
+        <table data-testid="confirm-items">
+          <tbody>
+            ${Cart.rows().map(r => `<tr><td>${r.name}</td><td>${r.qty}</td><td>${Cart.yen(r.subtotal)}</td></tr>`).join("")}
+          </tbody>
+        </table>
+        <p>合計 <span data-testid="confirm-total">${Cart.yen(Cart.grandTotal())}</span></p>
+        <button data-testid="order-submit" class="btn btn-primary">注文を確定する</button>
+      </div>
+
+      <div id="result-slot"></div>`;
+    bind(selectedIndex);
+  }
+
+  function bind(selectedIndex) {
+    document.querySelectorAll('[data-testid="address-option"] input').forEach(r => {
+      r.onchange = () => render(+r.dataset.index);
+    });
+
+    document.querySelector('[data-testid="checkout-next"]').onclick = () => {
+      document.querySelector('[data-testid="order-confirm-panel"]').hidden = false;
+    };
+
+    document.querySelector('[data-testid="address-add-new"]').onclick = () => {
+      app.insertAdjacentHTML("afterbegin", `
+        <div class="panel" id="address-form">
+          <h2>新しいお届け先</h2>
+          <label>お名前<input data-testid="address-name" type="text"></label>
+          <label>郵便番号<input data-testid="address-zip" type="text"></label>
+          <label>住所<input data-testid="address-detail" type="text"></label>
+          <label>電話番号<input data-testid="address-phone" type="tel"></label>
+          <button data-testid="address-save" class="btn btn-primary">保存する</button>
+        </div>`);
+      document.querySelector('[data-testid="address-save"]').onclick = () => {
+        const g = (t) => document.querySelector(`[data-testid="${t}"]`).value;
+        addresses.push({ name: g("address-name"), zip: g("address-zip"),
+                         detail: g("address-detail"), phone: g("address-phone") });
+        localStorage.setItem("atp_addresses", JSON.stringify(addresses));
+        // 新地址要自动选中并带进订单 —— ATP-ORDER-0008 断言 selected-address 含新地址
+        render(addresses.length - 1);
+      };
+    };
+
+    document.querySelector('[data-testid="order-submit"]').onclick = () => {
+      const no = Orders.create(Cart.grandTotal(), Cart.rows().map(r => ({ name: r.name, qty: r.qty, price: r.price })));
+      Cart.clear();
+      document.getElementById("result-slot").innerHTML = `
+        <div class="panel">
+          <h2>ご注文ありがとうございました</h2>
+          <p>注文番号：<span data-testid="order-no">${no}</span></p>
+          <p>ステータス：<span data-testid="order-status">支払い待ち</span></p>
+        </div>`;
+    };
+  }
+
+  render();
+</script>
+</body>
+</html>

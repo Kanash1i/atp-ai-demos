@@ -129,6 +129,21 @@ public class CaseQueryService {
                 toVO(result));
     }
 
+    /**
+     * 取领域模型 —— 执行节点要的是这个，不是给前端看的 VO。
+     *
+     * <p>⚠️ 执行器只认 {@link TestCase}：它不知道 MyBatis、不知道 VO，
+     * 这样同一套 Action 翻译逻辑既能跑库里的案例，也能跑测试里手写的案例。
+     */
+    public TestCase loadDomain(String caseId) {
+        TcCase entity = caseMapper.selectById(caseId);
+        if (entity == null) {
+            throw new CaseNotFoundException(caseId);
+        }
+        TcModule module = entity.getModuleId() == null ? null : moduleMapper.selectById(entity.getModuleId());
+        return toDomain(entity, module, loadSteps(caseId));
+    }
+
     /** 单独暴露校验，给 agent 的 {@code validate_case} 工具和保存前的 gate 用 */
     public ValidationVO validate(String caseId) {
         return detail(caseId).validation();

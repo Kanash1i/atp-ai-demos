@@ -34,6 +34,8 @@ public class ExecTask {
     private String videoUrl;
     private String screenshotUrl;
     private String traceUrl;
+    /** 因节点掉线被重新入队的次数。超过上限直接判失败 —— 一条毒任务不该反复拖垮节点 */
+    private Short retryCount;
     private OffsetDateTime queuedAt;
     private OffsetDateTime startedAt;
     private OffsetDateTime finishedAt;

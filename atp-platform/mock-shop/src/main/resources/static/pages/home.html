@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>ホーム · ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<div id="header-slot"></div>
+<main id="app"></main>
+<script src="/js/cart.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  const app = document.getElementById("app");
+  if (Shop.guard(app)) { throw new Error("not logged in"); }
+  Shop.renderHeader(document.getElementById("header-slot"));
+  app.innerHTML = `<div class="panel"><h1>ようこそ、${Shop.S.session.nickname} さん</h1>
+    <p>ATP Shop のデモ環境です。</p></div>`;
+</script>
+</body>
+</html>

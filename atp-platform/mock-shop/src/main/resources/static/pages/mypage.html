@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>マイページ · ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<div id="header-slot"></div>
+<main id="app"></main>
+<script src="/js/cart.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  const app = document.getElementById("app");
+  if (Shop.guard(app)) { throw new Error("not logged in"); }
+  Shop.renderHeader(document.getElementById("header-slot"));
+  const s = Shop.S.session;
+  app.innerHTML = `<div class="panel" data-testid="mypage-profile">
+    <h1>マイページ</h1>
+    <p>ニックネーム：<span data-testid="profile-nickname">${s.nickname}</span></p>
+    <p>ログイン方法：<span data-testid="profile-login-method">${s.method}</span></p>
+  </div>`;
+</script>
+</body>
+</html>

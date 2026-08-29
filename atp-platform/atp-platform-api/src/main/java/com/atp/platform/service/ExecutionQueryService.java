@@ -99,6 +99,14 @@ public class ExecutionQueryService {
             return null;
         }
         int done = nz(run.getPassedCount()) + nz(run.getFailedCount()) + nz(run.getSkippedCount());
+
+        // ⚠️ 「正在跑几条」实时查，不读 exec_run.running_count。
+        //    passed/failed/skipped 是**终态**，冗余存一份没问题（只增不减）；
+        //    但 RUNNING 是瞬态 —— 节点崩溃时它手上那条任务的减法永远不会执行，
+        //    冗余的计数会一直偏高，而且偏多少没人说得清。瞬态就该实时算。
+        int runningNow = taskMapper.selectCount(new LambdaQueryWrapper<ExecTask>()
+                .eq(ExecTask::getRunId, run.getRunId())
+                .eq(ExecTask::getStatus, TaskStatus.RUNNING)).intValue();
         long elapsed = run.getStartedAt() == null ? 0
                 : Duration.between(run.getStartedAt(), OffsetDateTime.now()).toSeconds();
 
@@ -118,7 +126,7 @@ public class ExecutionQueryService {
                 run.getTriggerSource() == null ? null : run.getTriggerSource().name(),
                 done, nz(run.getTotalCount()),
                 nz(run.getPassedCount()), nz(run.getFailedCount()),
-                nz(run.getSkippedCount()), nz(run.getRunningCount()),
+                nz(run.getSkippedCount()), runningNow,
                 elapsed, eta);
     }
 

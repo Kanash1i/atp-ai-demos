@@ -29,5 +29,11 @@
       <groupId>org.postgresql</groupId>
       <artifactId>postgresql</artifactId>
     </dependency>
+    <!-- 执行队列。⚠️ Redis 只做「有新任务了」的通知，任务状态的真相在 PG ——
+         理由见 ExecutionQueue 的类注释 -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-data-redis</artifactId>
+    </dependency>
   </dependencies>
 </project>

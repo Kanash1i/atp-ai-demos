@@ -26,6 +26,7 @@
     <module>atp-agent</module>
     <module>atp-web</module>
     <module>atp-runner</module>
+    <module>mock-shop</module>
   </modules>
 
   <properties>

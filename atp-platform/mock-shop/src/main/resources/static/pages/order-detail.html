@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>注文詳細 · ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<div id="header-slot"></div>
+<main id="app"></main>
+<script src="/js/cart.js"></script>
+<script src="/js/orders.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  Shop.renderHeader(document.getElementById("header-slot"));
+  const no = decodeURIComponent(location.pathname.split("/").pop());
+  const o = Orders.find(no) || Orders.all()[0];
+
+  const app = document.getElementById("app");
+
+  function render() {
+    const cur = Orders.find(o.no) || o;
+    app.innerHTML = `
+      <div data-testid="order-detail" class="panel">
+        <h1>注文 <span data-testid="order-no">${cur.no}</span></h1>
+        <p>ステータス：<span data-testid="order-status">${Orders.label(cur)}</span></p>
+        <table data-testid="order-items">
+          <thead><tr><th>商品</th><th>数量</th><th>金額</th></tr></thead>
+          <tbody>
+            ${cur.items.map(i => `<tr><td>${i.name}</td><td>${i.qty}</td><td>${Orders.yen(i.price)}</td></tr>`).join("")}
+          </tbody>
+        </table>
+        <div data-testid="order-shipping-info" class="panel-inner">
+          <h3>お届け先</h3>
+          <p>${cur.address}</p>
+        </div>
+
+        <!-- ⚠️ 操作按钮必须在**详情页**上：ATP-ORDER-0006/0007/0009 都是
+             直接 OPEN /orders/{no} 然后就地操作，不经过列表页。
+             按状态显示：待支付才能付款/取消，已送达才能申请退货。 -->
+        <div class="cart-actions">
+          ${cur.status === "PENDING" ? `
+            <button data-testid="order-pay" class="btn btn-primary">支払う</button>
+            <button data-testid="order-cancel" class="btn">キャンセル</button>` : ""}
+          ${cur.status === "DELIVERED" ? `
+            <button data-testid="order-return-apply" class="btn">返品申請</button>` : ""}
+        </div>
+      </div>
+      <div id="dialog-slot"></div>`;
+    bind(cur);
+  }
+
+  function bind(cur) {
+    const slot = document.getElementById("dialog-slot");
+    const pay = app.querySelector('[data-testid="order-pay"]');
+    const cancel = app.querySelector('[data-testid="order-cancel"]');
+    const ret = app.querySelector('[data-testid="order-return-apply"]');
+
+    if (pay) pay.onclick = () => {
+      slot.innerHTML = `
+        <div class="dialog">
+          <h2>お支払い</h2>
+          <label data-testid="pay-method-credit" class="inline"><input type="radio" name="pay"> クレジットカード</label>
+          <label data-testid="pay-method-conveni" class="inline"><input type="radio" name="pay"> コンビニ払い</label>
+          <button data-testid="pay-submit" class="btn btn-primary">支払う</button>
+        </div>`;
+      slot.querySelector('[data-testid="pay-submit"]').onclick = () => {
+        Orders.update(cur.no, { status: "PAID" });
+        render();
+      };
+    };
+
+    if (cancel) cancel.onclick = () => {
+      slot.innerHTML = `
+        <div class="dialog">
+          <h2>注文のキャンセル</h2>
+          <textarea data-testid="cancel-reason" rows="3" placeholder="キャンセル理由"></textarea>
+          <button data-testid="cancel-confirm" class="btn btn-primary">キャンセルを確定</button>
+        </div>`;
+      slot.querySelector('[data-testid="cancel-confirm"]').onclick = () => {
+        Orders.update(cur.no, { status: "CANCELLED" });
+        render();
+      };
+    };
+
+    if (ret) ret.onclick = () => {
+      slot.innerHTML = `
+        <div class="dialog">
+          <h2>返品申請</h2>
+          <select data-testid="return-reason">
+            <option>理由を選択</option><option>商品が不良品</option>
+            <option>イメージと違う</option><option>誤って注文した</option>
+          </select>
+          <textarea data-testid="return-detail" rows="3" placeholder="詳細"></textarea>
+          <input data-testid="return-photo" type="file">
+          <span data-testid="uploaded-filename"></span>
+          <button data-testid="return-submit" class="btn btn-primary">申請する</button>
+          <span data-testid="return-no"></span>
+        </div>`;
+      const photo = slot.querySelector('[data-testid="return-photo"]');
+      photo.onchange = () => {
+        const f = photo.files[0];
+        slot.querySelector('[data-testid="uploaded-filename"]').textContent = f ? f.name : "";
+      };
+      slot.querySelector('[data-testid="return-submit"]').onclick = () => {
+        slot.querySelector('[data-testid="return-no"]').textContent =
+          "RTN-" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + "-0001";
+      };
+    };
+  }
+
+  render();
+</script>
+</body>
+</html>
