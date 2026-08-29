@@ -499,10 +499,14 @@ tc_step   一比一。step_json 是完整草稿，编辑期的状态机与乐观
 
 跨表路径只有 `commit` 和 M5 清理任务，两边同序才不会死锁（见 D-120）。
 
-### 白捡的快照
+### ~~白捡的快照~~ —— ⚠️ 已被 D-122 的规整拿走
 
-commit 之后 `step_json` 留着提交那一刻的完整内容。这就是 ChangeSet 方案里的「冻结快照」，
-现在零成本拿到 —— **被追问"用户到底确认了什么"时，库里查得到。**
+原先声称：commit 之后 `step_json` 留着提交那一刻的完整内容，
+相当于零成本拿到了 ChangeSet 方案里的「冻结快照」。
+
+**D-122 加入落地规整之后这条不成立了** —— 快照只剩步骤数组，
+表头已被抹掉、搬进 `tc_case` 的正式列。保留这段记录是因为
+「一个好处被后来的约束拿走」本身值得记：**执行器契约赢了审计便利。**
 
 ### 测试钉死的（`StepStorageTest`）
 
@@ -661,3 +665,64 @@ Go 的 goroutine 默认跑满 `GOMAXPROCS`，`internal/store/concurrency_test.go
 > 那套论证换到任何语言都一字不改。
 > 但**并发测试是个例外**：我需要真并行地打同一行，才能证明唯一约束和 CAS 真的在起作用。
 > 事件循环式的并发测不出这个。所以选了 Go。」
+
+---
+
+## D-122 · commit 时把 `step_json` 规整成老平台的纯步骤数组
+
+**问题来自平台侧（`atp-platform`）的交接单**，不是我自己发现的：
+
+```
+编辑期（正确）  {"case_code":…, "title":…, "steps":[…]}   ← 表头暂存在这里
+落地后（现状）  {"case_code":…, "title":…, "steps":[…]}   ← 没变，仍是对象
+落地后（应为）  [ {seq:1,…}, {seq:2,…} ]                   ← 老平台契约
+```
+
+commit 把表头投影进了 `tc_case` 的正式列，但**没有把 `step_json` 规整回数组**。
+
+### 为什么必须修
+
+保守路线的立身之本是「落库格式与人工案例完全一致，**老执行器无感知照跑**」，
+而老执行器读的是数组。留成对象，那句主张就是假的 ——
+**而且它崩的时候没人知道是谁写进去的**（`CaseQueryService.loadDomain` 会抛，
+但抛出来只说"step_json 解析失败"，追不到写入方）。
+
+平台侧（`CaseWriteMapper.commitStep`）已经按「编辑期对象、落地态数组」实现并验证过。
+**三端（人工 / CLI / agent）统一到这个语义，CLI 是唯一的差异方。**
+
+### 改法
+
+`Commit` 的事务里，在 `projectHeader` 之后、`tx.Commit` 之前：
+
+```sql
+UPDATE tc_step SET step_json = COALESCE(step_json->'steps', step_json), updated_at = now()
+ WHERE case_id = $1
+RETURNING jsonb_typeof(step_json)
+```
+
+**三个要点**：
+
+1. **顺序不能动** —— 必须排在 `ParseHeader` 之后，规整会把表头从 `step_json` 里抹掉。
+2. **SQL 自身幂等** —— 已是数组时 `->'steps'` 返回 NULL，`COALESCE` 原样保留。
+   所以 commit 的重放路径不会把内容改坏。
+3. **⭐ 用 `RETURNING jsonb_typeof` 加了一道守卫**（交接单没提，是我加的）：
+   规整后若仍不是 array，说明草稿里根本没有 `steps` 键 ——
+   `ck_case_complete` 只管表头、管不到这个。与其写进去让执行器崩，不如在这里
+   报 `VALIDATION_FAILED(12)` 并整体回滚。
+
+### 代价
+
+**「冻结快照」那个好处没了**（见上面被划掉的一节）。
+「用户到底确认了什么」现在要拼 `tc_case` 的列 + `tc_step` 的数组两处才答得出，
+而且平台后续改了 `tc_case` 就查不回最初确认的表头。
+
+**执行器契约赢了审计便利，这个取舍要认** —— 执行器读不了的数据，留再完整的快照也没意义。
+
+### 测试
+
+- `TestCommit_NormalizesStepJSONToArray` —— 编辑期 object、落地后 array、表头已抹掉
+- `TestCommit_ReplayDoesNotCorruptNormalizedArray` —— 重放前后 `step_json` 逐字节相同
+- `TestCommit_MissingStepsArrayIsRejected` —— 表头齐全但没有 `steps` 键 → 12 + 回滚
+
+真实链路在共享库（`192.168.0.101:25432`）上验过：
+`object → commit → array 2 步、表头已抹掉 → 重放仍是 array 2 步`。

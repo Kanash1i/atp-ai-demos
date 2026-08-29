@@ -128,6 +128,9 @@ func (s *CaseStore) Update(ctx context.Context, caseID string, expectedVersion i
 //
 // ck_case_complete 正好在这一刻校验必填 —— 编辑期允许残缺，
 // 一离开 AI_DRAFT 就必须完整，数据库直接守门。
+//
+// ⭐ 落地时 step_json 会被规整成【纯步骤数组】：编辑期它是带表头的对象（表头暂存在那儿），
+// 落地后必须与人工案例的格式完全一致，否则老执行器读不了。
 func (s *CaseStore) Commit(ctx context.Context, caseID string, expectedVersion int) model.Result {
 	tx, err := s.conn.Begin(ctx)
 	if err != nil {
@@ -168,10 +171,51 @@ func (s *CaseStore) Commit(ctx context.Context, caseID string, expectedVersion i
 		}
 		return infra(err)
 	}
+
+	// ⭐ 表头已经投影到 tc_case 的正式列，step_json 必须规整回老平台的【纯步骤数组】。
+	//
+	//    保守路线的主张是「落库格式与人工案例完全一致，老执行器无感知照跑」，
+	//    而老执行器读的是数组。留成对象的话那句主张就是假的 ——
+	//    更糟的是它崩的时候没人知道是谁写进去的。
+	//
+	//    ⚠️ 顺序不能动：必须排在 ParseHeader 之后，因为规整会把表头从 step_json 里抹掉。
+	kind, err := normalizeStepJSON(ctx, tx, caseID)
+	if err != nil {
+		return infra(err)
+	}
+	if kind != "array" {
+		// 走到这里说明草稿里根本没有 steps 数组。ck_case_complete 只管表头、管不到这个 ——
+		// 与其写进去让执行器崩，不如在这里挡掉。
+		return model.Fail(model.ValidationFailed,
+			"草稿缺少 steps 数组（规整后 step_json 是 "+kind+"），提交已回滚")
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return infra(err)
 	}
 	return s.readBack(ctx, caseID, "提交成功但读不回")
+}
+
+// normalizeStepJSON 把编辑期的对象格式规整成老平台的纯步骤数组。
+//
+// SQL 本身幂等：对象取 steps；已经是数组时 -> 'steps' 返回 NULL，COALESCE 原样保留。
+// 所以 commit 的幂等重放路径不会把已经规整好的内容改坏。
+//
+// 返回规整后的 jsonb 类型，调用方据此判断草稿里到底有没有 steps。
+func normalizeStepJSON(ctx context.Context, tx pgx.Tx, caseID string) (string, error) {
+	var kind *string
+	err := tx.QueryRow(ctx, `
+		UPDATE tc_step
+		   SET step_json = COALESCE(step_json->'steps', step_json), updated_at = now()
+		 WHERE case_id = $1
+		RETURNING jsonb_typeof(step_json)`, caseID).Scan(&kind)
+	if err != nil {
+		return "", err
+	}
+	if kind == nil {
+		return "null", nil
+	}
+	return *kind, nil
 }
 
 // projectHeader 把冻结快照里的表头写进 tc_case 的正式列，同时翻状态。
