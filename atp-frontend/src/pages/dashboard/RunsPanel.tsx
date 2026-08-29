@@ -8,6 +8,13 @@ import type { RunningBatch } from '../../lib/types';
 
 const RUN_COLS = '168px minmax(0,1fr) 104px 104px 96px 92px 132px';
 
+/** 环比上色。inverted 用于「越大越坏」的指标（平均耗时） */
+function deltaTone(delta: number | null, inverted = false): string {
+  if (delta === null || delta === 0) return 'text-ink-4';
+  const good = inverted ? delta < 0 : delta > 0;
+  return good ? 'text-matsu' : 'text-shu';
+}
+
 function StatCard({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="card-surface px-5 py-[18px]">
@@ -27,10 +34,10 @@ function Stats() {
         <div className="mb-[18px] grid grid-cols-2 gap-4 xl:grid-cols-4">
           <StatCard label={t('runs.today')}>
             <div className="mt-2.5 font-mono text-[30px]">{data.todayTotal.toLocaleString()}</div>
-            <div className="mt-1.5 text-[11.5px] text-matsu">
-              {/* 环比可能为 null（没有昨日数据） */}
+            {/* 环比可能为 null（没有昨日数据）；正负要分开上色，-100% 印成绿的就荒唐了 */}
+            <div className={`mt-1.5 text-[11.5px] ${deltaTone(data.totalDeltaPercent)}`}>
               {data.totalDeltaPercent === null
-                ? <span className="text-ink-4">{t('runs.noYesterday')}</span>
+                ? t('runs.noYesterday')
                 : `${t('runs.vsYesterday')} ${signed(data.totalDeltaPercent, '%')}`}
             </div>
           </StatCard>
@@ -50,10 +57,13 @@ function Stats() {
               {data.avgDurationSec}
               <span className="text-[17px] text-ink-4">s</span>
             </div>
-            <div className="mt-1.5 text-[11.5px] text-yamabuki">
-              {data.avgDurationDelta === null || data.avgDurationDelta === 0
-                ? <span className="text-ink-4">{data.avgDurationDelta === 0 ? '±0s' : t('runs.noYesterday')}</span>
-                : `${t('runs.vsYesterday')} ${signed(data.avgDurationDelta, 's')}`}
+            {/* 耗时是反的：变长才是坏消息 */}
+            <div className={`mt-1.5 text-[11.5px] ${deltaTone(data.avgDurationDelta, true)}`}>
+              {data.avgDurationDelta === null
+                ? t('runs.noYesterday')
+                : data.avgDurationDelta === 0
+                  ? '±0s'
+                  : `${t('runs.vsYesterday')} ${signed(data.avgDurationDelta, 's')}`}
             </div>
           </StatCard>
 

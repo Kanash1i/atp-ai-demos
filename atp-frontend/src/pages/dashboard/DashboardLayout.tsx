@@ -42,13 +42,17 @@ function EngineCard() {
       <div className="mx-4 rounded-md border border-line bg-card px-[14px] py-[13px]">
         <div className="mb-[9px] flex items-center justify-between">
           <span className="text-[11.5px] text-ink-2">Playwright Workers</span>
-          <span className="flex items-center gap-[5px] font-mono text-[10.5px] text-matsu">
-            <LiveDot size={5} />
+          <span className={`flex items-center gap-[5px] font-mono text-[10.5px] ${online ? 'text-matsu' : 'text-ink-4'}`}>
+            {/* 一个都没在线时不要还在那儿绿着呼吸 —— 心跳过期就是过期 */}
+            {online > 0 ? <LiveDot size={5} /> : <span className="inline-block h-[5px] w-[5px] rounded-full bg-ink-5" />}
             {total ? `${online}/${total}` : '—'}
           </span>
         </div>
         <div className="h-[3px] overflow-hidden rounded-[2px] bg-line-5">
-          <div className="animate-bar h-full bg-matsu" style={{ width: `${percent}%` }} />
+          <div
+            className={`animate-bar h-full ${online ? 'bg-matsu' : 'bg-ink-5'}`}
+            style={{ width: `${online ? percent : 100}%` }}
+          />
         </div>
         <div className="mt-[9px] font-mono text-[10px] text-ink-4">
           {total ? `${nodes![0].nodeName} … ${nodes![total - 1].nodeName}` : 'node pool'}
