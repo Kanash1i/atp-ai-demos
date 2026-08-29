@@ -1,0 +1,73 @@
+/* mock-shop 的样式。够朴素、够像个后台系统即可 —— 录像里看着不业余就行。 */
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif;
+  background: #f5f6f8; color: #23262d;
+}
+.site-header {
+  display: flex; align-items: center; gap: 24px;
+  background: #fff; border-bottom: 1px solid #e3e6ec; padding: 0 24px; height: 56px;
+}
+.brand { font-weight: 700; letter-spacing: .02em; color: #b04e72; }
+.main-nav { display: flex; gap: 18px; flex: 1; }
+.main-nav a { color: #4a4f5a; text-decoration: none; font-size: 14px; }
+.main-nav a:hover { color: #b04e72; }
+.user-area { display: flex; align-items: center; gap: 8px; font-size: 14px; position: relative; }
+.user-menu {
+  position: absolute; top: 34px; right: 0; background: #fff;
+  border: 1px solid #e3e6ec; border-radius: 6px; padding: 6px; min-width: 140px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.08);
+}
+main { max-width: 960px; margin: 32px auto; padding: 0 24px; }
+.login-form, .dialog {
+  background: #fff; border: 1px solid #e3e6ec; border-radius: 10px;
+  padding: 28px; max-width: 380px; margin: 60px auto; display: flex; flex-direction: column; gap: 14px;
+}
+.login-form h2, .dialog h2 { margin: 0 0 6px; font-size: 18px; }
+label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: #5b6070; }
+label.inline { flex-direction: row; align-items: center; gap: 8px; }
+input[type=text], input[type=password], input[type=tel], input[type=number], textarea, select {
+  padding: 9px 11px; border: 1px solid #d5d9e2; border-radius: 6px; font-size: 14px; font-family: inherit;
+}
+input:focus { outline: 2px solid #b04e7233; border-color: #b04e72; }
+.btn {
+  padding: 9px 16px; border: 1px solid #d5d9e2; border-radius: 6px;
+  background: #fff; font-size: 14px; cursor: pointer; font-family: inherit;
+}
+.btn-primary { background: #b04e72; border-color: #b04e72; color: #fff; }
+.btn-plain { border: none; background: none; cursor: pointer; font-size: 14px; font-family: inherit; }
+.field-error, .form-error { color: #c0392b; font-size: 12px; min-height: 16px; }
+.form-error { font-size: 13px; }
+.panel { background: #fff; border: 1px solid #e3e6ec; border-radius: 10px; padding: 24px; }
+table { width: 100%; border-collapse: collapse; background: #fff; }
+th, td { padding: 10px 12px; border-bottom: 1px solid #eceef3; text-align: left; font-size: 14px; }
+th { background: #fafbfc; font-weight: 600; color: #5b6070; font-size: 12px; letter-spacing: .04em; }
+[hidden] { display: none !important; }
+
+/* ── 购物车 ─────────────────────────────────────── */
+.price { font-size: 22px; color: #b04e72; font-weight: 600; }
+.toast {
+  background: #2e7d5b; color: #fff; padding: 10px 14px; border-radius: 6px;
+  margin: 12px 0; font-size: 14px;
+}
+.badge-out {
+  background: #fbe9e7; color: #c0392b; border: 1px solid #f5c6c0;
+  padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 8px;
+}
+.badge-ok {
+  background: #e8f5ee; color: #2e7d5b; border: 1px solid #bfe3cf;
+  padding: 4px 10px; border-radius: 4px; font-size: 13px;
+}
+.cart-summary { margin-top: 18px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; font-size: 14px; }
+.cart-summary .grand { font-size: 18px; font-weight: 700; color: #23262d; margin-top: 6px; }
+.coupon-row { margin-top: 18px; display: flex; gap: 8px; align-items: center; }
+.cart-actions { margin-top: 22px; display: flex; gap: 10px; }
+
+/* ── 订单 ───────────────────────────────────────── */
+.breadcrumb { padding: 12px 24px; font-size: 13px; color: #7a8090; }
+.content { max-width: 960px; margin: 0 auto 32px; padding: 0 24px; }
+.filter-bar { max-width: 960px; margin: 0 auto 24px; display: flex; gap: 10px; align-items: center; }
+.address-option { display: flex; gap: 10px; align-items: center; padding: 10px; border: 1px solid #e3e6ec; border-radius: 6px; margin-bottom: 8px; flex-direction: row; }
+.selected-address { margin: 12px 0; padding: 10px; background: #f7f8fa; border-radius: 6px; font-size: 14px; }
+.next-wrap { margin-top: 18px; }
+.panel-inner { margin-top: 18px; padding-top: 14px; border-top: 1px solid #eceef3; }

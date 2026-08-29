@@ -1,5 +1,10 @@
 server:
   port: ${ATP_PORT:8080}
+  tomcat:
+    # ⚠️ 执行节点 PUT 上来的录像可能有几 MB，Tomcat 默认 2MB 会直接拒收，
+    #    而报错在节点侧看是「HTTP 400」，很难联想到是体积限制。
+    max-http-form-post-size: 20MB
+    max-swallow-size: 20MB
 
 spring:
   application:
@@ -11,6 +16,19 @@ spring:
       port: ${REDIS_PORT:6379}
       password: ${REDIS_PASSWORD:}
       database: ${REDIS_DB:0}
+      # ⚠️ 必须显式配超时与连接池。默认配置下长时间空闲的连接会悄悄失效，
+      #    再用时命令一直挂到 60 秒默认超时才报错 —— 表现是「派发接口 500」，
+      #    而 Redis 本身 PING 得通、队列也正常，排查方向很容易被带偏。
+      #    跨 Tailscale 到家里的台式机时，链路更容易断，这个配置更不能省。
+      timeout: 3s
+      connect-timeout: 2s
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          # 借出连接前先探活，拿到死连接就直接换一条
+          time-between-eviction-runs: 30s
 
   datasource:
     type: com.alibaba.druid.pool.DruidDataSource
@@ -42,6 +60,8 @@ mybatis-plus:
       id-type: input
 
 atp:
+  # 执行产物根目录。⚠️ 必须与 atp-runner 的 artifact-dir 指向同一处（同机时）
+  artifact-dir: ${ATP_ARTIFACT_DIR:/tmp/atp-artifacts}
   seed:
     # 默认关。开启：--atp.seed.enabled=true
     enabled: ${ATP_SEED_ENABLED:false}

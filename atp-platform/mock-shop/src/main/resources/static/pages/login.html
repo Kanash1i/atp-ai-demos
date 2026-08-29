@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>ログイン · ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<div id="header-slot"></div>
+<main id="app"></main>
+<script src="/js/cart.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  // 已登录再访问登录页直接回首页 —— 真实站点都这样，也避免案例里出现「登录两次」的怪状态
+  if (Shop.S.session) { location.href = "/home"; }
+  const app = document.getElementById("app");
+  app.innerHTML = Shop.loginFormHtml();
+  Shop.bindLoginForm(app);
+
+  // 会话超时后被送回来时，登录页要显示「登录后会回到哪」——
+  // ATP-LOGIN-0009 断言的就是这个 input 的 value
+  const redirect = new URLSearchParams(location.search).get("redirect");
+  if (redirect) {
+    const hint = document.createElement("input");
+    hint.setAttribute("data-testid", "redirect-hint");
+    hint.value = redirect;
+    hint.readOnly = true;
+    app.querySelector("[data-testid=login-form]").prepend(hint);
+  }
+</script>
+</body>
+</html>

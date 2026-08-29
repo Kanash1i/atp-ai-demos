@@ -1,0 +1,78 @@
+spring:
+  application:
+    name: atp-runner
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      # ⚠️ 节点侧的超时必须**大于** BRPOP 的阻塞时长（poll-timeout-seconds=5），
+      #    否则每次空队列的正常阻塞都会被当成命令超时抛异常。
+      timeout: 10s
+      connect-timeout: 2s
+      lettuce:
+        pool:
+          max-active: 8
+          min-idle: 1
+          time-between-eviction-runs: 30s
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: org.postgresql.Driver
+    url: ${ATP_DB_URL}
+    username: ${ATP_DB_USER}
+    password: ${ATP_DB_PASSWORD}
+    druid:
+      initial-size: 2
+      min-idle: 2
+      max-active: 5
+      connect-properties:
+        stringtype: unspecified
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: com.baomidou.mybatisplus.core.handlers.MybatisEnumTypeHandler
+  global-config:
+    db-config:
+      id-type: input
+
+atp:
+  runner:
+    # ⚠️ 一进程一节点。起第二个节点：--atp.runner.node-name=node-02
+    node-name: ${ATP_NODE_NAME:node-01}
+    # ⚠️ 节点的本地产物目录，与主应用的产物目录**必须不同**：
+    #    同机调试时若指向同一处，"上传"就变成了原地写自己，验证不出任何东西
+    artifact-dir: ${ATP_ARTIFACT_DIR:/tmp/atp-runner-artifacts}
+    upload-enabled: ${ATP_UPLOAD_ENABLED:true}
+    platform-url: ${ATP_PLATFORM_URL:http://localhost:8080}
+    # 案例里的 /testdata/xxx 映射到这里（上传文件用）
+    testdata-dir: ${ATP_TESTDATA_DIR:/tmp/atp-testdata}
+    browser-channel: ${ATP_BROWSER_CHANNEL:chrome}
+    headless: ${ATP_HEADLESS:true}
+    heartbeat-seconds: 30
+    poll-timeout-seconds: 5
+    # 执行环境。案例里的 ${xxx} 从这里取
+    variables:
+      base_url: ${MOCK_SHOP_URL:http://localhost:8088}
+      test_user: tanaka@example.jp
+      test_user_nickname: 田中 直樹
+      lockout_test_user: locked@example.jp
+      sso_portal_url: ${MOCK_SHOP_URL:http://localhost:8088}/sso
+      # 密码重置链接里的 token。真实场景来自邮件，演示环境给个固定值
+      reset_token: demo-reset-token-0001
+      # CART 用
+      sample_product_id: P100
+      valid_coupon_code: SAVE1000
+      # ORDER 用
+      pending_order_no: ORD-20260830-0001
+      delivered_order_no: ORD-20260829-0002
+    # ⚠️ 凭据。案例里的 @cred{xxx} 从这里取，执行日志里只会出现 ***
+    credentials:
+      test_user_password: ${ATP_TEST_USER_PASSWORD:Passw0rd!}
+      lockout_wrong_pwd: whatever
+      reset_new_password: NewPassw0rd!
+
+logging:
+  level:
+    root: WARN
+    com.atp: INFO

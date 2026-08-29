@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>注文履歴 · ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<!-- ⚠️⚠️ 这三个 div 的层级是**契约**，不是随手写的布局。
+     ATP-ORDER-0001 用的定位器是绝对路径：
+         /html/body/div[1]/div[3]/table/tbody/tr[1]/td[4]/span
+     也就是说：body 的第 1 个 div 里，它的第 3 个 div 直接裹着 table，
+     表格第一行第 4 列的 span 是订单状态。
+     在这中间插一层 div、或者把 table 挪出去，这条案例立刻失效 ——
+     而这恰恰就是 STD-001 禁止绝对路径的理由，这条案例是留着当反面教材的。 -->
+<div id="page">
+  <div id="header-slot"></div>
+  <div class="breadcrumb">ホーム / 注文履歴</div>
+  <div class="content">
+    <table data-testid="order-list">
+      <thead><tr><th>注文番号</th><th>注文日時</th><th>金額</th><th>ステータス</th><th>操作</th></tr></thead>
+      <tbody id="order-body"></tbody>
+    </table>
+  </div>
+</div>
+<div id="filter-slot"></div>
+<div id="dialog-slot"></div>
+<script src="/js/cart.js"></script>
+<script src="/js/orders.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  Shop.renderHeader(document.getElementById("header-slot"));
+
+  let filter = "";
+
+  function render() {
+    const list = Orders.all().filter(o => !filter || o.status === filter);
+    document.getElementById("order-body").innerHTML = list.map(o => `
+      <tr data-testid="order-row">
+        <td><span data-testid="order-no">${o.no}</span></td>
+        <td>${o.date}</td>
+        <td>${Orders.yen(o.amount)}</td>
+        <td><span data-testid="order-status">${Orders.label(o)}</span></td>
+        <td>
+          <a data-testid="order-detail-link" href="/orders/${o.no}">詳細</a>
+          ${o.status === "PENDING" ? `
+            <button data-testid="order-pay" class="btn" data-no="${o.no}">支払う</button>
+            <button data-testid="order-cancel" class="btn" data-no="${o.no}">キャンセル</button>` : ""}
+          ${o.status === "DELIVERED" ? `
+            <button data-testid="order-return-apply" class="btn" data-no="${o.no}">返品申請</button>` : ""}
+        </td>
+      </tr>`).join("");
+
+    document.getElementById("filter-slot").innerHTML = `
+      <div class="panel filter-bar">
+        <select data-testid="order-status-filter">
+          <option value="">すべて</option>
+          ${Object.entries(Orders.STATUS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("")}
+        </select>
+        <button data-testid="order-filter-apply" class="btn">絞り込む</button>
+      </div>`;
+    bind();
+  }
+
+  function bind() {
+    document.querySelectorAll('[data-testid="order-cancel"]').forEach(b => b.onclick = () => openCancel(b.dataset.no));
+    document.querySelectorAll('[data-testid="order-pay"]').forEach(b => b.onclick = () => openPay(b.dataset.no));
+    document.querySelectorAll('[data-testid="order-return-apply"]').forEach(b => b.onclick = () => openReturn(b.dataset.no));
+    document.querySelector('[data-testid="order-filter-apply"]').onclick = () => {
+      // ⚠️ 筛选值取的是 select 的 value（状态码），而案例 SELECT 传的是显示文本「キャンセル済み」——
+      //    Playwright 的 selectOption 传字符串时会依次按 value / label 匹配，所以两边都能中
+      filter = document.querySelector('[data-testid="order-status-filter"]').value;
+      render();
+    };
+  }
+
+  function openCancel(no) {
+    document.getElementById("dialog-slot").innerHTML = `
+      <div class="dialog">
+        <h2>注文のキャンセル</h2>
+        <textarea data-testid="cancel-reason" rows="3" placeholder="キャンセル理由"></textarea>
+        <button data-testid="cancel-confirm" class="btn btn-primary">キャンセルを確定</button>
+      </div>`;
+    document.querySelector('[data-testid="cancel-confirm"]').onclick = () => {
+      Orders.update(no, { status: "CANCELLED" });
+      document.getElementById("dialog-slot").innerHTML = "";
+      render();
+    };
+  }
+
+  function openPay(no) {
+    document.getElementById("dialog-slot").innerHTML = `
+      <div class="dialog">
+        <h2>お支払い</h2>
+        <label data-testid="pay-method-credit" class="inline"><input type="radio" name="pay"> クレジットカード</label>
+        <label data-testid="pay-method-conveni" class="inline"><input type="radio" name="pay"> コンビニ払い</label>
+        <button data-testid="pay-submit" class="btn btn-primary">支払う</button>
+      </div>`;
+    document.querySelector('[data-testid="pay-submit"]').onclick = () => {
+      Orders.update(no, { status: "PAID" });
+      document.getElementById("dialog-slot").innerHTML = "";
+      render();
+    };
+  }
+
+  function openReturn(no) {
+    document.getElementById("dialog-slot").innerHTML = `
+      <div class="dialog">
+        <h2>返品申請</h2>
+        <select data-testid="return-reason">
+          <option>理由を選択</option>
+          <option>商品が不良品</option>
+          <option>イメージと違う</option>
+          <option>誤って注文した</option>
+        </select>
+        <textarea data-testid="return-detail" rows="3" placeholder="詳細"></textarea>
+        <input data-testid="return-photo" type="file">
+        <span data-testid="uploaded-filename"></span>
+        <button data-testid="return-submit" class="btn btn-primary">申請する</button>
+        <span data-testid="return-no"></span>
+      </div>`;
+    const photo = document.querySelector('[data-testid="return-photo"]');
+    // 上传后要显示文件名 —— ATP-ORDER-0007 第 6 步断言的就是它
+    photo.onchange = () => {
+      const f = photo.files[0];
+      document.querySelector('[data-testid="uploaded-filename"]').textContent = f ? f.name : "";
+    };
+    document.querySelector('[data-testid="return-submit"]').onclick = () => {
+      document.querySelector('[data-testid="return-no"]').textContent =
+        "RTN-" + new Date().toISOString().slice(0, 10).replace(/-/g, "") + "-0001";
+    };
+  }
+
+  render();
+</script>
+</body>
+</html>

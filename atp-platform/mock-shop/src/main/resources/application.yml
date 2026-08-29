@@ -1,0 +1,19 @@
+server:
+  # ⚠️ 与 atp-web(8080) 错开。mock-shop 必须与执行节点同机 ——
+  #    浏览器访问被测页面要是绕 Tailscale 回云端，每个 OPEN_URL 都多几十毫秒，
+  #    家里网络一抖执行就失败，那会让「执行失败」变成噪音，掩盖真正的用例失败。
+  port: ${MOCK_SHOP_PORT:8088}
+
+spring:
+  application:
+    name: mock-shop
+  web:
+    resources:
+      # 演示环境别缓存，改了页面刷新就生效
+      cache:
+        period: 0
+
+logging:
+  level:
+    root: WARN
+    com.atp.mock: INFO

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<div id="header-slot"></div>
+<main id="app"></main>
+<script src="/js/cart.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  // SSO 免密：直接建立会话，登录方式标记为 SSO ——
+  // 案例最后一步断言 span[login-method] 的文本是「SSO」
+  Shop.S.login("tanaka@example.jp", false, "SSO");
+  Shop.renderHeader(document.getElementById("header-slot"));
+  document.getElementById("app").innerHTML =
+    `<div class="panel"><h1>ようこそ、${Shop.S.session.nickname} さん</h1>
+     <p>SSO 経由でログインしました。</p></div>`;
+</script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>カート · ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<div id="header-slot"></div>
+<main id="app"></main>
+<script src="/js/cart.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  // 首次进购物车时预置商品，模拟「被测环境本来就有数据」
+  Cart.seedIfAbsent();
+  Shop.renderHeader(document.getElementById("header-slot"));
+  const app = document.getElementById("app");
+
+  function render() {
+    const rows = Cart.rows();
+    if (rows.length === 0) {
+      app.innerHTML = `
+        <div class="panel">
+          <div data-testid="cart-empty">カートに商品がありません</div>
+          <a data-testid="continue-shopping" class="btn" href="/products/P100">買い物を続ける</a>
+        </div>`;
+      return;
+    }
+
+    app.innerHTML = `
+      <div class="panel">
+        <h1>ショッピングカート（<span data-testid="cart-item-count">${Cart.lineCount()}</span> 件）</h1>
+        <div data-testid="cart-error" class="form-error"></div>
+        <table data-testid="cart-table">
+          <thead><tr><th>商品</th><th>数量</th><th>小計</th><th></th></tr></thead>
+          <tbody>
+            ${rows.map((r, i) => `
+              <tr data-testid="cart-row" data-stock="${r.stock}">
+                <td><span data-testid="item-name">${r.name}</span>
+                    ${r.stock === "out" ? '<span class="badge-out">在庫切れ</span>' : ""}</td>
+                <td>
+                  <input data-testid="cart-item-qty" type="number" min="1" value="${r.qty}" style="width:64px">
+                  <button data-testid="cart-qty-update" class="btn" data-index="${i}">更新</button>
+                </td>
+                <td><span data-testid="cart-item-subtotal">${Cart.yen(r.subtotal)}</span></td>
+                <td><button data-testid="cart-item-remove" class="btn" data-index="${i}">削除</button></td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+
+        <div class="cart-summary">
+          <div>小計 <span data-testid="cart-subtotal">${Cart.yen(Cart.subtotal())}</span></div>
+          <div>送料 <span data-testid="cart-shipping-fee">${Cart.yen(Cart.shipping())}</span></div>
+          ${Cart.discount() > 0
+            ? `<div>割引 <span data-testid="cart-discount">-${Cart.yen(Cart.discount())}</span></div>` : ""}
+          <div class="grand">合計 <span data-testid="cart-grand-total">${Cart.yen(Cart.grandTotal())}</span></div>
+        </div>
+
+        <div class="coupon-row">
+          <input data-testid="coupon-code" type="text" placeholder="クーポンコード">
+          <button data-testid="coupon-apply" class="btn">適用</button>
+          ${Cart.appliedCoupon()
+            ? `<span data-testid="coupon-applied-badge" class="badge-ok">${Cart.appliedCoupon()} 適用中</span>` : ""}
+        </div>
+
+        <div class="cart-actions">
+          <button data-testid="cart-checkout" class="btn btn-primary">レジに進む</button>
+          <button data-testid="cart-clear" class="btn">カートを空にする</button>
+        </div>
+      </div>
+      <div id="confirm-dialog" class="dialog" hidden>
+        <p>カートを空にしますか？</p>
+        <button data-testid="confirm-dialog-ok" class="btn btn-primary">OK</button>
+      </div>`;
+
+    bind();
+  }
+
+  function bind() {
+    const $ = (t) => app.querySelector(`[data-testid="${t}"]`);
+
+    app.querySelectorAll('[data-testid="cart-qty-update"]').forEach(btn => {
+      btn.onclick = () => {
+        const i = +btn.dataset.index;
+        const qty = app.querySelectorAll('[data-testid="cart-item-qty"]')[i].value;
+        Cart.setQty(i, qty);
+        render();
+      };
+    });
+
+    app.querySelectorAll('[data-testid="cart-item-remove"]').forEach(btn => {
+      btn.onclick = () => {
+        Cart.removeAt(+btn.dataset.index);
+        render();
+        // 删除提示要在重绘之后插入，否则 render() 会把它抹掉
+        const toast = document.createElement("div");
+        toast.setAttribute("data-testid", "remove-success-toast");
+        toast.className = "toast";
+        toast.textContent = "商品を削除しました";
+        app.prepend(toast);
+      };
+    });
+
+    $("cart-checkout").onclick = () => {
+      // ⚠️ 含缺货商品时必须拦下，且不能渲染出结算表单 ——
+      //    ATP-CART-0007 第 5 步断言 checkout-address-form 不存在
+      if (Cart.hasOutOfStock()) {
+        $("cart-error").textContent = "在庫切れの商品が含まれています";
+        return;
+      }
+      location.href = "/checkout";
+    };
+
+    $("coupon-apply").onclick = () => {
+      const code = $("coupon-code").value.trim();
+      if (!Cart.applyCoupon(code)) {
+        $("cart-error").textContent = "クーポンコードが無効です";
+        return;
+      }
+      render();
+    };
+
+    $("cart-clear").onclick = () => {
+      const dlg = document.getElementById("confirm-dialog");
+      dlg.hidden = false;
+      dlg.querySelector('[data-testid="confirm-dialog-ok"]').onclick = () => {
+        Cart.clear();
+        render();
+      };
+    };
+  }
+
+  render();
+</script>
+</body>
+</html>

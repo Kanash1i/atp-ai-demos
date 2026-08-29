@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>商品詳細 · ATP Shop</title>
+  <link rel="stylesheet" href="/css/shop.css">
+</head>
+<body>
+<div id="header-slot"></div>
+<main id="app"></main>
+<script src="/js/cart.js"></script>
+<script src="/js/shop.js"></script>
+<script>
+  // 商品页不要求登录 —— 案例直接 OPEN_URL 就点加入购物车
+  Shop.renderHeader(document.getElementById("header-slot"));
+
+  const id = location.pathname.split("/").pop();
+  const p = Cart.PRODUCTS[id] || Cart.PRODUCTS.P100;
+
+  document.getElementById("app").innerHTML = `
+    <div class="panel" data-testid="product-detail">
+      <h1 data-testid="product-name">${p.name}</h1>
+      <p class="price" data-testid="product-price">${Cart.yen(p.price)}</p>
+      <p data-testid="product-stock">${p.stock === "out" ? "在庫切れ" : "在庫あり"}</p>
+      <button data-testid="add-to-cart" class="btn btn-primary">カートに入れる</button>
+      <div data-testid="add-to-cart-toast" class="toast" hidden>カートに追加しました</div>
+    </div>`;
+
+  document.querySelector('[data-testid="add-to-cart"]').onclick = () => {
+    Cart.add(id);
+    // 角标要立刻刷新 —— ATP-CART-0003 点完直接断言它变成 1
+    document.querySelector('[data-testid="cart-badge-count"]').textContent = Cart.count();
+    const toast = document.querySelector('[data-testid="add-to-cart-toast"]');
+    toast.hidden = false;
+    setTimeout(() => { toast.hidden = true; }, 4000);
+  };
+</script>
+</body>
+</html>
