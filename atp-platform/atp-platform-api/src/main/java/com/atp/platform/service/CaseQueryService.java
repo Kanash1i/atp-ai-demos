@@ -3,6 +3,7 @@ package com.atp.platform.service;
 import com.atp.common.enums.StdCode;
 import com.atp.common.util.DisplayTime;
 import com.atp.common.model.Step;
+import com.atp.common.model.StepJson;
 import com.atp.common.model.TestCase;
 import com.atp.common.validation.StandardsValidator;
 import com.atp.common.validation.ValidationResult;
@@ -200,15 +201,6 @@ public class CaseQueryService {
     }
 
     private ValidationVO toVO(ValidationResult result) {
-        return new ValidationVO(
-                result.passed(),
-                result.count(StdCode.Severity.ERROR),
-                result.count(StdCode.Severity.WARN),
-                result.count(StdCode.Severity.INFO),
-                result.violatedCodes(),
-                result.findings().stream()
-                        .map(f -> new ValidationVO.FindingVO(
-                                f.std().display(), f.severity().name(), f.seq(), f.message()))
-                        .toList());
+        return ValidationVO.from(result);
     }
 }

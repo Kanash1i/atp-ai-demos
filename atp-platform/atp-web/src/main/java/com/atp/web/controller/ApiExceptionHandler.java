@@ -2,7 +2,9 @@ package com.atp.web.controller;
 
 import com.atp.platform.service.ApprovalAlreadyDecidedException;
 import com.atp.platform.service.ApprovalNotFoundException;
+import com.atp.platform.service.CaseConflictException;
 import com.atp.platform.service.CaseNotFoundException;
+import com.atp.platform.service.CaseValidationException;
 import com.atp.platform.service.TaskNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -34,6 +36,38 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ApprovalAlreadyDecidedException.class)
     public ProblemDetail conflict(ApprovalAlreadyDecidedException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    /**
+     * 编辑期的版本冲突。
+     *
+     * <p>与审批的并发冲突同样是 409 —— 请求没错，是状态变了。
+     */
+    @ExceptionHandler(CaseConflictException.class)
+    public ProblemDetail caseConflict(CaseConflictException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+    }
+
+    /**
+     * 规范校验未通过。
+     *
+     * <p>⚠️ 用 **422 Unprocessable Entity** 而不是 400：请求格式完全正确，
+     * 是内容不符合业务规则。而且要把**每一条违反的明细**带回去 ——
+     * 前端要高亮到具体步骤行，agent 要据此自我修正，只给一句「校验失败」的话它只能瞎改。
+     */
+    @ExceptionHandler(CaseValidationException.class)
+    public ProblemDetail caseInvalid(CaseValidationException e) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(
+                HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
+        pd.setProperty("violatedCodes", e.getResult().violatedCodes());
+        pd.setProperty("findings", e.getResult().findings().stream()
+                .map(f -> java.util.Map.of(
+                        "std", f.std().display(),
+                        "severity", f.severity().name(),
+                        "seq", f.seq() == null ? -1 : f.seq(),
+                        "message", f.message()))
+                .toList());
+        return pd;
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
