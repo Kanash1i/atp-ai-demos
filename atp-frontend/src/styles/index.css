@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+/* 字体自托管：CSP 无关，离线也能跑，演示时不依赖 Google Fonts 的网络 */
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/zen-kaku-gothic-new/400.css";
+@import "@fontsource/zen-kaku-gothic-new/700.css";
+@import "@fontsource/zen-kaku-gothic-new/900.css";
+/* CJK 字体按 unicode-range 切成上百个子集，每多一个字重就多一百多条 @font-face。
+   只留实际用到的两档：正文 400、标题 700（900 由 700 合成加粗，视觉差别在这个字号下看不出来）。 */
+@import "@fontsource/noto-sans-sc/400.css";
+@import "@fontsource/noto-sans-sc/700.css";
+
+/* ============================================================
+   设计令牌 —— 和风精密：暖白纸、发丝线、朱色单点强调
+   稿子里的每一个色值都在这里，组件里不再出现裸 hex
+   ============================================================ */
+@theme {
+  --color-paper:        #FAF8F5;
+  --color-card:         #FFFFFF;
+  --color-rail:         #F4F1EB;
+  --color-surface:      #F5F2ED;
+  --color-surface-2:    #FBF9F6;
+
+  --color-ink:          #1B1714;
+  --color-ink-2:        #56504A;
+  --color-ink-3:        #8E877E;
+  --color-ink-4:        #A9A198;
+  --color-ink-5:        #BDB5AB;
+  --color-ink-6:        #CFC7BB;
+  --color-ink-dim:      #6E665E;
+  --color-ink-inv:      #B5ADA4;
+
+  --color-line:         #E7E1D7;
+  --color-line-2:       #D8D1C4;
+  --color-line-3:       #F5F1EA;
+  --color-line-4:       #F0ECE4;
+  --color-line-5:       #EDE8E0;
+  --color-line-dark:    #332D28;
+
+  /* 朱 —— 唯一的强调色 */
+  --color-shu:          #C8402E;
+  --color-shu-hover:    #AD3626;
+  --color-shu-deep:     #9E2E1F;
+  --color-shu-soft:     #FAEDEA;
+
+  /* 藍 —— 信息 / AI */
+  --color-ai:           #2E5170;
+  --color-ai-soft:      #EDF1F5;
+
+  /* 松 —— 通过 */
+  --color-matsu:        #4A7C59;
+  --color-matsu-soft:   #EDF5EF;
+
+  /* 山吹 —— 警告 */
+  --color-yamabuki:     #A8760F;
+  --color-yamabuki-soft:#FDF6E8;
+
+  --font-sans: 'IBM Plex Sans', 'Zen Kaku Gothic New', 'Noto Sans SC', 'Hiragino Sans', 'Yu Gothic', system-ui, sans-serif;
+  --font-jp:   'Zen Kaku Gothic New', 'Noto Sans SC', 'IBM Plex Sans', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* 稿子用的是 3/4/5/6，Tailwind 默认的 4/6/8 会整体偏圆 */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 6px;
+}
+
+@layer base {
+  * { box-sizing: border-box; }
+  html, body, #root { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--color-shu); text-decoration: none; }
+  a:hover { color: var(--color-shu-deep); }
+  button { font-family: inherit; }
+}
+
+@layer components {
+  /* 细滚动条 —— 稿子里的 .scr */
+  .scrollable {
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-2) transparent;
+  }
+  .scrollable::-webkit-scrollbar { width: 8px; }
+  .scrollable::-webkit-scrollbar-thumb { background: var(--color-line-2); border-radius: 4px; }
+  .scrollable::-webkit-scrollbar-track { background: transparent; }
+
+  .card-surface {
+    background: var(--color-card);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-lg);
+  }
+}
+
+@layer utilities {
+  /* 「正在发生」的呼吸点：执行中 / 在线节点 */
+  @keyframes atp-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+  .animate-live { animation: atp-pulse 1.6s ease-in-out infinite; }
+
+  @keyframes atp-grow { from { width: 0 } }
+  .animate-bar { animation: atp-grow 1.1s cubic-bezier(.16,.84,.34,1) both; }
+
+  @keyframes atp-up { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: none } }
+  .animate-up { opacity: 0; animation: atp-up .8s cubic-bezier(.16,.84,.34,1) forwards; }
+}

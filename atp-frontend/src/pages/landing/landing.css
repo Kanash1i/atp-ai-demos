@@ -1,0 +1,71 @@
+/* ============================================================
+   Landing 专用：打字机 + 滚动淡入
+   ============================================================ */
+
+/* --- 打字机 ---------------------------------------------------
+   不用「一个字一个字 append 文本」的做法：那样渐变会随可见宽度不断重算，
+   字打到一半颜色是错的。
+   这里整句先排好（渐变横跨整句），再用 clip-path 从左往右揭开，
+   光标同步走 left: 0 → 100%，两者用同一条 steps 曲线 ——
+   于是全角中日文和比例宽的拉丁文都能对齐，不必按字宽算像素。
+   ------------------------------------------------------------ */
+.tw-wrap {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.tw-text {
+  display: block;
+  background-image: linear-gradient(98deg, #1B1714 0%, #5A2A20 42%, #C8402E 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  clip-path: inset(0 var(--tw-clip, 100%) 0 0);
+  transition: clip-path var(--tw-dur, 0ms) steps(var(--tw-steps, 1), end);
+}
+
+.tw-caret {
+  position: absolute;
+  top: 0.12em;
+  bottom: 0.2em;
+  left: var(--tw-left, 0%);
+  width: 4px;
+  background: #C8402E;
+  transition: left var(--tw-dur, 0ms) steps(var(--tw-steps, 1), end);
+  animation: tw-blink 0.9s step-end infinite;
+}
+
+@keyframes tw-blink {
+  0%, 100% { background-color: #C8402E; }
+  50%      { background-color: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tw-text  { transition: none; clip-path: inset(0 0 0 0); }
+  .tw-caret { transition: none; animation: none; }
+}
+
+/* --- 滚动淡入：只 fade in，不 fade out ------------------------
+   进入视口时揭开一次就不再管它。IntersectionObserver 在看到之后
+   立刻 unobserve，所以往回滚不会再淡出。
+   ------------------------------------------------------------ */
+.reveal {
+  opacity: 0;
+  transform: translateY(34px);
+  filter: blur(4px);
+  transition: opacity .7s cubic-bezier(.16,.84,.34,1),
+              transform .7s cubic-bezier(.16,.84,.34,1),
+              filter .7s cubic-bezier(.16,.84,.34,1);
+}
+
+.reveal.is-in {
+  opacity: 1;
+  transform: none;
+  filter: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; filter: none; transition: none; }
+}

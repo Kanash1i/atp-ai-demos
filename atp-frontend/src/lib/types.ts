@@ -1,0 +1,241 @@
+/**
+ * 后端契约（02-前端契约.md §三）的 TS 映射。
+ *
+ * 命名风格是刻意的两套：外层 camelCase，`steps[]` 内部 snake_case。
+ * steps 的形状是平台 / agent / atp CLI(Go) / Playwright 执行器四方共享的
+ * `tc_step.step_json`，在表示层转成 camelCase 会让 API 和库里长得不一样。
+ */
+
+export type Priority = 'P0' | 'P1' | 'P2' | 'P3';
+export type CaseStatus = 'DRAFT' | 'ACTIVE' | 'DEPRECATED' | 'AI_DRAFT';
+export type CaseType = 'IOS' | 'ANDROID' | 'PC_WEB';
+export type Severity = 'ERROR' | 'WARN' | 'INFO';
+export type ExecStatus = 'PASSED' | 'FAILED' | 'SKIPPED' | 'RUNNING' | 'PENDING' | 'ABORTED';
+export type ApprovalType = 'RULE_EXCEPTION' | 'CASE_CHANGE' | 'DATASET_RELEASE';
+export type ApprovalStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'HOLD';
+export type Decision = 'APPROVED' | 'REJECTED' | 'HOLD';
+
+/* ---------- 案例中心 ---------- */
+
+export interface Project {
+  projectId: string;
+  /** 本身就是日中双语串（`EC サイト / 通販フロント`），不参与 i18n */
+  projectName: string;
+  moduleCount?: number;
+  caseCount?: number;
+}
+
+export interface TreeCase {
+  caseId: string;
+  caseCode: string;
+  /** case_code 的后四位。⚠️ 存量有不合规编号（ATP-ADMIN-0011-V2），别假设总是 4 位数字 */
+  seqNo: string;
+  title: string;
+  priority: Priority;
+  status: CaseStatus;
+}
+
+export interface TreeModule {
+  moduleId: string;
+  moduleCode: string;
+  moduleName: string;
+  caseCount: number;
+  cases: TreeCase[];
+}
+
+/** tc_step.step_json 的元素 —— 四方共享契约，保持 snake_case */
+export interface CaseStep {
+  step_id?: string;
+  case_id?: string;
+  seq: number;
+  action: string;
+  locator_type: string | null;
+  locator_value: string | null;
+  input_data: string | null;
+  expected: string | null;
+  wait_strategy: string | null;
+  wait_timeout_sec: number | null;
+  on_failure: string | null;
+  description: string | null;
+}
+
+export interface ValidationFinding {
+  std: string;
+  severity: Severity;
+  /** null = 案例级问题（如编号不合规），不指向任何步骤 */
+  seq: number | null;
+  /** 后端生成的整句中文判断理由，当作领域内容，不参与 i18n */
+  message: string;
+}
+
+export interface ValidationResult {
+  passed: boolean;
+  errorCount: number;
+  warnCount: number;
+  infoCount: number;
+  violatedCodes: string[];
+  findings: ValidationFinding[];
+}
+
+export interface CaseDetail {
+  caseId: string;
+  caseCode: string;
+  title: string;
+  moduleId: string;
+  moduleCode: string;
+  moduleName: string;
+  projectId: string;
+  priority: Priority;
+  status: CaseStatus;
+  caseType: CaseType;
+  author: string | null;
+  precondition: string | null;
+  updatedAt: string;
+  /** 乐观锁版本号，编辑时要原样带回来 */
+  version: number;
+  steps: CaseStep[];
+  validation: ValidationResult;
+}
+
+/* ---------- 执行状态 ---------- */
+
+export interface ExecStats {
+  todayTotal: number;
+  /** 分母是 PASSED + FAILED，不含 SKIPPED */
+  passRate: number;
+  avgDurationSec: number;
+  failedCount: number;
+  failedP0Count: number;
+  /** 与昨日环比，没有昨日数据时为 null */
+  totalDeltaPercent: number | null;
+  /** 单位秒，正负都有，可能为 null */
+  avgDurationDelta: number | null;
+}
+
+export interface RunningBatch {
+  runCode: string;
+  projectName?: string;
+  suiteName?: string;
+  browser?: string;
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  running: number;
+  elapsed?: string;
+  remaining?: string;
+}
+
+export interface RecentRun {
+  taskId: string;
+  caseCode: string;
+  caseTitle: string;
+  browser: string;
+  nodeName: string;
+  status: ExecStatus;
+  /** 已格式化（48.4s / 1m 4s），SKIPPED 为 null */
+  duration: string | null;
+  finishedAt: string | null;
+  hasVideo: boolean;
+}
+
+export interface TaskStep {
+  seq: number;
+  action: string;
+  status: ExecStatus;
+  duration: string | null;
+  errorMsg?: string | null;
+  screenshotUrl?: string | null;
+}
+
+export interface TaskDetail {
+  taskId: string;
+  runCode: string;
+  caseId: string;
+  caseCode: string;
+  caseTitle: string;
+  browser: string;
+  nodeName: string;
+  status: ExecStatus;
+  duration: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  failedSeq: number | null;
+  errorMsg: string | null;
+  /** ⚠️ /api/artifacts/** 要 M2 才实现，现在请求会 404 */
+  videoUrl: string | null;
+  screenshotUrl: string | null;
+  steps: TaskStep[];
+}
+
+export interface ExecNode {
+  nodeName: string;
+  status: string;
+  /** ⚠️ 在线与否看这个（心跳算出来的），不要看 status —— 节点崩了不会自己改成 OFFLINE */
+  online: boolean;
+  currentTaskId: string | null;
+  lastHeartbeat: string;
+}
+
+/* ---------- 审批中心 ---------- */
+
+export interface ApprovalStats {
+  awaitingMe: number;
+  submittedByMe: number;
+  completed: number;
+  overdue: number;
+}
+
+export interface RuleExceptionPayload {
+  violated_std: string;
+  step_seq: number;
+  reason: string;
+  expire_at: string;
+}
+
+export interface CaseChangePayload {
+  diff_summary: string[];
+  standards_check: string;
+  /** 整包快照，不是变更字段 —— 待审期间案例可能又被改了，diff 由前端算 */
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+}
+
+export interface DatasetReleasePayload {
+  corpus_name: string;
+  docs_count: number;
+  index_progress: number;
+  evaluated: boolean;
+}
+
+export type ApprovalPayload = RuleExceptionPayload | CaseChangePayload | DatasetReleasePayload;
+
+export interface Approval {
+  requestId: string;
+  type: ApprovalType;
+  targetId: string;
+  title: string;
+  summary: string | null;
+  status: ApprovalStatus;
+  submitter: string;
+  submittedAt: string;
+  /** 后端算好的相对时间；status !== PENDING 时为 null */
+  slaRemaining: string | null;
+  overdue: boolean;
+  assignee: string;
+  decidedBy: string | null;
+  decidedAt: string | null;
+  decisionNote: string | null;
+  payload: ApprovalPayload;
+}
+
+/* ---------- 错误 ---------- */
+
+/** RFC 7807 */
+export interface ProblemDetail {
+  type: string;
+  title: string;
+  status: number;
+  detail: string;
+  instance: string;
+}
