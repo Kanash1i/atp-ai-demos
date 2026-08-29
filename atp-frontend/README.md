@@ -43,7 +43,13 @@ cp .env.example .env.local
 | 变量 | 作用 |
 |---|---|
 | `VITE_API_ORIGIN` | dev 时 vite 把 `/api` 代理到这里，默认 `http://localhost:8080` |
+| `VITE_API_BASE` | 前端请求前缀，默认空 = 同源 `/api`。只有不经代理、直连别的域时才设 |
 | `VITE_DEMO_USER` | M1 还没接 Sa-Token，当前用户由 `?user=` 带。`kaneshiro` / `sato` / `tanaka` |
+
+> ⚠️ **代理会把 `Origin` 头摘掉**，这是必需的而不是优化。浏览器对非 GET/HEAD
+> 的请求即使同源也会带 `Origin`；`changeOrigin` 改了 `Host` 却留着指向 dev server
+> 的 `Origin`，后端就会判定跨域并以 403 `Invalid CORS request` 拒掉 ——
+> 而所有读接口照常工作（同源 GET 不带 `Origin`），只有派发执行和审批决策会挂。
 
 ## 派发执行（M2）
 
