@@ -1,0 +1,60 @@
+# ATP 两条路线共用的中间件。
+#
+# ⚠️ 全部跑在**台式机 192.168.0.101**（Windows 11 + Docker Desktop），不是笔记本。
+#    笔记本已配 `docker context remote`，直接在仓库里敲 docker compose 即可。
+#
+# ⚠️ TEI（8081 / 8082）与 MinerU（8000）是**已经在跑的**，不归这份 compose 管，别动它们。
+#
+# ⭐ 端口选在 254xx / 253xx 这一段，是因为台式机上停着一批容器，
+#    它们没在跑但配置里写着端口，随时可能被人拉起来撞车。已避开的：
+#      3306 3307 5432 5601 6333 6334 6379 6380 7474 7687 8000 8080 8081 8082
+#      8848 9000 9001 9092 9200 9848 13306 13307 15432 16380 16381 18081-18085 19000 19001
+name: atp-infra
+
+services:
+  postgres:
+    # ⚠️ 必须带 pgvector：agent 侧的向量走 AgentScope 的 PgVectorStore，与业务表同库。
+    image: pgvector/pgvector:pg17
+    container_name: atp-infra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${ATP_PG_USER:-atp}
+      POSTGRES_PASSWORD: ${ATP_PG_PASSWORD:-atp}
+      POSTGRES_DB: ${ATP_PG_DB:-atp}
+      # Windows 宿主，时区显式钉住，省得日志时间对不上
+      TZ: Asia/Tokyo
+    ports:
+      - "25432:5432"
+    volumes:
+      # ⚠️ 用 named volume，不要 bind mount —— 宿主是 Windows + WSL2 backend，
+      #    bind 一个 Windows 路径会遇到路径转换和权限问题，IO 也明显更慢。
+      - atp_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ATP_PG_USER:-atp} -d ${ATP_PG_DB:-atp}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: atp-infra-redis
+    restart: unless-stopped
+    # 用途：Sa-Token 登录态、agent 多轮工作记忆（AgentScope RedisSession）、
+    #       agent 中断广播、工具熔断、执行任务队列。⚠️ 向量不在这里，在 PG。
+    command: >-
+      redis-server
+      --requirepass ${ATP_REDIS_PASSWORD:-atp}
+      --appendonly yes
+    ports:
+      - "25379:6379"
+    volumes:
+      - atp_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${ATP_REDIS_PASSWORD:-atp} ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  atp_pg_data:
+  atp_redis_data:

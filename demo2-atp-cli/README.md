@@ -90,9 +90,9 @@ V1 能不能在老平台的形状上执行得下去，本身就被测到了。
 ### 一次性准备
 
 ```bash
-# 1. 起演示库 + 应用两支迁移 + 把连接串写进仓库根 .env（幂等，可重复跑）
-cd demo2-atp-cli
-./scripts/demo-db.sh up
+# 1. 起中间件 + 应用全部迁移 + 把连接串写进仓库根 .env（幂等，可重复跑）
+#    ⚠️ PG 与 Redis 跑在台式机 192.168.0.101 上，两条路线共用 —— 见 infra/compose.yaml
+./infra/infra.sh up
 
 # 2. 打包 fat jar
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 mvn -pl . package -DskipTests
@@ -161,11 +161,11 @@ sed 's/购物车结算/购物车结算（被偷改）/' draft.json > draft2.json
 ./bin/atp commit <caseId> --version <N> --json   # 第一次：replayed=false
 ./bin/atp commit <caseId> --version <N> --json   # 第二次：replayed=true，退出码仍是 0
 echo $?                                          # ← 必须是 0，不是错误码
-./scripts/demo-db.sh psql                        # 进库看：只有一行，status=DRAFT
+../infra/infra.sh psql                        # 进库看：只有一行，status=DRAFT
 ```
 
 ### 收摊
 
 ```bash
-./scripts/demo-db.sh down
+../infra/infra.sh down
 ```

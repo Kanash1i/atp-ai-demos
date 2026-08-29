@@ -18,11 +18,12 @@ lint:
 	$(GO) vet ./...
 	gofmt -l . | grep -v '^$$' && exit 1 || true
 
-db-up:            ## 起演示库 + 跑迁移 + 写 .env
-	./scripts/demo-db.sh up
+# 中间件统一由 infra/ 管，跑在台式机 192.168.0.101 上（两条路线共用一个库）
+db-up:            ## 起 PG + Redis + 跑全部迁移 + 写 .env
+	../infra/infra.sh up
 
 db-down:
-	./scripts/demo-db.sh down
+	../infra/infra.sh down
 
 clean:
 	rm -rf $(BIN)
