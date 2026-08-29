@@ -36,7 +36,7 @@ PR 由你 review 后 merge，两个 session 都不会自行合并。
 | `07-CLI-项目综述.md` | demo2 session | ⭐ **生产侧开场文档** —— 定位、判据、实测数字、简历口径 |
 | `05-CLI-并发幂等答辩稿.md` | demo2 session | 并发幂等的细节（被追问时展开）|
 | `06-atp-cli-设计.md` | demo2 session | CLI 命令表、退出码契约、opencode 接入、里程碑 |
-| `01-HANDOFF-demo1-rag.md` | — | 🗄️ 已归档（Java 8 + langchain4j 路线）。有效部分已提炼进 `03-` |
+| `archive/demo1/` | — | 🗄️ demo1 的语料、决策记录、三处参考实现。**源码已删除**，见该目录 README |
 
 每个 demo 目录下已放 `CLAUDE.md`，新 session 启动时自动读到红线与硬约束。
 
@@ -59,8 +59,9 @@ PR 由你 review 后 merge，两个 session 都不会自行合并。
     └───────────────────────┘   └──────────────────────────┘
 ```
 
-> **2026-08-19 路线调整**：知识侧原为 Java 8 + langchain4j 全手搓（`demo1-atp-rag/`，已归档，
-> 停在 M3、消融表未跑）。现改为在买来的 Java 21 RAG 引擎上重做。详见 `03-HANDOFF-rag-v2.md`。
+> **2026-08-19 路线调整**：知识侧原为 Java 8 + langchain4j 全手搓，停在 M3、消融表未跑。
+> 现改为在买来的 Java 21 RAG 引擎上重做。详见 `03-HANDOFF-rag-v2.md`。
+> 旧源码已于 2026-08-27 **物理删除**，语料与素材保留在 `archive/demo1/`。
 >
 > **2026-08-27 路线调整**：生产侧的 MCP server 方案**已废弃并删除**（原 `demo2-atp-mcp/`），
 > 改做 `atp` CLI（`demo2-atp-cli/`）。详见 `05-CLI-并发幂等答辩稿.md`、`06-atp-cli-设计.md`。
@@ -84,7 +85,7 @@ cp .env.example .env
 然后各开一个 session（两个 demo 互相独立，可并行）：
 
 ```bash
-cd demo1-atp-rag     # session A
+cd /home/kanashi/llmentor/LLMentor/know-engine   # session A（知识侧）
 cd demo2-atp-cli     # session B
 ```
 
