@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.atp</groupId>
+    <artifactId>atp-platform</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>atp-web</artifactId>
+  <name>ATP Web</name>
+  <description>启动模块：REST + SSE + 认证，聚合以上全部</description>
+
+  <dependencies>
+    <!-- ⚠️ M0/M1 阶段只依赖平台侧。
+         agent 层（atp-agent）在 M3 接进来 —— AgentScope 的 starter 会要求模型配置，
+         现在挂上只会让「平台能不能独立起来」这件事验证不干净。
+         纪律见 CLAUDE.md：M1 结束时平台要能独立演示，哪怕 agent 一行没写。 -->
+    <dependency>
+      <groupId>com.atp</groupId>
+      <artifactId>atp-platform-api</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>cn.dev33</groupId>
+      <artifactId>sa-token-spring-boot3-starter</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>cn.dev33</groupId>
+      <artifactId>sa-token-redis-jackson</artifactId>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

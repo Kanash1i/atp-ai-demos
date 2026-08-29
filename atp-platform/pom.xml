@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <!-- Spring Boot 官方 parent：省掉一整套依赖版本管理与插件配置 -->
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.4.0</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.atp</groupId>
+  <artifactId>atp-platform</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+  <name>ATP Platform</name>
+  <description>ATP 自动化测试平台 —— 传统功能 + 多 agent 协作</description>
+
+  <modules>
+    <module>atp-common</module>
+    <module>atp-platform-api</module>
+    <module>atp-rag</module>
+    <module>atp-agent</module>
+    <module>atp-web</module>
+    <module>atp-runner</module>
+  </modules>
+
+  <properties>
+    <java.version>21</java.version>
+    <maven.compiler.source>21</maven.compiler.source>
+    <maven.compiler.target>21</maven.compiler.target>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+    <!-- ⚠️ 这几个版本与参考实现 gogo-agent 对齐，别随手升：
+         AgentScope 的 Hook/Session API 在小版本间动过。 -->
+    <agentscope.version>1.0.12</agentscope.version>
+    <mybatis-plus.version>3.5.9</mybatis-plus.version>
+    <druid.version>1.2.23</druid.version>
+    <sa-token.version>1.39.0</sa-token.version>
+    <playwright.version>1.45.0</playwright.version>
+    <pgvector.version>0.1.6</pgvector.version>
+  </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <!-- 本工程内部模块 -->
+      <dependency>
+        <groupId>com.atp</groupId>
+        <artifactId>atp-common</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.atp</groupId>
+        <artifactId>atp-platform-api</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.atp</groupId>
+        <artifactId>atp-rag</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.atp</groupId>
+        <artifactId>atp-agent</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+
+      <!-- Agent 框架 -->
+      <dependency>
+        <groupId>io.agentscope</groupId>
+        <artifactId>agentscope</artifactId>
+        <version>${agentscope.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>io.agentscope</groupId>
+        <artifactId>agentscope-spring-boot-starter</artifactId>
+        <version>${agentscope.version}</version>
+      </dependency>
+
+      <!-- 持久层 -->
+      <dependency>
+        <groupId>com.baomidou</groupId>
+        <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        <version>${mybatis-plus.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.alibaba</groupId>
+        <artifactId>druid-spring-boot-3-starter</artifactId>
+        <version>${druid.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>com.pgvector</groupId>
+        <artifactId>pgvector</artifactId>
+        <version>${pgvector.version}</version>
+      </dependency>
+
+      <!-- 认证 -->
+      <dependency>
+        <groupId>cn.dev33</groupId>
+        <artifactId>sa-token-spring-boot3-starter</artifactId>
+        <version>${sa-token.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>cn.dev33</groupId>
+        <artifactId>sa-token-redis-jackson</artifactId>
+        <version>${sa-token.version}</version>
+      </dependency>
+
+      <!-- 执行器 -->
+      <dependency>
+        <groupId>com.microsoft.playwright</groupId>
+        <artifactId>playwright</artifactId>
+        <version>${playwright.version}</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
+  <dependencies>
+    <!-- 所有模块共用：Lombok（编译期）与测试 -->
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <pluginManagement>
+      <plugins>
+        <plugin>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-maven-plugin</artifactId>
+          <configuration>
+            <excludes>
+              <exclude>
+                <groupId>org.projectlombok</groupId>
+                <artifactId>lombok</artifactId>
+              </exclude>
+            </excludes>
+          </configuration>
+        </plugin>
+      </plugins>
+    </pluginManagement>
+  </build>
+</project>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>com.atp</groupId>
+    <artifactId>atp-platform</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+  </parent>
+  <artifactId>atp-common</artifactId>
+  <name>ATP Common</name>
+  <description>领域模型、Action/STD 枚举、规范校验器 —— 不依赖 Spring Web，两条路线都能引</description>
+
+  <dependencies>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+    <!-- 只要 @EnumValue 这个注解，不引整个 MyBatis-Plus。
+         纯注解包，无 Spring 依赖 —— atp-common 保持可被任何一侧引用 -->
+    <dependency>
+      <groupId>com.baomidou</groupId>
+      <artifactId>mybatis-plus-annotation</artifactId>
+      <version>${mybatis-plus.version}</version>
+    </dependency>
+  </dependencies>
+</project>

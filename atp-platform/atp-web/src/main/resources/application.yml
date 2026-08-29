@@ -1,0 +1,64 @@
+server:
+  port: ${ATP_PORT:8080}
+
+spring:
+  application:
+    name: atp-platform
+
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DB:0}
+
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: org.postgresql.Driver
+    # ⚠️ 配置一律来自仓库根 .env，代码与 yml 里不得出现硬编码的 URL / 口令。
+    #    启动脚本负责把 .env 载入环境变量（见 scripts/run-web.sh）。
+    url: ${ATP_DB_URL}
+    username: ${ATP_DB_USER}
+    password: ${ATP_DB_PASSWORD}
+    druid:
+      initial-size: 5
+      min-idle: 5
+      max-active: 20
+      max-wait: 60000
+      test-while-idle: true
+      validation-query: SELECT 1
+      connect-properties:
+        # ⭐ 让 PG 把 String 隐式转成 jsonb。tc_step.step_json 因此可以按字符串原样写入，
+        #    与 CLI（Go）那侧写进去的字节完全一致 —— 不会因为两套 JSON 库而产生格式差异。
+        stringtype: unspecified
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: com.baomidou.mybatisplus.core.handlers.MybatisEnumTypeHandler
+  global-config:
+    db-config:
+      # 主键由应用层生成：AI 案例是 UUID，人工案例是平台雪花 ID，两者并存
+      id-type: input
+
+atp:
+  seed:
+    # 默认关。开启：--atp.seed.enabled=true
+    enabled: ${ATP_SEED_ENABLED:false}
+    # 相对路径的基准是模块目录 atp-web/，所以是 ../../seed。启动脚本会用绝对路径覆盖它
+    dir: ${ATP_SEED_DIR:../../seed}
+
+# Sa-Token：与 gogo-agent 的取舍保持一致（token 放请求头、30 天、不共享 token、随机 128 位）
+sa-token:
+  token-name: Authorization
+  timeout: 2592000
+  # 动态活跃续期关掉：演示期间不希望 token 因为闲置被踢
+  active-timeout: -1
+  is-concurrent: true
+  is-share: false
+  token-style: random-128
+  is-print: false
+
+logging:
+  level:
+    com.atp: INFO

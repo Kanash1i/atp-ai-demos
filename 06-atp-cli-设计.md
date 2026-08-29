@@ -86,7 +86,7 @@ demo2-atp-cli/
 ├─ bin/atp                       构建产物（gitignore）
 ├─ migrations/V0__, V1__.sql     老平台基线 + 改造脚本
 ├─ schema/tc_case.schema.json
-├─ scripts/demo-db.sh            一条命令起 PG + 迁移 + 写 .env
+└─ （中间件已上收到仓库根 infra/，见 infra/infra.sh —— PG + Redis 跑在台式机，两条路线共用）
 ├─ opencode.json                 权限表：唯独 commit 是 ask
 ├─ AGENTS.md
 ├─ .opencode/skills/atp-case-authoring/SKILL.md
