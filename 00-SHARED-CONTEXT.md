@@ -321,7 +321,7 @@ docker run -d --name qdrant --restart unless-stopped \
 > 改成了 `VectorsOutput`，langchain4j 编译期绑的旧签名会变成 `NoSuchMethodError`。
 > 而 0.35.0 是最后一个 Java 8 字节码版本（demo1 §2 的硬约束），不能升。
 >
-> 完整定位过程与三种组合的实测结果见 `demo1-atp-rag/DECISIONS.md` **D-002**。
+> 完整定位过程与三种组合的实测结果见 `archive/demo1/DECISIONS.md` **D-002**。
 > demo1 的 M0 spike 里已加了 server 版本的前置检查，命中不兼容版本会直接报根因。
 >
 > **两个端口都要**：6333 是 REST / Web UI，**6334 是 gRPC** —— langchain4j 走的是后者。
@@ -591,11 +591,10 @@ Qwen3-Embedding 是**非对称**的 —— query 侧要加 instruction prefix，
 ```
 /home/kanashi/Applications/interview-demos/
 ├── 00-SHARED-CONTEXT.md          ← 本文档
-├── 01-HANDOFF-demo1-rag.md       ← 🗄️ 已归档（Java 8 路线）
 ├── 05-CLI-并发幂等答辩稿.md        ← demo2 (CLI) 的入口文档
 ├── 06-atp-cli-设计.md            ← CLI 命令表与接入方式
 ├── 03-HANDOFF-rag-v2.md          ← ⭐ 知识侧当前的入口文档
-├── demo1-atp-rag/                ← 🗄️ 已归档。语料与 DECISIONS.md 仍在用
+├── archive/demo1/                ← 🗄️ 语料 + DECISIONS + 三处参考实现（源码已删）
 └── demo2-atp-cli/                ← demo2 session 在此目录启动
 ```
 

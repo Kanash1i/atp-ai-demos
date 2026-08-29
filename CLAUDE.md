@@ -7,8 +7,9 @@
 3. `07-CLI-项目综述.md` — ⭐ **生产侧的开场文档**（定位、判据、数字、简历口径）
 4. `05-CLI-并发幂等答辩稿.md` + `06-atp-cli-设计.md` — 被追问细节时展开（面试口述稿 / 实现设计）
 
-> **知识侧**：`01-HANDOFF-demo1-rag.md` 和 `demo1-atp-rag/` 已归档（2026-08-19），**不要以它们开工**。
-> 有效内容已提炼进 `03-`。`demo1-atp-rag/DECISIONS.md` 仍是面试素材库，被追问细节时回来查。
+> **知识侧**：Java 8 + langchain4j 那版已于 2026-08-19 停工，源码与旧交接文档
+> **已物理删除**（在 git 历史里可回溯）。有效内容全在 `03-`。
+> 语料、决策记录、三处参考实现保留在 **`archive/demo1/`**，那里的 `README.md` 说明了各留了什么、为什么。
 >
 > **生产侧**：MCP server 方案已废弃（2026-08-27），`02-HANDOFF-demo2-mcp.md` 与 `demo2-atp-mcp/`
 > **已删除**（不是归档）。改做 `atp` CLI —— 仲裁点放回平台自己的表，不外挂 server。
@@ -65,7 +66,7 @@ docker logs tei-rerank 2>&1 | grep -i "model on"
 
 那是 JSON，**`${PATH}` 不会被展开**，会把整个系统 PATH 替换掉 —— 症状是
 `git: command not found` 而 `java` / `mvn` 一切正常，且不报任何错。
-本仓库踩过，见 `demo1-atp-rag/DECISIONS.md` **D-027**。锁 JDK 用 `JAVA_HOME` 就够。
+本仓库踩过，见 `archive/demo1/DECISIONS.md` **D-027**。锁 JDK 用 `JAVA_HOME` 就够。
 
 ## Git 工作流
 
