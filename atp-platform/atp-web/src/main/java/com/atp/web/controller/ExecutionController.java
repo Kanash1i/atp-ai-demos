@@ -3,6 +3,7 @@ package com.atp.web.controller;
 import com.atp.common.enums.Browser;
 import com.atp.common.enums.TriggerSource;
 import com.atp.platform.entity.ExecRun;
+import com.atp.platform.vo.DispatchResultVO;
 import com.atp.platform.exec.ExecutionDispatchService;
 import com.atp.platform.service.ExecutionQueryService;
 import com.atp.platform.vo.ExecStatsVO;
@@ -78,14 +79,17 @@ public class ExecutionController {
      * 而节点池那一格是空的 —— 两个信号合起来足以说明问题出在哪。
      */
     @PostMapping("/dispatch")
-    public ExecRun dispatch(@RequestBody DispatchRequest body) {
-        return dispatchService.dispatch(
+    public DispatchResultVO dispatch(@RequestBody DispatchRequest body) {
+        ExecRun run = dispatchService.dispatch(
                 body.projectId(),
                 body.caseIds(),
                 body.browser() == null ? null : Browser.valueOf(body.browser()),
                 body.suiteName(),
                 body.trigger() == null ? TriggerSource.MANUAL : TriggerSource.valueOf(body.trigger()),
                 body.createdBy());
+        return new DispatchResultVO(run.getRunId(), run.getRunCode(),
+                run.getTotalCount() == null ? 0 : run.getTotalCount(),
+                run.getStatus() == null ? null : run.getStatus().name());
     }
 
     /**
