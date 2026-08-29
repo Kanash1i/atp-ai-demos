@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AsyncBlock, ColLabel, LiveDot, NotReadyButton, SectionTitle, Tag } from '../../components/ui';
-import { IconVideo } from '../../components/icons';
+import { IconPlay, IconVideo } from '../../components/icons';
 import { isNoContent, useExecStats, useRecentRuns, useRunningBatch, useTaskDetail } from '../../lib/queries';
-import { dash, execStatusTone, signed, timeOnly, toneOf } from '../../lib/format';
+import { approxSec, dash, execStatusTone, humanSec, signed, timeOnly, toneOf } from '../../lib/format';
+import { KNOWN_CONFLICT_CASE } from '../../lib/runnable';
+import DispatchDialog from './DispatchDialog';
 import type { RunningBatch } from '../../lib/types';
 
 const RUN_COLS = '168px minmax(0,1fr) 104px 104px 96px 92px 132px';
@@ -81,8 +83,8 @@ function Stats() {
 
 function RunningCard({ batch }: { batch: RunningBatch }) {
   const { t } = useTranslation();
-  const done = batch.passed + batch.failed + batch.skipped;
-  const pct = (n: number) => (batch.total ? (n / batch.total) * 100 : 0);
+  const pct = (n: number) => (batch.totalCount ? (n / batch.totalCount) * 100 : 0);
+  const eta = approxSec(batch.etaSec);
 
   return (
     <div className="card-surface mb-[18px] px-[22px] py-5">
@@ -94,41 +96,56 @@ function RunningCard({ batch }: { batch: RunningBatch }) {
           {[batch.projectName, batch.suiteName, batch.browser].filter(Boolean).join(' · ')}
         </span>
         <div className="grow" />
+        {/* 没有中止接口，按钮先摆着 */}
         <NotReadyButton milestone="M2">{t('runs.abort')}</NotReadyButton>
       </div>
 
       <div className="mb-3 flex items-center gap-3.5">
         <div className="flex h-1.5 grow overflow-hidden rounded-[3px] bg-line-5">
-          <div className="animate-bar h-full bg-matsu" style={{ width: `${pct(batch.passed)}%` }} />
-          <div className="animate-bar h-full bg-shu" style={{ width: `${pct(batch.failed)}%` }} />
-          <div className="animate-bar h-full bg-line-2" style={{ width: `${pct(batch.skipped)}%` }} />
+          <div className="animate-bar h-full bg-matsu" style={{ width: `${pct(batch.passedCount)}%` }} />
+          <div className="animate-bar h-full bg-shu" style={{ width: `${pct(batch.failedCount)}%` }} />
+          <div className="animate-bar h-full bg-line-2" style={{ width: `${pct(batch.skippedCount)}%` }} />
         </div>
         <span className="font-mono text-[12.5px]">
-          {done} / {batch.total}
+          {batch.doneCount} / {batch.totalCount}
         </span>
       </div>
 
       <div className="flex flex-wrap gap-[22px] text-[11.5px] text-ink-3">
         <span className="flex items-center gap-1.5">
           <span className="h-[7px] w-[7px] rounded-[2px] bg-matsu" />
-          <span className="font-mono">PASSED {batch.passed}</span>
+          <span className="font-mono">PASSED {batch.passedCount}</span>
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-[7px] w-[7px] rounded-[2px] bg-shu" />
-          <span className="font-mono">FAILED {batch.failed}</span>
+          <span className="font-mono">FAILED {batch.failedCount}</span>
         </span>
         <span className="flex items-center gap-1.5">
           <span className="h-[7px] w-[7px] rounded-[2px] bg-line-2" />
-          <span className="font-mono">SKIPPED {batch.skipped}</span>
+          <span className="font-mono">SKIPPED {batch.skippedCount}</span>
         </span>
         <span className="flex items-center gap-1.5">
           <LiveDot className="bg-ai" size={7} />
-          <span className="font-mono">RUNNING {batch.running}</span>
+          <span className="font-mono">RUNNING {batch.runningCount}</span>
         </span>
         <div className="grow" />
-        {(batch.elapsed || batch.remaining) && (
-          <span>{[batch.elapsed, batch.remaining].filter(Boolean).join(' · ')}</span>
-        )}
+        <span>
+          {t('runs.elapsed')} <span className="font-mono">{humanSec(batch.elapsedSec)}</span>
+          {' · '}
+          {/*
+            etaSec 可能为 null —— 一条都还没跑完时没有外推的基数。
+            有值时也只给「≈」：它是按已完成任务的平均耗时推的，不是承诺。
+          */}
+          {eta ? (
+            <>
+              {t('runs.eta')} <span className="font-mono">{eta}</span>
+            </>
+          ) : (
+            <span className="text-ink-4" title={t('runs.etaUnknown')}>
+              {t('runs.eta')} <span className="font-mono">—</span>
+            </span>
+          )}
+        </span>
       </div>
     </div>
   );
@@ -139,7 +156,7 @@ function RunningCard({ batch }: { batch: RunningBatch }) {
  * 后端在没有批次时返回 204 而不是 200 加空对象 —— 历史数据是种子，
  * 但「正在跑」这件事必须是真的，摆个不动的假进度条演示时一刷新就露馅。
  */
-function RunningSection() {
+function RunningSection({ onDispatch }: { onDispatch: () => void }) {
   const { t } = useTranslation();
   const { data, isLoading, error } = useRunningBatch();
 
@@ -152,9 +169,14 @@ function RunningSection() {
         <div className="mt-2 max-w-[560px] text-center text-[11.5px] leading-[1.8] text-ink-4">
           {t('runs.noRunningHint')}
         </div>
-        <NotReadyButton primary milestone="M2" className="mt-4">
+        <button
+          type="button"
+          onClick={onDispatch}
+          className="mt-4 flex items-center gap-1.5 rounded-md bg-shu px-4 py-[9px] text-[12.5px] text-white transition-colors hover:bg-shu-hover"
+        >
+          <IconPlay size={12} />
           {t('runs.dispatch')}
-        </NotReadyButton>
+        </button>
       </div>
     );
   }
@@ -212,16 +234,39 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
                 )}
 
                 {/*
-                  ⚠️ /api/artifacts/** 要 M2 才实现，现在请求 404。
-                  先按 <video> 布好位，接上就有真文件（Playwright 录的 webm，浏览器原生能播）。
+                  ATP-ORDER-0003 是刻意保留的红 —— 它和 ATP-CART-0007 对购物车初始状态的
+                  要求相反。把「为什么它是红的」写在失败详情里，比让人对着一条红记录猜要好。
                 */}
-                <div className="mb-5 flex h-[220px] flex-col items-center justify-center rounded-md border border-dashed border-line-2 bg-surface-2">
-                  <IconVideo size={22} className="text-ink-5" />
-                  <div className="mt-2.5 text-[11.5px] text-ink-4">{t('runs.artifactPending')}</div>
-                  {data.videoUrl && (
-                    <div className="mt-1.5 font-mono text-[10px] text-ink-5">{data.videoUrl}</div>
-                  )}
-                </div>
+                {data.caseCode === KNOWN_CONFLICT_CASE && (
+                  <div className="mb-5 rounded-md border border-ai/30 bg-ai-soft px-4 py-3">
+                    <div className="mb-1.5 font-mono text-[10px] tracking-[.12em] text-ai">BY DESIGN</div>
+                    <div className="text-[11.5px] leading-[1.85] text-ink-2">{t('runs.knownConflict')}</div>
+                  </div>
+                )}
+
+                {/* Playwright 录的 webm，浏览器原生可播，不需要转码；后端带 Range 支持 */}
+                {data.videoUrl ? (
+                  <div className="mb-5">
+                    <video
+                      key={data.videoUrl}
+                      src={data.videoUrl}
+                      controls
+                      preload="metadata"
+                      poster={data.screenshotUrl ?? undefined}
+                      aria-label={t('runs.videoOf', { code: data.caseCode })}
+                      className="w-full rounded-md border border-line bg-ink"
+                    >
+                      {t('runs.videoUnsupported')}
+                    </video>
+                    <div className="mt-1.5 font-mono text-[10px] break-all text-ink-5">{data.videoUrl}</div>
+                  </div>
+                ) : (
+                  // 只有失败的和约 1/10 抽样的成功用例有录像 —— 真实平台不会给每次执行都存视频
+                  <div className="mb-5 flex h-[140px] flex-col items-center justify-center rounded-md border border-dashed border-line-2 bg-surface-2">
+                    <IconVideo size={22} className="text-ink-5" />
+                    <div className="mt-2.5 text-[11.5px] text-ink-4">{t('runs.artifactPending')}</div>
+                  </div>
+                )}
 
                 <ColLabel className="mb-2 block">{t('runs.stepStatus')}</ColLabel>
                 <div>
@@ -258,11 +303,12 @@ export default function RunsPanel() {
   const limit = 200;
   const { data: runs, isLoading, error, refetch } = useRecentRuns(limit);
   const [taskId, setTaskId] = useState<string | null>(null);
+  const [dispatching, setDispatching] = useState(false);
 
   return (
     <div className="scrollable h-full px-6 pt-5 pb-6">
       <Stats />
-      <RunningSection />
+      <RunningSection onDispatch={() => setDispatching(true)} />
 
       <div className="card-surface overflow-hidden">
         <div className="flex items-center border-b border-line px-[22px] py-[15px]">
@@ -324,6 +370,7 @@ export default function RunsPanel() {
       </div>
 
       {taskId && <TaskDrawer taskId={taskId} onClose={() => setTaskId(null)} />}
+      {dispatching && <DispatchDialog onClose={() => setDispatching(false)} />}
     </div>
   );
 }

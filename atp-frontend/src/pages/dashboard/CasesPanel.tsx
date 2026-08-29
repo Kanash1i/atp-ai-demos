@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AsyncBlock, ColLabel, NotReadyButton, SectionTitle, Tag } from '../../components/ui';
 import { IconCheck, IconChevron, IconPlay, IconPlus } from '../../components/icons';
-import { useCaseDetail, useProjects, useProjectTree } from '../../lib/queries';
+import { useNavigate } from 'react-router-dom';
+import { useCaseDetail, useDispatch, useProjects, useProjectTree } from '../../lib/queries';
+import { isRunnableModule } from '../../lib/runnable';
+import { DEMO_USER } from '../../lib/api';
 import {
   caseStatusDot, caseStatusTone, dash, isAssertion, priorityTone, severityTone, toneOf,
 } from '../../lib/format';
@@ -167,6 +170,57 @@ function ValidationBar({
   );
 }
 
+/**
+ * 单条案例的「执行」。
+ *
+ * 只有 LOGIN / CART / ORDER 有 mock 页面，其余模块派发出去必然超时失败 ——
+ * 那种按钮点了只会浪费一次演示，所以直接禁掉并说明原因，而不是让人踩。
+ */
+function RunButton({ detail }: { detail: CaseDetail }) {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const runnable = isRunnableModule(detail.moduleCode);
+
+  if (!runnable) {
+    return (
+      <button
+        type="button"
+        disabled
+        title={t('runs.notRunnable')}
+        className="flex cursor-not-allowed items-center gap-[6px] rounded-md border-none bg-shu/35 px-[15px] py-[7px] text-[12.5px] text-white"
+      >
+        <IconPlay size={12} />
+        {t('cases.run')}
+      </button>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={dispatch.isPending}
+      onClick={() =>
+        dispatch.mutate(
+          {
+            projectId: detail.projectId,
+            caseIds: [detail.caseId],
+            browser: 'CHROME',
+            suiteName: detail.caseCode,
+            trigger: 'MANUAL',
+            createdBy: DEMO_USER,
+          },
+          { onSuccess: () => navigate('/dashboard/runs') },
+        )
+      }
+      className="flex items-center gap-[6px] rounded-md bg-shu px-[15px] py-[7px] text-[12.5px] text-white transition-colors hover:bg-shu-hover disabled:opacity-50"
+    >
+      <IconPlay size={12} />
+      {dispatch.isPending ? t('runs.dispatchSending') : t('cases.run')}
+    </button>
+  );
+}
+
 function CaseDetailPanel({ caseId }: { caseId: string | null }) {
   const { t } = useTranslation();
   const { data, isLoading, error, refetch } = useCaseDetail(caseId ?? undefined);
@@ -200,10 +254,7 @@ function CaseDetailPanel({ caseId }: { caseId: string | null }) {
                 <div className="grow" />
                 <NotReadyButton>{t('cases.edit')}</NotReadyButton>
                 <NotReadyButton>{t('cases.requestApproval')}</NotReadyButton>
-                <NotReadyButton primary milestone="M2">
-                  <IconPlay size={12} />
-                  {t('cases.run')}
-                </NotReadyButton>
+                <RunButton detail={data} />
               </div>
 
               {/* 案例标题来自库，不翻译 */}

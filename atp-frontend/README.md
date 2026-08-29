@@ -25,7 +25,7 @@ curl -s localhost:8080/api/health
 |---|---|
 | `/` | Landing。三语循环打字机、滚动淡入、「立即体验」进 dashboard |
 | `/dashboard/cases` | 案例中心：项目 pill → 模块树 → 案例详情（步骤表 + 规范校验） |
-| `/dashboard/runs` | 执行状态：四张统计卡、执行中批次、最近执行、失败详情抽屉 |
+| `/dashboard/runs` | 执行状态：四张统计卡、执行中批次（真派发 + 2 秒轮询）、最近执行、失败详情抽屉（播真录像） |
 | `/dashboard/agent` | 智能 Agent 助手（**M3 才有后端**，当前是静态稿） |
 | `/dashboard/datasets` | 数据集中心（**M3 才有后端**，当前是静态稿） |
 | `/dashboard/approvals` | 审批中心：三类审批卡片、diff、批准/退回/挂起 |
@@ -44,6 +44,25 @@ cp .env.example .env.local
 |---|---|
 | `VITE_API_ORIGIN` | dev 时 vite 把 `/api` 代理到这里，默认 `http://localhost:8080` |
 | `VITE_DEMO_USER` | M1 还没接 Sa-Token，当前用户由 `?user=` 带。`kaneshiro` / `sato` / `tanaka` |
+
+## 派发执行（M2）
+
+「派发执行」和案例详情的「执行」都是真的：`POST /api/executions/dispatch` 立刻返回，
+进度靠 2 秒轮询 `/running`，**拿到 204 就停止轮询**并刷新 `/stats`、`/recent`、`/nodes`。
+
+**只给派发 LOGIN / CART / ORDER。** `mock-shop` 只做了这三个模块，其余模块没有对应页面，
+派发出去会全部超时失败 —— 所以派发面板里根本不给选，案例详情的「执行」按钮在
+其他模块下也是禁用的。让人点了再等一屏超时，是浪费一次演示。
+
+**`etaSec` 永远带「≈」。** 它可能为 `null`（还没有任务完成时推算不出来），
+有值时也是按已完成任务的平均耗时外推的。印成精确值会让人以为那是个承诺。
+
+**`ATP-ORDER-0003` 的红是刻意的。** 它与 `ATP-CART-0007` 对购物车初始状态的要求相反
+（一条要求含缺货商品并被结算拦下，一条要求没有缺货能进结算页），真实平台靠每条案例
+独立的测试数据准备解决。失败详情里挂了一张 `BY DESIGN` 说明卡 —— 演示时这条红的
+比一张全绿的表更能说明测试数据管理的重要性，不是缺陷。
+
+**没有中止接口**，所以「中止」按钮还是置灰的。
 
 ## 几个刻意的决定
 
@@ -86,3 +105,4 @@ Playwright 执行器四方共享的契约。在表示层转一次 camelCase，�
 - Landing 的 `MySQL` → `PostgreSQL`、`Qdrant` → `pgvector`、`MCP 规范化服务` → `atp CLI (Go)`
 - `STD-008` 从 `[待补充]` 填成「每条案例至少 1 个断言步骤」
 - 分块设置去掉 `CHUNK SIZE` / `OVERLAP` —— 主策略下它们是死参数，摆出来是给自己挖坑
+- 「执行中的批次」从静态进度条改成真派发 + 轮询；录像从占位改成真 `<video>`（webm，后端带 Range）
