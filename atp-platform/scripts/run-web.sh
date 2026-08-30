@@ -22,6 +22,13 @@ fi
 #    种子目录用绝对路径喂进去，省得数 ../ 的层数 —— 数错了要等到启动才报错。
 export ATP_SEED_DIR="$REPO_ROOT/seed"
 
+# 同一个坑：agent 写案例要 exec 的 atp 二进制也不能用相对路径 ——
+# 它在 .env 里是相对仓库根写的，而 JVM 的 cwd 是 atp-web/。这里统一解析成绝对路径。
+ATP_CLI_BIN="${ATP_CLI_BIN:-demo2-atp-cli/bin/atp}"
+[[ "$ATP_CLI_BIN" != /* ]] && ATP_CLI_BIN="$REPO_ROOT/${ATP_CLI_BIN#./}"
+export ATP_CLI_BIN
+[[ -x "$ATP_CLI_BIN" ]] || echo "⚠ 找不到可执行的 atp（$ATP_CLI_BIN）—— agent 将无法写案例。构建：cd demo2-atp-cli && go build -o bin/atp ./cmd/atp" >&2
+
 ARGS=()
 [[ "${1:-}" == "--seed" ]] && ARGS+=("-Dspring-boot.run.arguments=--atp.seed.enabled=true")
 

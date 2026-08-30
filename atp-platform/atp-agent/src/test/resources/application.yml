@@ -1,0 +1,37 @@
+spring:
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: org.postgresql.Driver
+    url: ${ATP_DB_URL}
+    username: ${ATP_DB_USER}
+    password: ${ATP_DB_PASSWORD}
+    druid:
+      connect-properties:
+        stringtype: unspecified
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: com.baomidou.mybatisplus.core.handlers.MybatisEnumTypeHandler
+  global-config:
+    db-config:
+      id-type: input
+atp:
+  model:
+    api-key: ${LLM_API_KEY}
+    base-url: ${LLM_BASE_URL}
+    fast-name: ${LLM_MODEL}
+    strong-name: ${LLM_MODEL}
+    stable-name: ${LLM_MODEL}
+  rag:
+    embedding:
+      base-url: ${EMBEDDING_BASE_URL}
+      model: ${EMBEDDING_MODEL}
+      dimensions: 1024
+    store:
+      table: rag_vector
+    corpus:
+      dir: ../../seed/docs
+logging:
+  level:
+    root: WARN
+    com.atp: INFO

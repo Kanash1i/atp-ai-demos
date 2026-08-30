@@ -262,7 +262,7 @@ rag_eval_run  评估     eval_id, corpus_id, dataset_name, recall_at_1/3/5, mrr,
 | Agent | 职责 | 关键工具 |
 |---|---|---|
 | **MasterAgent** | 总路由、多意图编排、结果整合 | 子 agent 作为 tool 挂载 |
-| **CaseAuthoringAgent** | 自然语言 → 案例草稿 | `query_module`（查模块字典）、`search_similar_cases`（RAG 找存量参考）、`query_standards`（查规范）、`save_case_draft`（写 `AI_DRAFT`）、`ask_user`（HITL 确认） |
+| **CaseAuthoringAgent** | 自然语言 → 案例草稿 | 读侧：`list_modules`、`find_similar_cases`、`next_case_code`、`search_standards`<br>写侧（⭐ 全部经 `atp` CLI，见 5.3.1）：`get_case_schema`、`create_draft`、`save_draft`、`validate_case`、`preview_case`、`commit_case` |
 | **StandardsCheckAgent** | 对草稿跑 STD-001~008 | `validate_case` —— 返回 ERROR/WARN/INFO 明细 |
 | **CaseQueryAgent** | 查案例 | `query_cases`（按模块/优先级/状态过滤） |
 | **ExecutionAgent** | 派发、查状态、取录像 | `dispatch_run`、`query_run_status`、`get_video_url`、`abort_run` |
@@ -270,17 +270,95 @@ rag_eval_run  评估     eval_id, corpus_id, dataset_name, recall_at_1/3/5, mrr,
 | **ApprovalAgent** | 提交/查询审批 | `submit_approval`、`query_approvals` |
 | **QueryRewritingAgent** | 指代消解、上下文补全 | — |
 
+### 5.3.1 ⭐ 写侧出口：agent 与 opencode 共用同一个 CLI
+
+**平台 agent 写案例不走 `CaseWriteService`，而是 exec `atp` 二进制** —— 与客户机器上的
+opencode 完全同一个客户端、同一份校验、同一套状态机与 CAS 仲裁。
+
+```
+                        ┌──────────────────────────┐
+   opencode（客户机器）───┤                          │
+                        │   atp CLI（唯一写实现）    ├──→ tc_step / tc_case
+   平台 agent（SaaS）────┤                          │
+                        └──────────────────────────┘
+
+   前端「新建/编辑案例」──→ 平台 REST（CaseWriteService）──→ 同两张表
+```
+
+**为什么**：两条 AI 路线若各写一份落库实现，格式迟早会漂 —— 不是谁写错了，而是
+**两份实现会各自演化**，而演化不同步是必然的。exec 同一个二进制之后，
+一致性从「靠纪律维持」变成「物理上唯一」。
+
+**为什么前端那条不并进来**：它是传统功能链路，由 CLI 团队在开发时跟进对账 ——
+这是真实团队的分工，不必强求三端同源。允许漂移、但有人负责，比强行统一更接近生产。
+
+**凭据在哪一侧**：CLI 读的 `ATP_DB_URL / ATP_DB_USER / ATP_DB_PASSWORD` 与平台是同一组
+环境变量名，所以子进程**直接继承**即可，数据库凭据始终留在平台侧。
+（opencode 那条路线上凭据在客户机器上 —— 这正是两条路线在安全模型上的真实差别，不要抹平它。）
+
+**版本管控**：CLI 由平台团队派发维护，所以权威性无所谓 —— 要淘汰旧版就升 API 版本，
+旧 CLI 自动失效。平台启动日志会打印 `[CLI] /path/to/atp → atp version 0.1.0`，
+就是这套管控的抓手。
+
+**代价**：每次写操作 fork 一个进程。这个场景下无所谓 —— agent 写案例由人在对话里驱动，
+QPS 以分钟计。
+
+**契约面**（冻结于 `demo2-atp-cli/CONTRACT.md`，改动前两侧互相同步）：
+
+| | |
+|---|---|
+| 命令 | `draft` / `update` / `commit` / `validate` / `preview` / `schema` / `modules` |
+| 输出 | `--json` 信封 `{ok, code, replayed, data, violations, questions, message}` |
+| 退出码 | `0` OK（**含幂等重放**，看 `replayed` 区分）/ `10` 版本冲突 / `11` 不存在 / `12` 校验失败 / `13` 状态不允许 / `14` 缺信息 / `20` 环境问题 |
+
+⚠️ **`--json` 必须紧跟子命令**，不能放参数末尾：cobra 顺序解析，末尾的话前面只要有一个
+非法 flag，它在读到 `--json` 之前就已经按纯文本失败了 —— 而那恰恰是最需要结构化输出的时候。
+
+⚠️ **`data.draft` 的 JSON 类型随状态变**：编辑期是 object（表头 + steps），
+commit 后是 array（纯步骤数组，老执行器读数组）。要回显草稿走 `preview`，不要自己解 `draft`。
+
+**退出码翻译成动作**：`CliResult.nextAction()` 把每个码译成给模型看的下一步。
+其中 `VALIDATION_FAILED`（自己改）与 `NEEDS_INPUT`（必须问人）**严格不合并** ——
+合并了模型就会开始编。实测 agent 拿到 `NEEDS_INPUT` 时确实停下来问了三个问题而不是瞎猜。
+
+### 5.3.2 ⚠️ 规范校验通过 ≠ 案例能跑通（M3 最重要的发现）
+
+**同一个病根已经复现两次**，两次都是校验全绿、真跑第 2 步就超时失败：
+
+| 案例 | agent 写的 | 真实情况 |
+|---|---|---|
+| `ATP-CART-0012` | `${base_url}/product/detail` | mock-shop 路由是 `/products/{id}` |
+| `ATP-SEARCH-0011` | `${base_url}/product/p001` | 同上 —— 单数 `product` 不存在，404 |
+
+两次的执行链路都完全正常：任务被节点认领、真跑 Playwright、录像正常生成、
+失败精确定位到 `seq=2`。**错的是案例内容，不是平台。**
+
+**校验器没有失职**：STD 校验管的是规范与形状（定位器写法、等待策略、断言存在性），
+CLI 的 schema 管的是字段形状。URL 对不对**不属于任何一方的职责** ——
+它属于「被测系统实际长什么样」，而 agent 手上没有任何工具能告诉它这件事。
+
+> 这是激进路线最该讲的一个真实边界：
+> **约束能保证 agent 写出「合规的」案例，保证不了「正确的」案例。**
+> 合规性可以用规则校验，正确性只能靠与被测系统的真实交互来验证。
+
+**下一步（方案 B，用户 2026-08-30 拍板）**：agent 提交后派发执行一次、**如实报告、人决定**。
+不做自动重试闭环 —— 两个理由：
+①执行失败 ≠ 案例写错了（可能是被测系统真有 bug，自动改案例会把 bug 改没）；
+②改到能跑通 ≠ 改对了（agent 可能靠削弱断言让测试变绿）。
+
 ### 5.4 Hook
 
 从 gogo 直接迁移：`ProgressNotifierHook`（SSE）、`SessionPersistenceHook`（改 PG）、
 `ActiveAgentPersistenceHook`、`AgentExecutionRegistryHook`（优雅中断）、`AgentExecutionLoggerHook`、
 `ToolCircuitBreakerHook`（熔断）。
 
-**新增一个 ATP 特色的**：`StandardsGateHook` —— 案例落库前**强制**跑一遍 STD 校验，
-ERROR 直接拦下，不给 LLM 绕过的机会。
+**规则闸门不再是一个 Hook** —— 写侧改走 CLI 之后（5.3.1），校验发生在 CLI 进程内，
+agent 无论如何都绕不过去，不需要再在平台侧加一道 Hook 来拦它。
 
-> 这个 Hook 是激进路线里最该讲的一块：**规则是硬的，LLM 只在规则之内自由。**
-> 它跟保守路线里 CLI 的校验器是同一套规则的两处实现 —— 面试时正好对照着讲。
+> **规则是硬的，LLM 只在规则之内自由。**
+> 原先的设想是「同一套规则在 CLI 与平台各实现一遍，面试时对照着讲」——
+> 现在改成**只有一份实现，两条路线都调它**。对照点从「两份实现如何保持一致」
+> 变成了「为什么一致性不该靠纪律维持」，后者更值得讲。
 
 ### 5.5 Human-in-the-Loop
 
@@ -461,7 +539,7 @@ Dashboard 五个面板 = 五组 API：
 | **M0** | 骨架 ✅ | Maven 六模块 + PG schema V2~V5（16 张表 + pgvector）+ 种子导入（80 案例 / 412 步骤 / 3 用户）+ STD 校验器 + 健康检查 | ~~PgSession~~ 已取消，用 RedisSession |
 | **M1** | 传统平台功能（**读侧**）✅ | 案例树/详情/规范校验、审批中心（含并发仲裁）、执行看板（3580 条历史）。**先不接 agent，先让平台自己立得住** | STD 校验器（两条路线共用的规则实现） |
 | **M2** | 执行链路 | mock-shop + Playwright runner + 真录像 + SSE 进度 | Action 翻译层；worker 池并发 |
-| **M3** | Agent 层 **+ 案例写侧** | 三层意图路由 + CaseAuthoringAgent + KnowledgeAgent(RAG) + HITL + StandardsGateHook；**案例的新建/编辑/提交审批接口也在这里做** | AgentScope 的坑；pgvector 检索质量；写侧要与 CLI 的语义对齐 |
+| **M3** | Agent 层 **+ 案例写侧** | 三层意图路由 + CaseAuthoringAgent + KnowledgeAgent(RAG) + HITL；**agent 写侧改为 exec `atp` CLI**（5.3.1）；案例的新建/编辑/提交审批接口也在这里做 | AgentScope 的坑；pgvector 检索质量；~~写侧要与 CLI 的语义对齐~~ → 直接用 CLI，没有第二套语义 |
 
 > ⭐ **写侧为什么押后到 M3**（2026-08-29 决定）：人在 UI 上编辑案例、agent 生成案例，
 > 走的是**同一条写入路径**（草稿 → STD 校验 → 单表单行 CAS 落库）。
@@ -470,6 +548,11 @@ Dashboard 五个面板 = 五组 API：
 > 第三套只会让「哪个才是对的」变得更难回答。
 >
 > 代价：M1 交付的前端里，「新建」「编辑」「申请审批」三个按钮暂时没有后端。
+>
+> **2026-08-31 追加的结论**：上面这段推理是对的，但当时的结论只走到一半 ——
+> 既然「第三套实现只会让『哪个才是对的』更难回答」，那正确的做法就不是"让第三套对齐前两套"，
+> 而是**根本不做第三套**：agent 直接 exec `atp` CLI（5.3.1）。
+> 前端那条仍是独立实现，但那是传统功能链路、由人对账，与两条 AI 路线的一致性无关。
 | **M4** | 前端接线 | 五个面板接真接口，SSE 打通 | |
 | **M5** | 部署 | docker compose（app + runner + PG + Redis + mock-shop），服务器上跑起来 | |
 
