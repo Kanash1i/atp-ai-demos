@@ -21,6 +21,13 @@
       <groupId>com.pgvector</groupId>
       <artifactId>pgvector</artifactId>
     </dependency>
+    <!-- ⚠️ Knowledge / PgVectorStore / OpenAITextEmbedding 都是 agentscope 的类。
+         最初把它只放在 atp-agent 里，但 RAG 本身就依赖框架的检索抽象 ——
+         放在这里 atp-agent 也能传递拿到 -->
+    <dependency>
+      <groupId>io.agentscope</groupId>
+      <artifactId>agentscope</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-webflux</artifactId>

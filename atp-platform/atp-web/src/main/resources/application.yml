@@ -60,6 +60,28 @@ mybatis-plus:
       id-type: input
 
 atp:
+  model:
+    # ⚠️ 全部来自仓库根 .env。DeepSeek 兼容 OpenAI 协议，但不是 OpenAI ——
+    #    所以绕开 starter 的 provider 枚举，直接构造 OpenAIChatModel 指定 baseUrl
+    api-key: ${LLM_API_KEY}
+    base-url: ${LLM_BASE_URL}
+    # 三档先都指向同一个模型。分档是为了后期换模型时改配置而不是改代码
+    fast-name: ${LLM_MODEL}
+    strong-name: ${LLM_MODEL}
+    stable-name: ${LLM_MODEL}
+
+  rag:
+    embedding:
+      # ⚠️ 本地 TEI，OpenAI 兼容端点。开工前确认 docker logs tei-embed | grep "model on" 是 Cuda
+      base-url: ${EMBEDDING_BASE_URL}/v1
+      model: ${EMBEDDING_MODEL}
+      dimensions: ${EMBEDDING_DIM:1024}
+    store:
+      # PgVectorStore 自己建这张表和索引，不在我们的迁移里
+      table: ${ATP_RAG_TABLE:rag_vector}
+    corpus:
+      dir: ${ATP_SEED_DIR:../../seed}/docs
+
   # 执行产物根目录。⚠️ 必须与 atp-runner 的 artifact-dir 指向同一处（同机时）
   artifact-dir: ${ATP_ARTIFACT_DIR:/tmp/atp-artifacts}
   seed:
