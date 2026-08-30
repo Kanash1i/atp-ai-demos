@@ -60,8 +60,13 @@ $ atp draft --json -t "没给 platform"
 
 **唯一的例外**：如果 `--json` 自己都没被解析到（比如它排在一个非法 flag 后面），
 会退回纯文本 `[VALIDATION_FAILED] unknown flag: --bogus`。
-这个边界消不掉 —— 要输出信封，总得先知道调用方要不要信封。
-**把 `--json` 放在最前面就不会遇到。**
+这个边界消不掉 —— 要输出信封，总得先知道调用方要不要信框。
+
+> ⭐ **所以 `--json` 请紧跟子命令写**：`atp draft --json --id … -p … -t …`
+>
+> cobra 是顺序解析的。`--json` 放在参数末尾时，前面只要有一个非法 flag，
+> 它在读到 `--json` 之前就已经按纯文本失败了 —— **而那恰恰是最需要结构化输出的时候。**
+> 这一条是 `atp-platform` 接入时实测撞出来的，不是推演。
 
 不带 `--json` 时一律纯文本，人读的通道不被信封污染。
 
@@ -160,3 +165,21 @@ make build          # → bin/atp
 
 ⚠️ **在容器里构建时请加 `--user $(id -u):$(id -g)`**，否则产物属主是 root，
 宿主机上的人和其他 session 都覆盖不了它（已经发生过一次）。
+
+⚠️ 若已经产生了 root 属主的产物，**只 chown 文件不够 —— `bin/` 目录本身也是 root**，
+要 `chown -R`。
+
+---
+
+## 7. 消费方现状（2026-08-31）
+
+| 消费方 | 接入方式 | 状态 |
+|---|---|---|
+| opencode | `.opencode/skills/atp-case-authoring/SKILL.md` + 权限门 | ✓ |
+| `atp-platform` 的 `CaseAuthoringAgent` | 直接 exec，四个写工具 draft/update/validate/commit | ✓ 端到端跑通（含真跑 Playwright 与录像）|
+
+平台侧目前**不读 `data.draft`**，只取 `caseId` / `version` / `status`，
+所以不受 §3 那个类型变化的影响；将来要把草稿回显给用户时走 `atp preview`。
+
+平台启动时会打印 `[CLI] <路径> → atp version 0.1.0`。
+**这行日志是版本管控的抓手** —— 将来若要「更新契约让旧 CLI 失效」，从这里下手。
