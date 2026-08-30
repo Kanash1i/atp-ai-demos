@@ -60,6 +60,13 @@ mybatis-plus:
       id-type: input
 
 atp:
+  # ⭐ 平台 agent 的写侧出口 —— 与 opencode 走同一个二进制，格式漂移物理上不可能。
+  #    CLI 读的 ATP_DB_* 与平台是同一组环境变量，子进程直接继承，
+  #    凭据始终留在平台侧，不因为「走了 CLI」而落到别处。
+  cli:
+    bin: ${ATP_CLI_BIN:../../demo2-atp-cli/bin/atp}
+    timeout-seconds: ${ATP_CLI_TIMEOUT:30}
+
   model:
     # ⚠️ 全部来自仓库根 .env。DeepSeek 兼容 OpenAI 协议，但不是 OpenAI ——
     #    所以绕开 starter 的 provider 枚举，直接构造 OpenAIChatModel 指定 baseUrl

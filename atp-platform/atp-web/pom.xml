@@ -13,13 +13,11 @@
   <description>启动模块：REST + SSE + 认证，聚合以上全部</description>
 
   <dependencies>
-    <!-- ⚠️ M0/M1 阶段只依赖平台侧。
-         agent 层（atp-agent）在 M3 接进来 —— AgentScope 的 starter 会要求模型配置，
-         现在挂上只会让「平台能不能独立起来」这件事验证不干净。
-         纪律见 CLAUDE.md：M1 结束时平台要能独立演示，哪怕 agent 一行没写。 -->
+    <!-- M3 起接入 agent 层。M0/M1 期间刻意没挂，为的是先验证「平台能独立起来」——
+         那条纪律已经兑现（M1 结束时三个面板都能独立演示） -->
     <dependency>
       <groupId>com.atp</groupId>
-      <artifactId>atp-platform-api</artifactId>
+      <artifactId>atp-agent</artifactId>
     </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
