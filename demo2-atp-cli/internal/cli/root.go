@@ -5,7 +5,6 @@ package cli
 
 import (
 	"context"
-	"fmt"
 	"io"
 
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/config"
@@ -76,9 +75,16 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	)
 
 	if err := root.Execute(); err != nil {
-		// 参数错误归 VALIDATION_FAILED —— 别给 agent 打一整页 usage 当结果
-		fmt.Fprintf(stderr, "[%s] %s\n", model.ValidationFailed, err)
-		return int(model.ValidationFailed)
+		// 参数错误归 VALIDATION_FAILED —— 别给 agent 打一整页 usage 当结果。
+		//
+		// ⭐ 走 a.w() 而不是直接 Fprintf：对外契约的承诺是
+		//    「带 --json 时，任何失败都是一个 JSON 信封」。
+		//    调用方不该为"早期参数错误"单写一条纯文本解析路径。
+		//
+		// ⚠️ 唯一的例外：如果 --json 自己都没被解析到（比如它排在一个非法 flag 后面），
+		//    a.jsonOut 还是 false，此时退回纯文本。这个边界无法消除 ——
+		//    要输出信封，总得先知道调用方要不要信封。
+		return a.w().Fail(model.ValidationFailed, err.Error(), nil)
 	}
 	return a.code
 }

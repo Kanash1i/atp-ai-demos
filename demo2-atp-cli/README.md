@@ -4,6 +4,7 @@
 
 - 设计与答辩口径：`../05-CLI-并发幂等答辩稿.md`
 - 命令表 / opencode 接入 / 里程碑：`../06-atp-cli-设计.md`
+- ⭐ **对外契约（冻结）**：`CONTRACT.md` —— 消费方是 opencode 与 atp-platform 的 agent，改动前先同步两侧
 - 实现过程中的决策与踩坑：`DECISIONS.md`
 
 ## 技术栈

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	atpcli "github.com/Kanash1i/atp-ai-demos/atp-cli"
@@ -90,13 +91,28 @@ func run(args ...string) result {
 	return result{code: code, out: o.String(), err: e.String()}
 }
 
+// caseSeq 给每个用例发一个不重复的 case_code。
+//
+// ⚠️ 编号必须符合 schema 的 ^ATP-[A-Z]+-[0-9]{4}$ —— 拿 UUID 前几位凑会含小写字母，
+//
+//	validate 直接判 12，而症状看起来像"业务逻辑挂了"，很误导。
+var caseSeq atomic.Int32
+
+func nextCaseCode() string {
+	return fmt.Sprintf("ATP-CART-%04d", 1000+caseSeq.Add(1))
+}
+
 func draftFile(t *testing.T, title string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "draft.json")
-	body := fmt.Sprintf(`{"case_code":"ATP-CART-0001","title":%q,"module_id":"M003",
+	// ⚠️ case_code 上有唯一约束，每个用例必须用不同的编号 ——
+	//    否则先提交的那条会让后面的用例撞 uk_case_code，
+	//    而且症状是"某个用例单跑过、全量跑挂"，很难查。
+	body := fmt.Sprintf(`{"case_code":%q,"title":%q,"module_id":"M003",
 	 "priority":"P1","author":"qa.kanashi",
 	 "steps":[{"seq":1,"action":"OPEN_URL","input_data":"http://x/cart",
-	           "wait_strategy":"PRESENCE","wait_timeout_sec":10,"on_failure":"ABORT"}]}`, title)
+	           "wait_strategy":"PRESENCE","wait_timeout_sec":10,"on_failure":"ABORT"}]}`,
+		nextCaseCode(), title)
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -226,5 +242,68 @@ func TestSchemaIsSelfConsistent(t *testing.T) {
 		if strings.Contains(string(req), dead) {
 			t.Errorf("required 里不该还有 %q", dead)
 		}
+	}
+}
+
+// ⭐ 对外契约：带 --json 时，任何失败都必须是一个 JSON 信封。
+//
+// 平台侧（atp-platform）的 agent 直接 exec 这个 CLI。
+// 若参数错误走纯文本、业务错误走 JSON，调用方就得写两条解析路径 —— 那是契约有洞。
+func TestContract_ParamErrorAlsoEmitsEnvelope(t *testing.T) {
+	r := run("draft", "--json", "-t", "没给 platform")
+
+	if r.code != 12 {
+		t.Fatalf("缺必填参数应返回 12，实际 %d", r.code)
+	}
+	env := r.json(t)
+	for _, k := range []string{"ok", "code", "replayed", "data", "violations", "questions"} {
+		if _, ok := env[k]; !ok {
+			t.Errorf("信封缺字段 %q", k)
+		}
+	}
+	if env["code"] != "VALIDATION_FAILED" {
+		t.Errorf("code 应是 VALIDATION_FAILED，实际 %v", env["code"])
+	}
+	if env["ok"] != false {
+		t.Errorf("ok 应是 false")
+	}
+	if msg, _ := env["message"].(string); !strings.Contains(msg, "platform") {
+		t.Errorf("message 应点名缺了哪个参数，实际 %q", msg)
+	}
+}
+
+// 不带 --json 时保持纯文本 —— 人读的通道不该被信封污染。
+func TestContract_ParamErrorStaysPlainWithoutJSONFlag(t *testing.T) {
+	r := run("draft", "-t", "没给 platform")
+	if r.code != 12 {
+		t.Fatalf("退出码应是 12，实际 %d", r.code)
+	}
+	if !strings.Contains(r.err, "[VALIDATION_FAILED]") {
+		t.Fatalf("应是纯文本，实际 %q", r.err)
+	}
+	if strings.Contains(r.err, "\"ok\"") {
+		t.Fatal("不带 --json 不该输出信封")
+	}
+}
+
+// ⭐ data.draft 的类型会随状态变：编辑期是对象，落地后是纯步骤数组。
+//
+// 这是调用方最容易踩的一处 —— 它不是字段名变了，是同一个字段的 JSON 类型变了。
+func TestContract_DraftTypeChangesAfterCommit(t *testing.T) {
+	id := uuid.NewString()
+	run("draft", "--json", "--id", id, "-p", "PC_WEB", "-t", "类型契约")
+	f := draftFile(t, "类型契约")
+	run("update", "--json", id, "--version", "0", "-f", f)
+
+	if _, ok := run("show", "--json", id).data(t, "draft").(map[string]any); !ok {
+		t.Fatal("编辑期 data.draft 应是 object")
+	}
+
+	c := run("commit", "--json", id, "--version", "1")
+	if c.code != 0 {
+		t.Fatalf("commit 应成功，实际 %d: %s%s", c.code, c.out, c.err)
+	}
+	if _, ok := c.data(t, "draft").([]any); !ok {
+		t.Fatalf("落地后 data.draft 应是 array（老平台契约），实际 %T", c.data(t, "draft"))
 	}
 }
