@@ -35,7 +35,19 @@ public record CaseDetailVO(
         String author,
         String precondition,
         String updatedAt,
+        /**
+         * {@code tc_case.version} —— 平台版本，编辑期全程不动。
+         * ⚠️ **不要拿它去调 PUT/POST**，那两个要的是 {@link #editVersion}。
+         */
         int version,
+        /**
+         * {@code tc_step.version} —— 编辑期的乐观锁版本，写侧三个接口用的就是它。
+         *
+         * <p>⚠️ 两个 version 不是一回事：草稿在编辑期反复改，{@code tc_case.version} 一直是 0。
+         * 早先这里只返回前者，前端拿它去 PUT 必然 409 ——
+         * 而 409 的文案说「内容被别人改过」，把人指向了完全错误的方向。
+         */
+        int editVersion,
         List<Step> steps,
         ValidationVO validation
 ) {

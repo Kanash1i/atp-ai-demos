@@ -21,6 +21,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -131,6 +132,7 @@ public class CaseWriteService {
         }
 
         ObjectNode header = StepJson.parseHeader(step.getStepJson());
+        requireCompleteHeader(header);
         String legacy = StepJson.toLegacyArray(step.getStepJson());
 
         int affected = writeMapper.commitStep(caseId, legacy, expectedVersion);
@@ -145,6 +147,38 @@ public class CaseWriteService {
         log.info("案例 {} 已提交，落地为 DRAFT", caseId);
         return view(caseId);
     }
+
+    /**
+     * 提交前确认表头六个必填字段都在。
+     *
+     * <p>数据库上的 {@code ck_case_complete} 本来就会拦住，但它抛的是
+     * {@code DataIntegrityViolationException}，兜底成 500 ——
+     * **500 的意思是「服务端出错了」，而实际上是调用方少填了字段**。
+     * 在这里显式检查，是为了把它变成一条说得清楚的 422。
+     *
+     * <p>字段名是 {@code draftJson} 顶层的 snake_case 键，与 CLI 的 schema 一致；
+     * camelCase 不认 —— 一个字段只有一种写法，两种写法迟早有一处会漏掉转换。
+     */
+    private void requireCompleteHeader(ObjectNode header) {
+        List<String> missing = new ArrayList<>();
+        for (String key : REQUIRED_HEADER_KEYS) {
+            if (!header.hasNonNull(key) || header.get(key).asText().isBlank()) {
+                missing.add(key);
+            }
+        }
+        if (!missing.isEmpty()) {
+            throw new CaseHeaderIncompleteException(missing);
+        }
+    }
+
+    /**
+     * 提交时必须齐的六个字段。
+     *
+     * <p>⚠️ {@code precondition} 不在其中 —— 它允许为空（不是所有案例都有前置条件），
+     * 数据库那条约束里也没有它。
+     */
+    private static final List<String> REQUIRED_HEADER_KEYS =
+            List.of("case_code", "title", "module_id", "priority", "author");
 
     /** 校验草稿（不落库）。agent 的 validate_case 工具与前端的「校验」按钮都走这里 */
     public ValidationResult validate(String caseId, String draftJson) {

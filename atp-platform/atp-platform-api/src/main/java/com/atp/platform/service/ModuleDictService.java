@@ -1,7 +1,9 @@
 package com.atp.platform.service;
 
+import com.atp.platform.entity.TcCase;
 import com.atp.platform.entity.TcModule;
 import com.atp.platform.entity.TcProject;
+import com.atp.platform.mapper.TcCaseMapper;
 import com.atp.platform.mapper.TcModuleMapper;
 import com.atp.platform.mapper.TcProjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -39,6 +41,9 @@ public class ModuleDictService {
     @Autowired
     private TcProjectMapper projectMapper;
 
+    @Autowired
+    private TcCaseMapper caseMapper;
+
     /**
      * 全部模块，按 projectCode → moduleCode 排序。
      *
@@ -54,6 +59,41 @@ public class ModuleDictService {
                 .sorted(Comparator.comparing(ModuleEntry::projectCode, Comparator.nullsLast(String::compareTo))
                         .thenComparing(ModuleEntry::moduleCode, Comparator.nullsLast(String::compareTo)))
                 .toList();
+    }
+
+    /**
+     * 该模块的下一个可用编号，形如 {@code ATP-CART-0015}（STD-007）。
+     *
+     * <h3>⚠️ 取「最大序号 + 1」，不是「条数 + 1」</h3>
+     *
+     * 用条数的话，只要中间删过一条，新号就会和现存的某个号撞上 ——
+     * 而 {@code uk_case_code} 会把它拦下，表现为「新建案例莫名其妙失败」。
+     * 编号是单调的，计数不是。
+     *
+     * <h3>并发下仍可能撞号，这是有意接受的</h3>
+     *
+     * 两个人同时要号会拿到同一个，但 {@code uk_case_code} 会让后写的那个失败 ——
+     * **不会写坏数据，只会有一次重试**。真实平台该用序列或号段，
+     * 那是为了避免重试，不是为了正确性。演示环境下不值得引入。
+     */
+    public String nextCaseCode(String moduleId) {
+        TcModule module = moduleMapper.selectById(moduleId);
+        if (module == null) {
+            throw new IllegalArgumentException("模块不存在：" + moduleId);
+        }
+        String prefix = "ATP-" + module.getModuleCode() + "-";
+
+        int max = caseMapper.selectList(new LambdaQueryWrapper<TcCase>()
+                        .select(TcCase::getCaseCode)
+                        .likeRight(TcCase::getCaseCode, prefix)).stream()
+                .map(TcCase::getCaseCode)
+                .filter(c -> c != null && c.length() > prefix.length())
+                .map(c -> c.substring(prefix.length()))
+                .filter(tail -> tail.matches("\\d+"))
+                .mapToInt(Integer::parseInt)
+                .max().orElse(0);
+
+        return "%s%04d".formatted(prefix, max + 1);
     }
 
     private ModuleEntry toEntry(TcModule m, TcProject p) {

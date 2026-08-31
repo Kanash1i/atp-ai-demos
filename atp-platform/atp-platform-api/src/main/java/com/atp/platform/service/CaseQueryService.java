@@ -126,8 +126,23 @@ public class CaseQueryService {
                 entity.getPrecondition(),
                 DisplayTime.toMinute(entity.getUpdatedAt()),
                 entity.getVersion() == null ? 0 : entity.getVersion(),
+                // ⚠️ 写侧要的是 tc_step 的版本，不是 tc_case 的
+                stepVersion(entity.getCaseId()),
                 steps,
                 toVO(result));
+    }
+
+    /**
+     * 取 {@code tc_step.version} —— 写侧三个接口用的那个版本号。
+     *
+     * <p>⚠️ 与 {@code tc_case.version} 不是一回事。前端拿错了会在 PUT 时撞 409，
+     * 而 409 的文案说「内容被别人改过」—— 把人指向完全错误的方向，
+     * 这类误导比直接报错更费时间。
+     */
+    private int stepVersion(String caseId) {
+        TcStep step = stepMapper.selectOne(
+                new LambdaQueryWrapper<TcStep>().eq(TcStep::getCaseId, caseId));
+        return step == null || step.getVersion() == null ? 0 : step.getVersion();
     }
 
     /**

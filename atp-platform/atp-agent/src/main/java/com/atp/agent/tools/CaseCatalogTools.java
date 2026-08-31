@@ -7,6 +7,7 @@ import com.atp.platform.mapper.TcCaseMapper;
 import com.atp.platform.mapper.TcModuleMapper;
 import com.atp.platform.mapper.TcProjectMapper;
 import com.atp.platform.service.CaseQueryService;
+import com.atp.platform.service.ModuleDictService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
@@ -37,6 +38,9 @@ public class CaseCatalogTools {
     private TcCaseMapper caseMapper;
     @Autowired
     private CaseQueryService caseQueryService;
+
+    @Autowired
+    private ModuleDictService moduleDictService;
 
     @Tool(name = "list_modules",
             description = "列出全部项目与模块字典。写案例前必须先查，module_id 只能从这里取，不能自己编。")
@@ -104,10 +108,8 @@ public class CaseCatalogTools {
         if (module == null) {
             return "模块 " + moduleId + " 不存在，先用 list_modules 查一下。";
         }
-        // ⚠️ 按前缀取最大序号 +1。演示环境够用；真实平台该用序列或号段，
-        //    否则两个 agent 同时要号会撞 —— 不过撞了也会被 uk_case_code 拦下，不会写坏数据
-        Long count = caseMapper.selectCount(new LambdaQueryWrapper<TcCase>()
-                .likeRight(TcCase::getCaseCode, "ATP-" + module.getModuleCode() + "-"));
-        return "ATP-%s-%04d".formatted(module.getModuleCode(), (count == null ? 0 : count) + 1);
+        // ⚠️ 改调 ModuleDictService —— 前端也要这个能力（GET /api/modules/{id}/next-case-code），
+        //    两份实现迟早会漂。原先这里用「条数 + 1」，中间删过一条就会撞号
+        return moduleDictService.nextCaseCode(moduleId);
     }
 }
