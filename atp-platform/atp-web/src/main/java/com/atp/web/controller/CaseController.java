@@ -70,6 +70,19 @@ public class CaseController {
      * 重试时复用同一个即可幂等。交给服务端生成的话，
      * 「请求成功但响应丢失 → 前端重试」会建出两条各自合法的草稿。
      */
+    /**
+     * 读当前草稿 —— {@code atp show} 与 {@code atp preview} 都走这条。
+     *
+     * <p>返回与 {@code draft} / {@code update} / {@code commit} 完全相同的 {@link CaseWriteService.DraftView}，
+     * 调用方不必为「读」和「写」维护两套解析。
+     *
+     * <p>案例不存在时 404（{@code CaseNotFoundException}），CLI 映射为退出码 11。
+     */
+    @GetMapping("/cases/{caseId}/draft")
+    public CaseWriteService.DraftView draftOf(@PathVariable String caseId) {
+        return caseWriteService.view(caseId);
+    }
+
     @PostMapping("/cases/draft")
     public CaseWriteService.DraftView draft(@RequestBody DraftRequest body) {
         CaseType type = body.caseType() == null || body.caseType().isBlank()

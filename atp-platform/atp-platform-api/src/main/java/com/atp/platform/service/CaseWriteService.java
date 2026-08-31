@@ -203,7 +203,15 @@ public class CaseWriteService {
         return stepMapper.selectOne(new LambdaQueryWrapper<TcStep>().eq(TcStep::getCaseId, caseId));
     }
 
-    private DraftView view(String caseId) {
+    /**
+     * 读当前草稿。{@code atp show} / {@code atp preview} 走这条。
+     *
+     * <p>⚠️ 刻意不返回 {@code tc_case.version} —— 编辑期它全程不动
+     * （编辑只写 {@code tc_step}），调用方拿到也没有用。
+     * 让调用方为了自测而要求平台暴露一个业务上用不到的字段，
+     * 是把测试需求泄漏进 API 形状；那条不变量该由平台自己的测试守住。
+     */
+    public DraftView view(String caseId) {
         TcStep step = loadStep(caseId);
         TcCase c = caseMapper.selectById(caseId);
         if (step == null || c == null) {
