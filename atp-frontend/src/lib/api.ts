@@ -200,8 +200,23 @@ export function problemType(err: unknown): string | null {
   return err instanceof ApiError ? (err.problem?.type ?? null) : null;
 }
 
-export const isVersionConflict = (e: unknown) => problemType(e) === PROBLEM.versionConflict;
-export const isStateConflict = (e: unknown) => problemType(e) === PROBLEM.stateConflict;
+/**
+ * 两种 409 的判定。
+ *
+ * ⚠️ 带**降级**：`type` 是后端 PR #49 才加的，在还没部署它的后端上 409 没有 type。
+ * 那种情况按 `version-conflict` 处理 —— 也就是加 type 之前的老行为（给「重新载入」）。
+ * 宁可在老后端上对 state-conflict 多给一个没用的重试按钮，也不能两种都不认、
+ * 保存失败却一句提示都不给。
+ */
+export function isVersionConflict(e: unknown): boolean {
+  const type = problemType(e);
+  if (type) return type === PROBLEM.versionConflict;
+  return e instanceof ApiError && e.isConflict;
+}
+
+export function isStateConflict(e: unknown): boolean {
+  return problemType(e) === PROBLEM.stateConflict;
+}
 
 /** 422 的 ProblemDetail 上挂着 findings，取出来直接喂给校验面板 */
 export function findingsOf(err: unknown): ValidationFinding[] {

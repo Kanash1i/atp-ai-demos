@@ -279,8 +279,9 @@ export default function CaseEditor({
       {
         onSuccess: adopt,
         onError: (e) => {
-          if (isVersionConflict(e)) setConflict('version');
-          else if (isStateConflict(e)) setConflict('state');
+          // state 先判：isVersionConflict 在没有 type 的老后端上会兜住所有 409
+          if (isStateConflict(e)) setConflict('state');
+          else if (isVersionConflict(e)) setConflict('version');
         },
       },
     );
@@ -307,12 +308,13 @@ export default function CaseEditor({
       {
         onSuccess: finish,
         onError: (e) => {
-          if (isVersionConflict(e)) {
-            setConflict('version');
-            return;
-          }
+          // state 先判，理由同上
           if (isStateConflict(e)) {
             setConflict('state');
+            return;
+          }
+          if (isVersionConflict(e)) {
+            setConflict('version');
             return;
           }
           if (!retried && isDuplicateCaseCode(e) && doc.module_id) {
