@@ -2,6 +2,7 @@ package com.atp.agent.chat;
 
 import com.atp.agent.AtpAgent;
 import com.atp.agent.authoring.CaseAuthoringAgent;
+import com.atp.agent.execution.ExecutionAgent;
 import com.atp.agent.intent.IntentCategory;
 import com.atp.agent.intent.IntentRouter;
 import com.atp.agent.intent.RouteResult;
@@ -121,6 +122,7 @@ public class ChatService {
         return switch (intent) {
             case CASE_AUTHORING -> ctx.getBean(CaseAuthoringAgent.class);
             case KNOWLEDGE_QA -> ctx.getBean(KnowledgeAgent.class);
+            case EXECUTION -> ctx.getBean(ExecutionAgent.class);
             // implemented() 已经在上面挡掉了，走到这里说明枚举加了新值却忘了接 —— 直接崩，别静默
             default -> throw new IllegalStateException("没有 agent 处理意图：" + intent);
         };
