@@ -69,3 +69,41 @@ func TestTocTou_ConcurrentUpdateLosesOnCAS(t *testing.T) {
 		t.Fatalf("后到的应被 CAS 挡下，实际 %s", lose.Code)
 	}
 }
+
+// TestCAS_SerialAdvanceAlwaysSucceeds 正常路径：每次都带上一次拿到的 version，
+// 连续 5 次 update 必须次次成功，版本逐格递增。
+//
+// ⭐ 它挡的不是"没人覆盖"，是"挂了指不对地方"。
+//
+// 我实测过：把 CAS 条件改成恒假（模拟写得过于严格、永远返回冲突），
+// 现有的 11 个用例会红 —— 包括并发那条。所以覆盖是有的。
+// 平台侧原本的预测是"并发测试照样全绿"，那条不成立，我验之前就接受了它。
+//
+// 但红的 11 条里有 8 条是 TestCommit_* —— 因为它们都拿 Update 当前置步骤，
+// CAS 一坏，前置就崩，报错全落在 Commit 上。照着那份输出去查，
+// 人会从 Commit 开始 debug，而 bug 在 Update。
+//
+// 这条用例的价值因此是【诊断精度】而不是覆盖率：它红的时候只说一句
+// "第 N 次串行 update 应当成功，实际 VERSION_CONFLICT"，指向就是对的。
+func TestCAS_SerialAdvanceAlwaysSucceeds(t *testing.T) {
+	ctx, s, _ := newStore(t)
+	id := uuid.NewString()
+	mustDraft(t, ctx, s, id, "购物车结算")
+
+	version := 0
+	for i := 1; i <= 5; i++ {
+		r := s.Update(ctx, id, version, completeDraft("购物车结算", 2))
+		if r.Code != model.OK {
+			t.Fatalf("第 %d 次串行 update 应当成功，实际 %s: %s", i, r.Code, r.Message)
+		}
+		if r.Row.Version != i {
+			t.Fatalf("第 %d 次 update 后 version 应为 %d，实际 %d", i, i, r.Row.Version)
+		}
+		version = r.Row.Version
+	}
+
+	// 收尾：正常路径推进完，commit 仍然走得通 —— 否则"能改但提交不了"也是死路
+	if r := s.Commit(ctx, id, version); r.Code != model.OK {
+		t.Fatalf("串行推进后 commit 应当成功，实际 %s: %s", r.Code, r.Message)
+	}
+}

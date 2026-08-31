@@ -4,14 +4,10 @@
 package cli
 
 import (
-	"context"
 	"io"
 
-	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/config"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/out"
-	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/store"
-	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 )
 
@@ -30,24 +26,6 @@ type app struct {
 
 func (a *app) w() *out.Writer {
 	return &out.Writer{JSON: a.jsonOut, Out: a.stdout, Err: a.stderr}
-}
-
-// withDB 统一收口连接生命周期。配置缺失或库不通一律 INFRA_ERROR(20)。
-func (a *app) withDB(fn func(ctx context.Context, conn *pgx.Conn) int) error {
-	ctx := context.Background()
-	dsn, err := config.Load().DSN()
-	if err != nil {
-		a.code = a.w().Fail(model.InfraError, err.Error(), nil)
-		return nil
-	}
-	conn, err := store.Open(ctx, dsn)
-	if err != nil {
-		a.code = a.w().Fail(model.InfraError, "连不上数据库: "+err.Error(), nil)
-		return nil
-	}
-	defer conn.Close(ctx)
-	a.code = fn(ctx, conn)
-	return nil
 }
 
 // Execute 跑根命令并返回退出码。不在这里 os.Exit —— 测试要能直接调。

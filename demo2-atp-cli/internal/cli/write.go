@@ -8,9 +8,7 @@ import (
 
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/rule"
-	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/store"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 )
 
@@ -33,8 +31,8 @@ func (a *app) draftCmd() *cobra.Command {
 			if id == "" {
 				id = uuid.NewString()
 			}
-			return a.withDB(func(ctx context.Context, conn *pgx.Conn) int {
-				return a.w().Emit(store.NewCaseStore(conn).Draft(ctx, id, ct, title, by))
+			return a.withBackend(func(ctx context.Context, be Backend) int {
+				return a.w().Emit(be.Draft(ctx, id, ct, title, by))
 			})
 		},
 	}
@@ -58,8 +56,8 @@ func (a *app) showCmd() *cobra.Command {
 		Short: "输出草稿当前的内容与 version",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.withDB(func(ctx context.Context, conn *pgx.Conn) int {
-				return a.w().Emit(store.NewCaseStore(conn).Show(ctx, args[0]))
+			return a.withBackend(func(ctx context.Context, be Backend) int {
+				return a.w().Emit(be.Show(ctx, args[0]))
 			})
 		},
 	}
@@ -109,8 +107,8 @@ func (a *app) updateCmd() *cobra.Command {
 					return nil
 				}
 			}
-			return a.withDB(func(ctx context.Context, conn *pgx.Conn) int {
-				return a.w().Emit(store.NewCaseStore(conn).Update(ctx, args[0], version, string(raw)))
+			return a.withBackend(func(ctx context.Context, be Backend) int {
+				return a.w().Emit(be.Update(ctx, args[0], version, string(raw)))
 			})
 		},
 	}
@@ -133,8 +131,8 @@ func (a *app) previewCmd() *cobra.Command {
 		Short: "渲染草稿供用户确认，并打印要带回 commit 的 version",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.withDB(func(ctx context.Context, conn *pgx.Conn) int {
-				r := store.NewCaseStore(conn).Show(ctx, args[0])
+			return a.withBackend(func(ctx context.Context, be Backend) int {
+				r := be.Show(ctx, args[0])
 				// --json 时只出信封，人类模式才渲染下面这块（两个通道不要混着打）
 				if !r.Succeeded() || a.jsonOut {
 					return a.w().Emit(r)
@@ -182,8 +180,8 @@ func (a *app) commitCmd() *cobra.Command {
 		Short: "提交草稿，落地为老平台原生的 DRAFT 案例（执行器无感知）",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.withDB(func(ctx context.Context, conn *pgx.Conn) int {
-				return a.w().Emit(store.NewCaseStore(conn).Commit(ctx, args[0], version))
+			return a.withBackend(func(ctx context.Context, be Backend) int {
+				return a.w().Emit(be.Commit(ctx, args[0], version))
 			})
 		},
 	}
