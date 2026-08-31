@@ -104,7 +104,7 @@
 > `ssh kkaib@192.168.0.101` 免密可登，但默认 shell 是 cmd.exe；
 > 跑 PowerShell 要用 `-EncodedCommand` 传 base64，否则三层引号转义必崩。
 > 笔记本已配 `docker context remote`，直接敲 docker 命令即可操作台式机上的容器。
-> 详见 `00-SHARED-CONTEXT.md` §2.1。
+> 详见 `00-SHARED-CONTEXT.md` §2.2。
 
 ## ⚠️ 开工前的冒烟测试
 
@@ -115,7 +115,7 @@ docker logs tei-rerank 2>&1 | grep -i "model on"
 
 这个项目**已经踩过一次**：服务 health 200、API 正常返回 1024 维向量，一切看起来都对，
 实际却在 CPU 上跑（14 核满载），靠 CPU 风扇声才发现。
-完整三项冒烟测试见 `00-SHARED-CONTEXT.md` §2.1(e)。
+完整三项冒烟测试见 `00-SHARED-CONTEXT.md` §2.2(e)。
 
 ## ⚠️ 不要在 `.claude/settings*.json` 的 `env` 里设 `PATH`
 
