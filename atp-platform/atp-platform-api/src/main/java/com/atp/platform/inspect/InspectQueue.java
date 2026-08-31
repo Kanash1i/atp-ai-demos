@@ -51,11 +51,29 @@ public class InspectQueue {
     }
 
     /**
+     * 一次 BRPOP 最多阻塞这么久。
+     *
+     * <p>⚠️ 必须**小于** Lettuce 的 command timeout（{@code spring.data.redis.timeout}，当前 3s）。
+     * 直接 BRPOP 30 秒的话，Lettuce 在 3 秒时就抛 {@code RedisCommandTimeoutException} ——
+     * 表现是探查接口 500，而 Redis 和执行机其实都好好的。
+     *
+     * <p>不去调大全局 timeout 是因为那会连累所有普通读写：Redis 真挂了的时候，
+     * 每个请求都要先挂满 30 秒才报错。宁可在这里分段等。
+     */
+    private static final int BLOCK_SLICE_SEC = 2;
+
+    /**
      * 等一个响应。到点返回 null —— 调用方据此报「执行机没响应」，
      * 而这属于 INFRA_ERROR，不是「页面不存在」。
      */
     public InspectResponse await(String requestId, int timeoutSec) {
-        String raw = redis.opsForList().rightPop(REPLY_PREFIX + requestId, timeoutSec, TimeUnit.SECONDS);
+        String key = REPLY_PREFIX + requestId;
+        long deadline = System.currentTimeMillis() + timeoutSec * 1000L;
+
+        String raw = null;
+        while (raw == null && System.currentTimeMillis() < deadline) {
+            raw = redis.opsForList().rightPop(key, BLOCK_SLICE_SEC, TimeUnit.SECONDS);
+        }
         if (raw == null) {
             return null;
         }

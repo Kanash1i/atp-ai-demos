@@ -11,6 +11,7 @@ import com.microsoft.playwright.Page;
 import com.microsoft.playwright.Playwright;
 import com.microsoft.playwright.Response;
 import com.microsoft.playwright.options.LoadState;
+import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.ApplicationArguments;
@@ -69,6 +70,18 @@ public class InspectConsumer implements ApplicationRunner {
         worker.submit(this::loop);
     }
 
+    /**
+     * ⚠️ 没有这个的话，关停时循环会永远转下去 ——
+     * Redis 连接工厂已经销毁，每次 take 都抛异常、被 catch、continue，
+     * 一秒钟能刷出上千行 "LettuceConnectionFactory was destroyed"。
+     * 实测撞到过：日志里全是这一行，真正的关停信息被冲没了。
+     */
+    @PreDestroy
+    void stop() {
+        running = false;
+        worker.shutdownNow();
+    }
+
     private void loop() {
         Playwright playwright = null;
         Browser browser = null;
@@ -100,7 +113,11 @@ public class InspectConsumer implements ApplicationRunner {
                 queue.reply(inspect(browser, req));
 
             } catch (Exception e) {
-                // ⚠️ 循环本身绝不能因为一次失败而退出 —— 那会让节点静默失去探查能力，
+                // 关停途中的异常不值得记 —— 连接工厂已销毁，这是意料之中的
+                if (!running || Thread.currentThread().isInterrupted()) {
+                    break;
+                }
+                // ⚠️ 除此之外，循环绝不能因为一次失败而退出 —— 那会让节点静默失去探查能力，
                 //    而心跳一切正常，从外面完全看不出来
                 log.warn("[INSPECT] 本轮异常：{}", e.getMessage());
                 if (browser != null) {
