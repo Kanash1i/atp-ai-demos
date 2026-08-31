@@ -3,6 +3,7 @@ package com.atp.web.controller;
 import com.atp.platform.service.ApprovalAlreadyDecidedException;
 import com.atp.platform.service.ApprovalNotFoundException;
 import com.atp.platform.service.CaseConflictException;
+import com.atp.platform.service.CaseHeaderIncompleteException;
 import com.atp.platform.service.CaseNotFoundException;
 import com.atp.platform.service.CaseValidationException;
 import com.atp.platform.service.TaskNotFoundException;
@@ -91,6 +92,20 @@ public class ApiExceptionHandler {
      * 会被当成服务器内部错误返回 500，调用方（尤其是 CLI）就分不清
      * 「我没登录」和「平台挂了」，前者该去换 token，后者该重试或报警。
      */
+    /**
+     * 提交时表头字段不全 → 422。
+     *
+     * <p>不拦的话数据库的 {@code ck_case_complete} 会抛
+     * {@code DataIntegrityViolationException}，兜底成 500 ——
+     * 而 500 让调用方以为是后端崩了，实际上是自己少填了字段。
+     */
+    @ExceptionHandler(CaseHeaderIncompleteException.class)
+    public ProblemDetail headerIncomplete(CaseHeaderIncompleteException e) {
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
+        pd.setProperty("missingFields", e.missing());
+        return pd;
+    }
+
     @ExceptionHandler(NotLoginException.class)
     public ProblemDetail notLogin(NotLoginException e) {
         return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED,
