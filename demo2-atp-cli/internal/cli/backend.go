@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/apistore"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/config"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/store"
@@ -72,6 +73,19 @@ func openPG(ctx context.Context) (Backend, error) {
 	}, nil
 }
 
+// openAPI 走平台 HTTP 接口 —— 凭证边界合上之后的实现。
+//
+// ⚠️ 不要求 clientId/secret 一定存在：平台的 atp.auth.enabled 是过渡开关，
+// 关着的时候不带 token 也能调。等它删掉，这里改成必填。
+func openAPI() (Backend, error) {
+	cfg := config.Load()
+	base, err := cfg.APIBase()
+	if err != nil {
+		return nil, err
+	}
+	return apistore.New(base, cfg.Optional(config.EnvClientID), cfg.Optional(config.EnvClientSecret)), nil
+}
+
 // withBackend 统一收口后端的生命周期。配置缺失或连不上一律 INFRA_ERROR(20)。
 //
 // 命令层到此为止 —— 它不知道底下是 pgx 还是 HTTP，也不该知道。
@@ -86,7 +100,7 @@ func (a *app) withBackend(fn func(ctx context.Context, be Backend) int) error {
 	case "", "pg":
 		b, err = openPG(ctx)
 	case "api":
-		err = fmt.Errorf("ATP_BACKEND=api 尚未实现（迁移第 ② 步）")
+		b, err = openAPI()
 	default:
 		err = fmt.Errorf("ATP_BACKEND 只接受 pg / api，收到 %q", kind)
 	}

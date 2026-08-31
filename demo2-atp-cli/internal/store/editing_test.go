@@ -105,9 +105,15 @@ func TestCommit_NormalizesStepJSONToArray(t *testing.T) {
 		t.Fatal("规整后 step_json 里不该还有表头字段")
 	}
 
+	// ⚠️ 这里两个值相等是【commit 恰好把两边都设成 1】的结果，不是不变量。
+	// 案例之后被激活成 ACTIVE 时，tc_case.status 变 2 而 tc_step.status 仍是 1 ——
+	// 库里 78 条存量 ACTIVE 案例就是这个状态。别把这条读成"两表 status 会同步"。
 	row := s.Show(ctx, id).Row
-	if row.Status != model.StatusDraft || row.PlatformStatus != model.StatusDraft {
-		t.Fatalf("两张表都该是 DRAFT，实际 step=%s case=%s", row.Status, row.PlatformStatus)
+	if row.Status != model.StatusDraft {
+		t.Fatalf("commit 后 tc_step.status 应为 DRAFT，实际 %s", row.Status)
+	}
+	if row.PlatformStatus != model.StatusDraft {
+		t.Fatalf("commit 后 tc_case.status 应为 DRAFT，实际 %s", row.PlatformStatus)
 	}
 }
 
