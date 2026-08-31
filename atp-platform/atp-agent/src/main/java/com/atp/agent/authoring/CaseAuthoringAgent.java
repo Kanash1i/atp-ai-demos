@@ -2,6 +2,7 @@ package com.atp.agent.authoring;
 
 import com.atp.agent.tools.CaseCatalogTools;
 import com.atp.agent.tools.CaseDraftTools;
+import com.atp.agent.tools.PageInspectTools;
 import com.atp.agent.tools.StandardsTools;
 import io.agentscope.core.ReActAgent;
 import io.agentscope.core.memory.InMemoryMemory;
@@ -54,11 +55,13 @@ public class CaseAuthoringAgent {
     public CaseAuthoringAgent(@Qualifier("strongModel") Model model,
                               StandardsTools standardsTools,
                               CaseCatalogTools catalogTools,
-                              CaseDraftTools draftTools) {
+                              CaseDraftTools draftTools,
+                              PageInspectTools inspectTools) {
         Toolkit toolkit = new Toolkit();
         toolkit.registerTool(standardsTools);
         toolkit.registerTool(catalogTools);
         toolkit.registerTool(draftTools);
+        toolkit.registerTool(inspectTools);
 
         this.agent = ReActAgent.builder()
                 .name(NAME)

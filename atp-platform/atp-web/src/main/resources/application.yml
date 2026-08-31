@@ -63,6 +63,11 @@ atp:
   # ⭐ 平台 agent 的写侧出口 —— 与 opencode 走同一个二进制，格式漂移物理上不可能。
   #    CLI 读的 ATP_DB_* 与平台是同一组环境变量，子进程直接继承，
   #    凭据始终留在平台侧，不因为「走了 CLI」而落到别处。
+  # 页面探查的目标 —— 与执行器的 atp.runner.variables.base_url 是同一个值。
+  # agent 探查看到的必须就是执行时会看到的，否则探出来的定位器仍然可能跑不通。
+  inspect:
+    base-url: ${MOCK_SHOP_URL:http://localhost:8088}
+
   cli:
     bin: ${ATP_CLI_BIN:../../demo2-atp-cli/bin/atp}
     timeout-seconds: ${ATP_CLI_TIMEOUT:30}
