@@ -151,9 +151,28 @@ ATP_DB_USER
 ATP_DB_PASSWORD   允许为空
 ```
 
-> ⚠️ **CLI 目前直连 PostgreSQL。** 按 `CLAUDE.md`，最终 CAS 那套要由平台提供接口、
-> CLI 改为调接口（数据库密钥不该放在 agent 那一侧）。
-> **那次改动会动到本契约的第 5 节，但第 1–4 节的形状会保持不变。**
+> ### ⚠️ 这一节会变，第 1–4 节不会
+>
+> **CLI 目前直连 PostgreSQL，这意味着凭证边界还没合上** ——
+> `.env` 与 CLI 共用凭证，而 agent 读得到（`DECISIONS.md` **D-123** 记了一次真实事故）。
+>
+> 目标架构：
+>
+> ```
+> opencode ──┐
+>            ├─→ atp CLI ──HTTP──→ ATP 平台 API ──→ PG
+> 平台 agent ─┘   持窄 token           持 DB 凭证
+> ```
+>
+> **目的不是"CAS 归平台"，是让 agent 那一层永远看不到数据库密码** ——
+> 不是靠约束，是它根本拿不到。
+>
+> 平台侧的写接口已就位：
+> `POST /api/cases/draft` · `PUT /api/cases/{caseId}/draft` · `POST /api/cases/{caseId}/commit`，
+> 与本 CLI 的 `draft` / `update` / `commit` 一一对应。**缺的只有鉴权，迁移是接线不是造。**
+>
+> **那次改动只动本节（配置与连库方式），第 1–4 节的形状保持不变** ——
+> 也就是说，**消费方现在依赖的命令行接口与 `--json` 输出不受影响，零改动。**
 
 ---
 
