@@ -26,7 +26,7 @@ curl -s localhost:8080/api/health
 | `/` | Landing。三语循环打字机、滚动淡入、「立即体验」进 dashboard |
 | `/dashboard/cases` | 案例中心：项目 pill → 模块树 → 案例详情（步骤表 + 规范校验） |
 | `/dashboard/runs` | 执行状态：四张统计卡、执行中批次（真派发 + 2 秒轮询）、最近执行、失败详情抽屉（播真录像） |
-| `/dashboard/agent` | 智能 Agent 助手（**M3 才有后端**，当前是静态稿） |
+| `/dashboard/agent` | 智能 Agent 助手：SSE 流式对话、路由结论、思考过程实时流 |
 | `/dashboard/datasets` | 数据集中心（**M3 才有后端**，当前是静态稿） |
 | `/dashboard/approvals` | 审批中心：三类审批卡片、diff、批准/退回/挂起 |
 
@@ -70,12 +70,51 @@ cp .env.example .env.local
 
 **没有中止接口**，所以「中止」按钮还是置灰的。
 
+## 案例写侧（M3）
+
+三段式：`POST /api/cases/draft` 建草稿 → `PUT /api/cases/{id}/draft` 反复保存 →
+`POST /api/cases/{id}/commit` 提交落地。人在 UI 上编辑和 agent 生成走的是同一条路径。
+
+**`caseId` 由前端生成（UUID），是幂等键。** 「点了新建但响应丢了」重试一次即可，
+不会建出两条空草稿 —— 所以它只在组件挂载时生成一次，不能每次渲染换一个。
+
+**`version` 是并发仲裁点。** 撞到 409 提示「已被他人修改」并给「重新载入」，
+**不静默重试** —— 重试会拿你手上这份把别人的改动整个盖掉。
+
+**⚠️ `draftJson` 的表头字段是 snake_case，而且 `case_code` 必须自己给。**
+后端 commit 时按 `case_code` / `title` / `module_id` / `priority` / `author` / `precondition`
+这几个键投影进 `tc_case` 的正式列。用 camelCase 写，或者漏了 `case_code`，
+落库时会撞 `ck_case_complete` 约束 —— 报的是 **500**，不是 4xx，排查时很容易看错方向。
+序号也没有「取下一个」的接口，前端按该模块已有案例的最大序号 +1 推。
+
+**`draftJson` 的形状在 commit 那一步会变**：编辑期是对象 `{title, steps: [...]}`，
+落地后是**纯步骤数组** `[{seq:1,…}]`（老执行器读数组）。`parseDraft()` 按 `status` 分支，
+不分支的话提交成功那一刻页面就白屏。
+
+## 智能 Agent 助手（M3）
+
+`POST /api/chat/{conversationId}`，SSE。`conversationId` 前端生成并保持，
+同一个 id 共享多轮上下文；关闭面板时 `DELETE` 释放。
+
+**用 `fetch` + `ReadableStream` 而不是 `EventSource`** —— `EventSource` 只能 GET，
+而这个接口要 POST 一个 body。
+
+**`thinking` 是增量、`message` 是完整**，拼接方式不同。一轮通常 150~800 个 `thinking`
+加 1 个 `message`；把 `message` 也当增量拼，最终回复会显示两遍。
+
+**不设自己的超时。** 一轮可能 1~3 分钟（agent 要查规范、用浏览器实测页面、写草稿、
+校验、提交、跑自验），后端 `SseEmitter` 是 300 秒。
+
+**`route` 事件带路由结论与置信度**（`案例编写 · L2 0.98`），显示在气泡上方 ——
+路由会判错，用户看得见才能立刻说「不是这个意思」，而不是等一大段跑完才发现跑偏。
+
 ## 几个刻意的决定
 
-**写侧按钮做出来但置灰。** 「新建」「编辑」「申请审批」在 M3 才有后端 ——
-人在 UI 上编辑和 agent 生成走同一条写入路径，先给 UI 做一遍、M3 再为 agent 做一遍，
-几乎必然出现两套语义。按钮按稿子摆在原位并标着 `M3`，而不是先藏起来：
-藏起来演示时就看不出平台的完整形状了。「执行」同理，标 `M2`。
+**写侧只对 `AI_DRAFT` 开放。** 「新建」是真的（建草稿 → 反复保存 → 提交落地）；
+「编辑」只在案例还是 `AI_DRAFT` 时可用 —— 一旦 commit 落地，后端就不再接受 `PUT`，
+返回 409「案例已经提交过了，本次更新不予执行」。库里 80 条存量全是已落地状态，
+所以它们的「编辑」是禁用的**并说明原因**，而不是点了才报错。
+「申请审批」仍置灰标 `M3` —— 审批**决策**接口早就有，但「案例变更 → 生成审批单」这一步还没接。
 
 **领域数据不参与 i18n。** 项目名、模块名（本身就是 `ログイン / 登录认证` 这种双语串）、
 案例标题、`case_code`、Action 枚举、STD 编号、node 名，以及**规范校验的 message**，

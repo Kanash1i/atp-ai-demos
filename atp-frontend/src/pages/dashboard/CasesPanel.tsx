@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCaseDetail, useDispatch, useProjects, useProjectTree } from '../../lib/queries';
 import { isRunnableModule } from '../../lib/runnable';
 import { DEMO_USER } from '../../lib/api';
+import CaseEditor from './CaseEditor';
 import {
   caseStatusDot, caseStatusTone, dash, isAssertion, priorityTone, severityTone, toneOf,
 } from '../../lib/format';
@@ -221,7 +222,7 @@ function RunButton({ detail }: { detail: CaseDetail }) {
   );
 }
 
-function CaseDetailPanel({ caseId }: { caseId: string | null }) {
+function CaseDetailPanel({ caseId, onEdit }: { caseId: string | null; onEdit: (id: string) => void }) {
   const { t } = useTranslation();
   const { data, isLoading, error, refetch } = useCaseDetail(caseId ?? undefined);
   const [highlight, setHighlight] = useState<number | null>(null);
@@ -252,7 +253,30 @@ function CaseDetailPanel({ caseId }: { caseId: string | null }) {
                   {data.priority}
                 </Tag>
                 <div className="grow" />
-                <NotReadyButton>{t('cases.edit')}</NotReadyButton>
+                {/*
+                  写侧只对 AI_DRAFT 开放。案例一旦 commit 落地，后端就不再接受 PUT
+                  （409「案例已经提交过了，本次更新不予执行」）—— 库里 80 条存量全是
+                  已落地状态，所以这个按钮在它们身上是禁用的，而不是点了才报错。
+                */}
+                {data.status === 'AI_DRAFT' ? (
+                  <button
+                    type="button"
+                    onClick={() => onEdit(data.caseId)}
+                    className="rounded-md border border-line bg-card px-[13px] py-[7px] text-[12.5px] text-ink-2 transition-colors hover:bg-line-4"
+                  >
+                    {t('cases.edit')}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    disabled
+                    title={t('cases.editCommitted')}
+                    className="cursor-not-allowed rounded-md border border-dashed border-line-2 bg-card px-[13px] py-[7px] text-[12.5px] text-ink-5"
+                  >
+                    {t('cases.edit')}
+                  </button>
+                )}
+                {/* 「案例变更 → 生成审批单」这一步后端还没接（审批**决策**接口早就有） */}
                 <NotReadyButton>{t('cases.requestApproval')}</NotReadyButton>
                 <RunButton detail={data} />
               </div>
@@ -364,6 +388,7 @@ export default function CasesPanel() {
   const { data: projects, isLoading: pLoading, error: pError, refetch } = useProjects();
   const [projectId, setProjectId] = useState<string | null>(null);
   const [caseId, setCaseId] = useState<string | null>(null);
+  const [editor, setEditor] = useState<{ mode: 'new' | 'open'; caseId?: string } | null>(null);
 
   const activeProject = projectId ?? projects?.[0]?.projectId ?? null;
   const { data: modules, isLoading: tLoading, error: tError } = useProjectTree(activeProject ?? undefined);
@@ -383,10 +408,14 @@ export default function CasesPanel() {
         <div className="shrink-0 border-b border-line px-4 pt-4 pb-3.5">
           <div className="mb-3 flex items-center justify-between">
             <SectionTitle>{t('cases.tree')}</SectionTitle>
-            <NotReadyButton className="!px-[9px] !py-[5px] !text-[11.5px]">
+            <button
+              type="button"
+              onClick={() => setEditor({ mode: 'new' })}
+              className="flex items-center gap-1.5 rounded-sm border border-line bg-card px-[9px] py-[5px] text-[11.5px] text-ink-2 transition-colors hover:bg-line-4"
+            >
               <IconPlus size={12} />
               {t('cases.new')}
-            </NotReadyButton>
+            </button>
           </div>
 
           <ColLabel className="mb-2 block tracking-[.18em]">{t('cases.project')}</ColLabel>
@@ -426,7 +455,16 @@ export default function CasesPanel() {
         </div>
       </section>
 
-      <CaseDetailPanel caseId={selected} />
+      <CaseDetailPanel caseId={selected} onEdit={(id) => setEditor({ mode: 'open', caseId: id })} />
+
+      {editor && (
+        <CaseEditor
+          mode={editor.mode}
+          caseId={editor.caseId}
+          onClose={() => setEditor(null)}
+          onCommitted={(id) => setCaseId(id)}
+        />
+      )}
     </div>
   );
 }

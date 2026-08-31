@@ -1,7 +1,10 @@
 import { useEffect, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, decideApproval, dispatchRun, DEMO_USER, NO_CONTENT } from './api';
-import type { Decision, DispatchRequest } from './types';
+import {
+  api, ApiError, commitDraft, createDraft, decideApproval, dispatchRun, saveDraft,
+  DEMO_USER, NO_CONTENT,
+} from './api';
+import type { CreateDraftRequest, Decision, DispatchRequest } from './types';
 
 /** 后端不在的时候不要重试三次再报错 —— 演示现场要立刻看到「连不上」 */
 const once = { retry: 0 } as const;
@@ -122,6 +125,54 @@ export function useDecide() {
     retry: 0,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['approvals'] });
+    },
+  });
+}
+
+/* ---------- 写侧（面板⑥）---------- */
+
+/** 模块字典。12 条固定数据，缓存久一点 */
+export const useModules = () =>
+  useQuery({ queryKey: ['modules'], queryFn: api.modules, staleTime: 10 * 60_000, ...once });
+
+export const useDraft = (caseId: string | null) =>
+  useQuery({
+    queryKey: ['draft', caseId],
+    queryFn: () => api.draft(caseId!),
+    enabled: Boolean(caseId),
+    ...once,
+  });
+
+export function useCreateDraft() {
+  return useMutation({ mutationFn: (body: CreateDraftRequest) => createDraft(body), retry: 0 });
+}
+
+/**
+ * 保存草稿。**不重试** —— 409 意味着别人改过了，重试会覆盖他的改动。
+ * 成功后把树和这条案例的缓存都作废：标题、优先级可能变了。
+ */
+export function useSaveDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { caseId: string; draftJson: string; version: number }) =>
+      saveDraft(v.caseId, v.draftJson, v.version),
+    retry: 0,
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['draft', v.caseId] });
+    },
+  });
+}
+
+/** 提交落地。成功后树里会多出这条案例，所以整棵树和案例详情都要作废 */
+export function useCommitDraft() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { caseId: string; version: number }) => commitDraft(v.caseId, v.version),
+    retry: 0,
+    onSuccess: (_d, v) => {
+      void qc.invalidateQueries({ queryKey: ['tree'] });
+      void qc.invalidateQueries({ queryKey: ['case', v.caseId] });
+      void qc.invalidateQueries({ queryKey: ['draft', v.caseId] });
     },
   });
 }

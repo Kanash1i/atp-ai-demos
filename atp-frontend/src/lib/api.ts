@@ -1,7 +1,8 @@
 import type {
-  Approval, ApprovalStats, CaseDetail, Decision, DispatchRequest, DispatchResponse,
-  ExecNode, ExecStats, ProblemDetail, Project, RecentRun, RunningBatch, TaskDetail,
-  TreeModule, ValidationResult,
+  Approval, ApprovalStats, CaseDetail, ChatEvent, CreateDraftRequest, Decision,
+  DispatchRequest, DispatchResponse, DraftView, ExecNode, ExecStats, ModuleDictEntry,
+  ProblemDetail, Project, RecentRun, RunningBatch, TaskDetail, TreeModule,
+  ValidationFinding, ValidationResult,
 } from './types';
 
 /**
@@ -73,6 +74,12 @@ async function get<T>(path: string): Promise<T> {
   return out;
 }
 
+async function post<T>(path: string, body: unknown, method: 'POST' | 'PUT' = 'POST'): Promise<T> {
+  const out = await request<T>(path, { method, body: JSON.stringify(body) });
+  if (out === NO_CONTENT) throw new ApiError(204, null, 'unexpected 204');
+  return out;
+}
+
 function withUser(path: string, user = DEMO_USER): string {
   return `${path}${path.includes('?') ? '&' : '?'}user=${encodeURIComponent(user)}`;
 }
@@ -87,6 +94,12 @@ export const api = {
   caseDetail: (caseId: string) => get<CaseDetail>(`/api/cases/${caseId}`),
 
   caseValidation: (caseId: string) => get<ValidationResult>(`/api/cases/${caseId}/validation`),
+
+  /** 平铺不分页（当前 12 条）。新建案例的模块下拉框用它 */
+  modules: () => get<ModuleDictEntry[]>('/api/modules'),
+
+  /** 读回当前草稿。刷新页面、或撞到 409 之后重新载入时用 */
+  draft: (caseId: string) => get<DraftView>(`/api/cases/${caseId}/draft`),
 
   /* ---------- 执行状态 ---------- */
   execStats: () => get<ExecStats>('/api/executions/stats'),
@@ -125,6 +138,103 @@ export async function dispatchRun(body: DispatchRequest): Promise<DispatchRespon
   });
   if (out === NO_CONTENT) throw new ApiError(204, null, 'unexpected 204');
   return out;
+}
+
+/* ---------- 写侧（面板⑥）---------- */
+
+/**
+ * 建草稿。`caseId` 由**调用方**生成（UUID），是幂等键 ——
+ * 「点了新建但响应丢了」重试一次即可，不会建出两条空草稿。
+ */
+export async function createDraft(body: CreateDraftRequest): Promise<DraftView> {
+  return post<DraftView>('/api/cases/draft', body);
+}
+
+/**
+ * 保存草稿。`version` 是并发仲裁点，带你手上那份的版本号；
+ * 中间被别人改过会 409 —— 提示「已被他人修改」并提供重新载入，**不要静默重试**，
+ * 重试会覆盖别人的改动。
+ */
+export async function saveDraft(caseId: string, draftJson: string, version: number): Promise<DraftView> {
+  return post<DraftView>(`/api/cases/${caseId}/draft`, { draftJson, version }, 'PUT');
+}
+
+/**
+ * 提交落地。**只带 version，不带内容** —— 提交的是库里那份已经确认过的快照。
+ * 规范校验有 ERROR 时 422，`findings` 直接渲染。
+ */
+export async function commitDraft(caseId: string, version: number): Promise<DraftView> {
+  return post<DraftView>(`/api/cases/${caseId}/commit`, { version });
+}
+
+/** 422 的 ProblemDetail 上挂着 findings，取出来直接喂给校验面板 */
+export function findingsOf(err: unknown): ValidationFinding[] {
+  if (!(err instanceof ApiError) || !err.problem) return [];
+  const p = err.problem as ProblemDetail & { findings?: ValidationFinding[] };
+  return Array.isArray(p.findings) ? p.findings : [];
+}
+
+/* ---------- 智能 Agent 助手（面板⑤）---------- */
+
+/**
+ * 一轮对话。**用 fetch 而不是 EventSource** —— EventSource 只能 GET，
+ * 而这个接口要 POST 一个 body。
+ *
+ * ⚠️ 一轮可能长达 1~3 分钟（agent 要查规范、用浏览器探查页面、写草稿、校验、提交、跑自验）。
+ * 后端 SseEmitter 超时 300 秒，**这里不设更短的超时** —— 只认外部传进来的 signal，
+ * 那是用户主动取消或组件卸载。
+ */
+export async function streamChat(
+  conversationId: string,
+  message: string,
+  onEvent: (e: ChatEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await fetch(`${BASE}/api/chat/${conversationId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ message }),
+    signal,
+  });
+
+  if (!res.ok || !res.body) {
+    throw new ApiError(res.status, await parseProblem(res), `${res.status} ${res.statusText}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    // SSE 以空行分隔一个事件块。\r\n 也要认，别假设服务端只发 \n
+    let sep: number;
+    while ((sep = buffer.search(/\r?\n\r?\n/)) !== -1) {
+      const block = buffer.slice(0, sep);
+      buffer = buffer.slice(sep).replace(/^\r?\n\r?\n/, '');
+
+      for (const line of block.split(/\r?\n/)) {
+        // 后端发的是 `data:{...}`（冒号后没有空格），但规范允许有，两种都认
+        if (!line.startsWith('data:')) continue;
+        const raw = line.slice(5).trimStart();
+        if (!raw) continue;
+        try {
+          onEvent(JSON.parse(raw) as ChatEvent);
+        } catch {
+          /* 半个 JSON —— 只可能出现在流被掐断时，丢掉即可 */
+        }
+      }
+    }
+  }
+}
+
+/** 关闭会话，释放该会话的 agent 实例与上下文。用户关掉对话面板时调一次 */
+export async function closeChat(conversationId: string): Promise<void> {
+  await request(`/api/chat/${conversationId}`, { method: 'DELETE' });
 }
 
 /** POST 单独写，避免上面 get<> 的语义被误用 */
