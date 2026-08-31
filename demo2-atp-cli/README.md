@@ -44,6 +44,7 @@ make test           # 27 个用例，起真 PostgreSQL 17
 ./bin/atp update  <id> --version 0 -f draft.json
 ./bin/atp preview <id>
 ./bin/atp commit  <id> --version 1
+./bin/atp run     <id>                          # 跑一次自验，如实报告（不自动重试）
 ```
 
 ⚠️ 配置取不到会 fail fast，**不给默认值** —— 默认值会把「配置漏了」变成「连到了错的库」。
