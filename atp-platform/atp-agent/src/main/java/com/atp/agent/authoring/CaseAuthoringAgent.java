@@ -1,5 +1,7 @@
 package com.atp.agent.authoring;
 
+import com.atp.agent.AtpAgent;
+import com.atp.agent.intent.IntentCategory;
 import com.atp.agent.tools.CaseCatalogTools;
 import com.atp.agent.tools.CaseDraftTools;
 import com.atp.agent.tools.PageInspectTools;
@@ -46,7 +48,7 @@ import java.nio.charset.StandardCharsets;
 @Slf4j
 @Component
 @org.springframework.context.annotation.Scope("prototype")
-public class CaseAuthoringAgent {
+public class CaseAuthoringAgent implements AtpAgent {
 
     public static final String NAME = "CaseAuthoringAgent";
 
@@ -86,6 +88,12 @@ public class CaseAuthoringAgent {
         return extractText(reply);
     }
 
+    @Override
+    public IntentCategory handles() {
+        return IntentCategory.CASE_AUTHORING;
+    }
+
+    @Override
     public ReActAgent raw() {
         return agent;
     }
