@@ -1,0 +1,28 @@
+# 并发测试要对着**真 PostgreSQL** 跑 —— 用 H2 或 mock 是没有意义的：
+# 这些测试验的正是 PG 的 ON CONFLICT 与 CAS UPDATE 在真并发下的行为，
+# 换个数据库、或者把 SQL 换成 mock，验的就不是同一件事了。
+spring:
+  datasource:
+    type: com.alibaba.druid.pool.DruidDataSource
+    driver-class-name: org.postgresql.Driver
+    url: ${ATP_DB_URL}
+    username: ${ATP_DB_USER}
+    password: ${ATP_DB_PASSWORD}
+    druid:
+      # 并发测试要同时开十几条连接，池子给足 —— 否则测出来的是「连接池排队」
+      # 而不是「数据库的并发仲裁」，那是两回事
+      initial-size: 4
+      max-active: 24
+      connect-properties:
+        stringtype: unspecified
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: com.baomidou.mybatisplus.core.handlers.MybatisEnumTypeHandler
+  global-config:
+    db-config:
+      id-type: input
+logging:
+  level:
+    root: WARN
+    com.atp: INFO

@@ -60,6 +60,23 @@ mybatis-plus:
       id-type: input
 
 atp:
+  # ── 执行侧的补偿参数 ──────────────────────────────────────────
+  # ⚠️ 这几项原先只以 @Value 的内联默认值存在，yml 里看不见 ——
+  #    结果是运维想调只能改代码。补出来，值与原默认值一致。
+  exec:
+    # 单条任务的最大重投次数。超过就判定为「这条案例本身有问题」，不再重试
+    max-retry: ${ATP_EXEC_MAX_RETRY:2}
+    # 心跳超过这么久没更新，判定节点离线（进程崩了不会自己改 status）
+    node-offline-seconds: ${ATP_EXEC_NODE_OFFLINE_SEC:90}
+    # PENDING 但队列里没有它的号 —— 孤儿任务，扫到就重投
+    orphan-threshold-seconds: ${ATP_EXEC_ORPHAN_SEC:60}
+    # RUNNING 但认领它的节点已经离线 —— 僵尸任务，扫到就回收
+    zombie-threshold-seconds: ${ATP_EXEC_ZOMBIE_SEC:90}
+
+  cors:
+    # 前端开发服务器。部署时通过环境变量覆盖成真实域名
+    allowed-origins: ${ATP_CORS_ORIGINS:http://localhost:5173,http://localhost:4173,http://localhost:3000,http://127.0.0.1:5173}
+
   auth:
     # ⚠️ 过渡开关，默认关：CLI 还没带 token，一上来就强制会让探查与自验全挂。
     #    顺序是「平台先具备能力 → CLI 改造 → 打开 → PG 才能上云」。
