@@ -14,6 +14,10 @@ import (
 )
 
 const (
+	// EnvAPIURL 平台的 HTTP 入口。目前只有 inspect 用它 ——
+	// 它是 CLI 第一个不碰数据库的命令，也是「CLI 改调平台 API」那步的试水。
+	EnvAPIURL = "ATP_API_URL"
+
 	EnvDBURL      = "ATP_DB_URL"
 	EnvDBUser     = "ATP_DB_USER"
 	EnvDBPassword = "ATP_DB_PASSWORD"
@@ -41,6 +45,18 @@ func (c *Config) Require(key string) (string, error) {
 
 // Optional 口令允许为空（本地无口令的 PG 实例）。
 func (c *Config) Optional(key string) string { return c.values[key] }
+
+// APIBase 平台 HTTP 入口，去掉尾部斜杠。
+//
+// ⚠️ inspect 只需要这一个变量，不需要任何数据库凭证 ——
+// 这一点要保住：它是「agent 那一层不该看到 DB 密码」这个方向上第一个真正做到的命令。
+func (c *Config) APIBase() (string, error) {
+	v, err := c.Require(EnvAPIURL)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(v, "/"), nil
+}
 
 // DSN 拼出 pgx 能用的连接串。ATP_DB_URL 支持两种写法：
 // 直接给 postgres://... 就原样用；给 jdbc:postgresql://host:port/db 则转换 ——

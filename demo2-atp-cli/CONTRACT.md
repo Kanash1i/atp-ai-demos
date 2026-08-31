@@ -24,6 +24,7 @@
 | `atp update CASE_ID --version N -f FILE` | ✓ 写 | CAS | 写内容（先本地校验）|
 | `atp preview CASE_ID` | ✓ 读 | ✓ | 人读渲染；`--json` 时只出信封 |
 | `atp commit CASE_ID --version N` | ✓ 写 | ✅ | 落地为平台原生 `DRAFT` |
+| `atp inspect PATH_OR_URL` | ✗ **打平台 HTTP** | ✓ | 真的打开被测页面，返回候选定位器 |
 
 `PLATFORM` ∈ `IOS` / `ANDROID` / `PC_WEB`。
 
@@ -140,16 +141,85 @@ atp update <id> --version <data.version> -f draft.json --json
 
 ---
 
+## 4.5 `atp inspect` —— 唯一一个不碰数据库的命令
+
+```
+atp inspect <PATH_OR_URL> [--json]
+```
+
+**存在的理由是一个已复现两次的失败**：agent 把商品详情页 URL 编成 `/product/p001`，
+而真实路由是 `/products/{id}` —— 两次都通过了 `validate` 与 STD 规范校验，
+然后 404、等待超时、执行失败。
+
+**校验器管的是形状与规范，抓不到「agent 不知道被测系统长什么样」。**
+所以解法不是加约束，是加工具（`DECISIONS.md` D-123 / D-124）。
+
+### 路径三种写法都接受，CLI **原样透传**
+
+```
+/products/p001
+http://host:8088/products/p001
+${base_url}/products/p001      ← 案例原文写法，可以直接从步骤里贴过来
+```
+
+⚠️ **CLI 不做任何解析或改写** —— 解析规则只存在于平台一处。
+由 `TestInspect_PassesPathThroughVerbatim` 锁定。
+
+### 退出码
+
+| 情况 | 码 | agent 该做什么 |
+|---|---|---|
+| 页面打开了 | **0** | 拿 `candidates` 写案例 |
+| 页面不存在（404） | **12** | **你查错了** —— 换路径或问用户。原因在 `violations` |
+| 平台/浏览器/站点不通 | **20** | **环境坏了** —— 重试或如实报告，**别改案例** |
+
+⭐ **12 与 20 必须分开。** 都返回"探查失败"的话，
+**agent 分不清是自己查错了还是环境坏了，大概率退回编造** ——
+而编造正是这个工具要消灭的东西。（同 §4 那条判据）
+
+### `data` 内容
+
+```json
+{ "url": "…", "title": "…", "httpStatus": 200,
+  "candidates": [
+    {"kind":"testid","locatorType":"XPATH",
+     "locatorValue":"//button[@data-testid='add-to-cart']",
+     "text":"カートに入れる","note":""} ] }
+```
+
+`kind` ∈ `testid` / `button` / `link` / `input` / `heading`。
+
+### 两个不变量（平台侧保证）
+
+1. **`locatorValue` 保证是规范允许的写法** —— 优先 `data-testid`，其次 name / 稳定 id；
+   绝不产出绝对路径 XPath（STD-001 是 ERROR），带随机后缀的 id 直接跳过（STD-002）。
+   **agent 照抄就能过校验 —— 这是这个工具有用的前提。**
+2. **探查在【执行机】上跑**，不是平台、也不是 CLI 所在机器。
+   因为案例最终在执行机资源池里跑，**探查环境必须与执行环境是同一个** ——
+   否则看到的 DOM 未必是执行时看到的 DOM，探出来的定位器仍可能跑不通。
+   **这条是这个设计的地基。**
+
+### ⭐ 它只要 `ATP_API_URL`，不要任何数据库凭证
+
+这是「agent 那一层不该看到 DB 密码」这个方向上**第一个真正做到的命令**，
+也是「CLI 改调平台 API」那步风险最小的试水 —— 探查只读、不需鉴权、做错也写不坏数据。
+由 `TestInspect_NeedsNoDatabaseCredentials` 锁定。
+
+---
+
 ## 5. 配置
 
 从环境变量或仓库根 `.env` 读，**取不到直接 fail fast（20），不给默认值** ——
 默认值会把「配置漏了」变成「连到了错的库」，后者难查得多。
 
 ```
+ATP_API_URL       平台 HTTP 入口，如 http://localhost:8080   ← inspect 只要这一个
 ATP_DB_URL        jdbc:postgresql://host:port/db  或  postgres://…
 ATP_DB_USER
 ATP_DB_PASSWORD   允许为空
 ```
+
+按命令分：`inspect` 只要 `ATP_API_URL`；其余七个命令只要 `ATP_DB_*`。**没有命令同时需要两者。**
 
 > ### ⚠️ 这一节会变，第 1–4 节不会
 >
@@ -196,6 +266,10 @@ make build          # → bin/atp
 |---|---|---|
 | opencode | `.opencode/skills/atp-case-authoring/SKILL.md` + 权限门 | ✓ |
 | `atp-platform` 的 `CaseAuthoringAgent` | 直接 exec，四个写工具 draft/update/validate/commit | ✓ 端到端跑通（含真跑 Playwright 与录像）|
+
+> **2026-08-31 新增 `atp inspect`**：应平台侧要求加的。
+> 用户定的方向是 —— **CLI 是两个 agent 唯一的工具层**，平台 agent 也不直接调平台自己的接口。
+> 这样**加一个工具只改 CLI 一处，两个 agent 同时获得**。
 
 平台侧目前**不读 `data.draft`**，只取 `caseId` / `version` / `status`，
 所以不受 §3 那个类型变化的影响；将来要把草稿回显给用户时走 `atp preview`。
