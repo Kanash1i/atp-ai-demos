@@ -223,12 +223,14 @@ public class CaseWriteService {
         if (step == null) {
             return new CaseNotFoundException(caseId);
         }
+        // ⚠️ 两个分支必须给出**机器可分辨**的区别，不能只靠文案不同：
+        //    状态不对是「别再试了」，版本不对是「重来一遍」—— 处置完全相反
         if (step.getStatus() != null && step.getStatus() != CaseStatus.AI_DRAFT.code()) {
-            return new CaseConflictException(
+            return new CaseConflictException(CaseConflictException.Kind.STATE,
                     "案例已经提交过了（当前状态码 %d，version=%d），本次%s不予执行"
                             .formatted(step.getStatus(), step.getVersion(), action));
         }
-        return new CaseConflictException(
+        return new CaseConflictException(CaseConflictException.Kind.VERSION,
                 "版本不一致：库中 version=%d，你手上是 %d。内容在你确认之后被改过，请重新拉取再确认"
                         .formatted(step.getVersion(), expectedVersion));
     }

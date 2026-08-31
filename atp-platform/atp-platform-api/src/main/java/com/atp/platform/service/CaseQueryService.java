@@ -111,6 +111,9 @@ public class CaseQueryService {
         // 而 80 条案例、每条 5 步的校验本身是微秒级的，没有缓存的必要。
         ValidationResult result = validator.validate(toDomain(entity, module, steps));
 
+        // 编辑期的版本与保存时间都在 tc_step 上，取一次复用
+        TcStep step = stepOf(entity.getCaseId());
+
         return new CaseDetailVO(
                 entity.getCaseId(),
                 entity.getCaseCode(),
@@ -125,9 +128,11 @@ public class CaseQueryService {
                 entity.getAuthor(),
                 entity.getPrecondition(),
                 DisplayTime.toMinute(entity.getUpdatedAt()),
+                // ⚠️ 编辑期只有 tc_step 会动，tc_case 那个要等提交才变
+                DisplayTime.toMinute(step == null ? null : step.getUpdatedAt()),
                 entity.getVersion() == null ? 0 : entity.getVersion(),
                 // ⚠️ 写侧要的是 tc_step 的版本，不是 tc_case 的
-                stepVersion(entity.getCaseId()),
+                step == null || step.getVersion() == null ? 0 : step.getVersion(),
                 steps,
                 toVO(result));
     }
@@ -139,10 +144,8 @@ public class CaseQueryService {
      * 而 409 的文案说「内容被别人改过」—— 把人指向完全错误的方向，
      * 这类误导比直接报错更费时间。
      */
-    private int stepVersion(String caseId) {
-        TcStep step = stepMapper.selectOne(
-                new LambdaQueryWrapper<TcStep>().eq(TcStep::getCaseId, caseId));
-        return step == null || step.getVersion() == null ? 0 : step.getVersion();
+    private TcStep stepOf(String caseId) {
+        return stepMapper.selectOne(new LambdaQueryWrapper<TcStep>().eq(TcStep::getCaseId, caseId));
     }
 
     /**

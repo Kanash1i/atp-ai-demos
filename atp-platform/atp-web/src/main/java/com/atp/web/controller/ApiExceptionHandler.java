@@ -8,6 +8,8 @@ import com.atp.platform.service.CaseNotFoundException;
 import com.atp.platform.service.CaseValidationException;
 import com.atp.platform.service.TaskNotFoundException;
 import lombok.extern.slf4j.Slf4j;
+import java.net.URI;
+
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import cn.dev33.satoken.exception.NotLoginException;
@@ -24,6 +26,15 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 @Slf4j
 @RestControllerAdvice
 public class ApiExceptionHandler {
+
+    /**
+     * RFC 7807 {@code type} 的前缀。
+     *
+     * <p>它是一个**标识符**，不是要去访问的地址 —— 标准明确允许 type URI 不可解引用。
+     * 用它是为了让「问题分类」有个稳定的机器可读的名字，而不是让调用方去解析 detail 文案。
+     */
+    private static final String PROBLEM_BASE = "https://atp.example/problems/";
+
 
     @ExceptionHandler({CaseNotFoundException.class, ApprovalNotFoundException.class, TaskNotFoundException.class})
     public ProblemDetail notFound(RuntimeException e) {
@@ -46,9 +57,21 @@ public class ApiExceptionHandler {
      *
      * <p>与审批的并发冲突同样是 409 —— 请求没错，是状态变了。
      */
+    /**
+     * 编辑期并发冲突 → 409，**用 `type` 区分两种**。
+     *
+     * <p>两种冲突的处置完全相反：版本不对要「重来一遍」，状态不对要「别再试了」。
+     * 都发 409 而只让 detail 文案不同的话，调用方要区分就只能匹配中文字符串 ——
+     * 那是把机器契约挂在人类文案上，改个措辞对方就静默错判，测试还全绿。
+     *
+     * <p>RFC 7807 的 {@code type} 字段本来就是干这个的（机器可读的问题分类），
+     * 所以不需要自造约定。调用方按 type 分派，我改 detail 文案不影响它。
+     */
     @ExceptionHandler(CaseConflictException.class)
     public ProblemDetail caseConflict(CaseConflictException e) {
-        return ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT, e.getMessage());
+        pd.setType(URI.create(PROBLEM_BASE + e.kind().slug()));
+        return pd;
     }
 
     /**
@@ -70,6 +93,7 @@ public class ApiExceptionHandler {
                         "seq", f.seq() == null ? -1 : f.seq(),
                         "message", f.message()))
                 .toList());
+        pd.setType(URI.create(PROBLEM_BASE + "validation-failed"));
         return pd;
     }
 
@@ -103,6 +127,7 @@ public class ApiExceptionHandler {
     public ProblemDetail headerIncomplete(CaseHeaderIncompleteException e) {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
         pd.setProperty("missingFields", e.missing());
+        pd.setType(URI.create(PROBLEM_BASE + "header-incomplete"));
         return pd;
     }
 
