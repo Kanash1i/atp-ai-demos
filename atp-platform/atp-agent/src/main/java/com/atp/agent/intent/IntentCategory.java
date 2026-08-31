@@ -20,7 +20,7 @@ public enum IntentCategory {
     CASE_QUERY("案例查询", false),
 
     /** 派发执行、查执行状态、取录像 */
-    EXECUTION("执行相关", false),
+    EXECUTION("执行相关", true),
 
     /** 提交/查询审批 */
     APPROVAL("审批相关", false),
