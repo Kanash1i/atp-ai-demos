@@ -71,14 +71,18 @@ public class CaseWriteService {
      *               「写成功但响应丢失 → 重试」会产生两条各自合法的草稿
      */
     @Transactional
-    public DraftView draft(String caseId, String title, String createdBy) {
+    public DraftView draft(String caseId, String title, CaseType caseType, String createdBy) {
         ObjectNode header = StepJson.mapper().createObjectNode();
         if (title != null) {
             header.put("title", title);
         }
         String initial = StepJson.toDraftObject(header, List.of());
 
-        int caseRows = writeMapper.insertDraftCase(caseId, CaseType.PC_WEB.code(), createdBy);
+        // ⚠️ 之前这里硬编码 PC_WEB —— CLI 的 `atp draft -p IOS` 传进来会被静默丢掉，
+        //    落库仍是 PC_WEB，而且没有任何报错。这类「参数收了但不用」的 bug
+        //    只有对着两边的字段逐个核对才会发现
+        int caseRows = writeMapper.insertDraftCase(caseId,
+                (caseType == null ? CaseType.PC_WEB : caseType).code(), createdBy);
         writeMapper.insertDraftStep(UUID.randomUUID().toString(), caseId, initial);
 
         if (caseRows == 0) {
@@ -205,7 +209,13 @@ public class CaseWriteService {
         if (step == null || c == null) {
             throw new CaseNotFoundException(caseId);
         }
+        // ⚠️ status 是 **tc_step 的编辑期状态**，platformStatus 才是 tc_case 的状态。
+        //    两者不是一回事：草稿在编辑期反复改，tc_case 那行还一直是 AI_DRAFT。
+        //    早先这里把 tc_case.status 当成 status 返回，与 CLI 的语义正好错位，
+        //    迁移之后编辑期状态机会静默丢失 —— 对着 CLI 的 model.CaseRow 逐字段核才发现
         return new DraftView(caseId, step.getStepJson(), step.getVersion(),
+                nameOf(step.getStatus()),
+                c.getCaseType() == null ? null : c.getCaseType().name(),
                 c.getStatus() == null ? null : c.getStatus().name(),
                 ValidationVO.from(validate(caseId, step.getStepJson())));
     }
@@ -235,6 +245,25 @@ public class CaseWriteService {
      * @param version 下次 update/commit 要带回来的版本号
      */
     public record DraftView(String caseId, String draftJson, int version,
-                            String status, ValidationVO validation) {
+                            /** tc_step 的编辑期状态（AI_DRAFT / DRAFT …） */
+                            String status,
+                            /** 执行平台 PC_WEB / IOS / ANDROID */
+                            String caseType,
+                            /** tc_case 的状态 —— 与 status 不是一回事 */
+                            String platformStatus,
+                            ValidationVO validation) {
+    }
+
+    /** tc_step.status 存的是码值，转成名字给调用方 —— 码值出了这个进程就没人认得 */
+    private static String nameOf(Short code) {
+        if (code == null) {
+            return null;
+        }
+        for (CaseStatus st : CaseStatus.values()) {
+            if (st.code() == code) {
+                return st.name();
+            }
+        }
+        return null;
     }
 }

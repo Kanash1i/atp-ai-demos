@@ -1,5 +1,6 @@
 package com.atp.web.controller;
 
+import com.atp.common.enums.CaseType;
 import com.atp.platform.service.CaseQueryService;
 import com.atp.platform.service.CaseWriteService;
 import com.atp.platform.vo.CaseDetailVO;
@@ -71,7 +72,9 @@ public class CaseController {
      */
     @PostMapping("/cases/draft")
     public CaseWriteService.DraftView draft(@RequestBody DraftRequest body) {
-        return caseWriteService.draft(body.caseId(), body.title(), body.createdBy());
+        CaseType type = body.caseType() == null || body.caseType().isBlank()
+                ? CaseType.PC_WEB : CaseType.valueOf(body.caseType().trim().toUpperCase());
+        return caseWriteService.draft(body.caseId(), body.title(), type, body.createdBy());
     }
 
     /**
@@ -101,7 +104,12 @@ public class CaseController {
     }
 
     /** @param caseId 调用方生成的 UUID */
-    public record DraftRequest(String caseId, String title, String createdBy) {
+    /**
+     * @param caseType 执行平台 PC_WEB / IOS / ANDROID，不传按 PC_WEB。
+     *                 ⚠️ 必须收下并落库 —— CLI 的 `atp draft -p` 是必填参数，
+     *                 平台这边丢掉它的话，传 IOS 会静默变成 PC_WEB
+     */
+    public record DraftRequest(String caseId, String title, String caseType, String createdBy) {
     }
 
     /** @param draftJson 完整的草稿对象：表头字段 + steps 数组 */
