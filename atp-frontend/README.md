@@ -81,11 +81,19 @@ cp .env.example .env.local
 **`version` 是并发仲裁点。** 撞到 409 提示「已被他人修改」并给「重新载入」，
 **不静默重试** —— 重试会拿你手上这份把别人的改动整个盖掉。
 
-**⚠️ `draftJson` 的表头字段是 snake_case，而且 `case_code` 必须自己给。**
-后端 commit 时按 `case_code` / `title` / `module_id` / `priority` / `author` / `precondition`
-这几个键投影进 `tc_case` 的正式列。用 camelCase 写，或者漏了 `case_code`，
-落库时会撞 `ck_case_complete` 约束 —— 报的是 **500**，不是 4xx，排查时很容易看错方向。
-序号也没有「取下一个」的接口，前端按该模块已有案例的最大序号 +1 推。
+**`draftJson` 的表头字段是 snake_case。** 后端 commit 时按 `case_code` / `title` /
+`module_id` / `priority` / `author` / `precondition` 六个键投影进 `tc_case` 的正式列，
+camelCase 不认。缺了会返回 **422** 并在 `missingFields` 里列出少了哪几个，UI 直接照抄
+—— 比让人去比对文档快。
+
+**`case_code` 走 `GET /api/modules/{moduleId}/next-case-code` 取号**，不在前端自己推：
+「已有条数 +1」和「最大序号 +1」在删过案例之后就不一样了，编号是单调的、计数不是。
+agent 的 `next_case_code` 工具调的是同一份实现，两边不会算出不同的号。
+
+**取号不是原子的。** 两个人同时新建同一模块的案例会拿到同一个号，后提交的被
+`uk_case_code` 拦下。编辑器撞到这个会**自动重取一个号、重存、重提交一次**（只一次，
+避免真出问题时死循环）—— 这不是数据写坏了，是号被抢了，重试是安全的。
+⚠️ 后端目前把它报成 **500 `DuplicateKeyException`**，所以只能靠匹配约束名来认，不能靠状态码。
 
 **`draftJson` 的形状在 commit 那一步会变**：编辑期是对象 `{title, steps: [...]}`，
 落地后是**纯步骤数组** `[{seq:1,…}]`（老执行器读数组）。`parseDraft()` 按 `status` 分支，

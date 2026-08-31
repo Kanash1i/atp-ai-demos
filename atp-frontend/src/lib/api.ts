@@ -98,6 +98,15 @@ export const api = {
   /** 平铺不分页（当前 12 条）。新建案例的模块下拉框用它 */
   modules: () => get<ModuleDictEntry[]>('/api/modules'),
 
+  /**
+   * 按 STD-007 取该模块的下一个 case_code。
+   *
+   * 后端与 agent 的 `next_case_code` 工具调的是同一份实现 —— 两边不会算出不同的号。
+   * ⚠️ 并发下两个人仍可能拿到同一个号，后提交的会被 `uk_case_code` 拦下（见 commit 的重试）。
+   */
+  nextCaseCode: (moduleId: string) =>
+    get<{ caseCode: string }>(`/api/modules/${moduleId}/next-case-code`),
+
   /** 读回当前草稿。刷新页面、或撞到 409 之后重新载入时用 */
   draft: (caseId: string) => get<DraftView>(`/api/cases/${caseId}/draft`),
 
@@ -167,11 +176,80 @@ export async function commitDraft(caseId: string, version: number): Promise<Draf
   return post<DraftView>(`/api/cases/${caseId}/commit`, { version });
 }
 
+/**
+ * RFC 7807 的 `type` —— 用它分支，**不要匹配 `detail`**。
+ *
+ * `detail` 是给人看的中文文案，后端会改；`type` 的前缀与 slug 是稳定契约面。
+ * ⚠️ 它是标识符不是地址（RFC 7807 允许不可解引用），别去请求它。
+ */
+export const PROBLEM = {
+  /** 内容在你确认之后被别人改过 —— 提示「已被他人修改」并给「重新载入」 */
+  versionConflict: 'https://atp.example/problems/version-conflict',
+  /**
+   * 案例已经提交过了 —— **没有重试的意义**，别给「重新载入再试」：
+   * 重新载入之后状态还是已提交的，用户会在一个永远失败的循环里打转
+   */
+  stateConflict: 'https://atp.example/problems/state-conflict',
+  /** 规范校验未通过 → 看 findings / violatedCodes */
+  validationFailed: 'https://atp.example/problems/validation-failed',
+  /** 表头必填缺失 → 看 missingFields */
+  headerIncomplete: 'https://atp.example/problems/header-incomplete',
+} as const;
+
+export function problemType(err: unknown): string | null {
+  return err instanceof ApiError ? (err.problem?.type ?? null) : null;
+}
+
+/**
+ * 两种 409 的判定。
+ *
+ * ⚠️ 带**降级**：`type` 是后端 PR #49 才加的，在还没部署它的后端上 409 没有 type。
+ * 那种情况按 `version-conflict` 处理 —— 也就是加 type 之前的老行为（给「重新载入」）。
+ * 宁可在老后端上对 state-conflict 多给一个没用的重试按钮，也不能两种都不认、
+ * 保存失败却一句提示都不给。
+ */
+export function isVersionConflict(e: unknown): boolean {
+  const type = problemType(e);
+  if (type) return type === PROBLEM.versionConflict;
+  return e instanceof ApiError && e.isConflict;
+}
+
+export function isStateConflict(e: unknown): boolean {
+  return problemType(e) === PROBLEM.stateConflict;
+}
+
 /** 422 的 ProblemDetail 上挂着 findings，取出来直接喂给校验面板 */
 export function findingsOf(err: unknown): ValidationFinding[] {
   if (!(err instanceof ApiError) || !err.problem) return [];
   const p = err.problem as ProblemDetail & { findings?: ValidationFinding[] };
   return Array.isArray(p.findings) ? p.findings : [];
+}
+
+/**
+ * 缺必填字段时 422 的 `missingFields` —— 六个 snake_case 键里少了哪几个。
+ * 它们是 draftJson 顶层的键，提交时被投影进案例表。
+ */
+export function missingFieldsOf(err: unknown): string[] {
+  if (!(err instanceof ApiError) || !err.problem) return [];
+  const p = err.problem as ProblemDetail & { missingFields?: string[] };
+  return Array.isArray(p.missingFields) ? p.missingFields : [];
+}
+
+/**
+ * case_code 撞号了吗。
+ *
+ * 取号接口不是原子的：两个人同时新建同一模块的案例会拿到同一个号，
+ * 后提交的被 `uk_case_code` 唯一约束拦下。
+ *
+ * ⚠️ 这一个还**没有** problem type：后端仍报 500 `DuplicateKeyException`
+ * （调用方的错报成 5xx），所以只能靠匹配约束名。约束名一改这里就静默失效 ——
+ * 后端给了 type 之后换成按 type 判，这个兜底可以删。
+ */
+export function isDuplicateCaseCode(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  const p = err.problem;
+  if (p?.type && p.type.endsWith('/duplicate-case-code')) return true;
+  return (p?.detail ?? '').includes('uk_case_code');
 }
 
 /* ---------- 智能 Agent 助手（面板⑤）---------- */
