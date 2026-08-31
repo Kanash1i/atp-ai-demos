@@ -30,6 +30,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class ExecutionTools {
 
+    /** 等一条案例跑完的上限。真跑通常几百毫秒到几秒，给足余量包含排队 */
+    private static final int CASE_TIMEOUT_SEC = 120;
+
     @Autowired
     private AtpCliClient cli;
 
@@ -39,7 +42,12 @@ public class ExecutionTools {
                     + "这是给用户看的验证结果，不是让你反复调整直到跑通。")
     public String runCaseOnce(
             @ToolParam(name = "case_id", description = "已提交案例的 caseId") String caseId) {
-        CliResult r = cli.run("run", caseId);
+        // ⚠️ 三层超时的层级：平台 run-once 等执行机 CASE_TIMEOUT_SEC，
+        //    CLI 等平台 CASE_TIMEOUT_SEC+30，我等 CLI 再多 30 ——
+        //    每一层都必须比它等的那层更有耐心，否则外层会把内层杀在半路，
+        //    而 agent 收到的是「没拿到结论」，实际上再等十几秒就有了。
+        CliResult r = cli.runWithin(CASE_TIMEOUT_SEC + 60,
+                "run", caseId, "--timeout", String.valueOf(CASE_TIMEOUT_SEC));
 
         if (!r.success()) {
             // 没拿到结论 —— 环境问题，不是案例问题。这两件事绝不能混
