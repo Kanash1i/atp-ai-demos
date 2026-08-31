@@ -308,6 +308,21 @@ func TestForbidden_DoesNotTriggerReplayProbe(t *testing.T) {
 	}
 }
 
+// case_code 撞号是 agent 自己能修的 —— 归 12 而不是 13。
+// 它跟"状态不允许"不同：换个号重写草稿再提交就行，不用停下问人。
+func TestDuplicateCaseCode_IsAgentFixable(t *testing.T) {
+	s := stub(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeProblem(w, 409, kindDuplicateCode, "case_code ATP-CART-0001 已存在", nil)
+	})
+	r := s.Commit(context.Background(), "c1", 3)
+	if r.Code != model.ValidationFailed {
+		t.Fatalf("撞号应为 12（自己换号重来），实际 %s", r.Code)
+	}
+	if len(r.Violations) == 0 || !strings.Contains(r.Violations[0], "换一个号") {
+		t.Fatalf("要告诉 agent 下一步怎么做，实际 %v", r.Violations)
+	}
+}
+
 // 探测本身失败时维持原判，不猜。
 func TestStateConflict_ProbeFailureKeepsOriginalVerdict(t *testing.T) {
 	s := stub(t, func(w http.ResponseWriter, r *http.Request) {

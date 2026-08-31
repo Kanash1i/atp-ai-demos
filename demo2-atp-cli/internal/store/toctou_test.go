@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
@@ -67,6 +68,81 @@ func TestTocTou_ConcurrentUpdateLosesOnCAS(t *testing.T) {
 	}
 	if lose.Code != model.VersionConflict {
 		t.Fatalf("后到的应被 CAS 挡下，实际 %s", lose.Code)
+	}
+}
+
+// update 的响应丢失后重试：版本前进一格【且库里就是我想写的那份】= 重放。
+func TestUpdate_LostResponseThenRetryIsReplay(t *testing.T) {
+	ctx, s, _ := newStore(t)
+	id := uuid.NewString()
+	mustDraft(t, ctx, s, id, "登录成功")
+
+	payload := completeDraft("登录成功", 2)
+	if r := s.Update(ctx, id, 0, payload); r.Code != model.OK {
+		t.Fatalf("首次写入应成功，实际 %s", r.Code)
+	}
+	// 响应丢了，agent 用同一个 version 和同一份内容重试
+	retry := s.Update(ctx, id, 0, payload)
+
+	if retry.Code != model.OK {
+		t.Fatalf("重放必须返回 0，实际 %s: %s", retry.Code, retry.Message)
+	}
+	if !retry.Replayed {
+		t.Fatal("要标成重放，否则调用方分不清这次到底改了没有")
+	}
+	if retry.Row.Version != 1 {
+		t.Fatalf("重放不该再推版本，应停在 1，实际 %d", retry.Row.Version)
+	}
+}
+
+// ⭐ 只看版本号会把这条判错。
+//
+//	A: update(v=0, 内容 X) → 成功，v=1
+//	B: update(v=0, 内容 Y) → 版本条件同样满足（1 == 0+1）
+//
+// B 不是重放 —— 它想写的 Y 一个字都没进去。当成功返回的话，B 会以为
+// 自己写成功了，而库里其实是 A 的内容。这是【静默丢写】，比报错严重得多。
+func TestUpdate_SameVersionDifferentContentIsConflictNotReplay(t *testing.T) {
+	ctx, s, _ := newStore(t)
+	id := uuid.NewString()
+	mustDraft(t, ctx, s, id, "登录成功")
+
+	if r := s.Update(ctx, id, 0, completeDraft("A 写的", 2)); r.Code != model.OK {
+		t.Fatalf("A 应成功，实际 %s", r.Code)
+	}
+	b := s.Update(ctx, id, 0, completeDraft("B 写的", 2))
+
+	if b.Code != model.VersionConflict {
+		t.Fatalf("内容不同就不是重放，应为 10，实际 %s —— 判成成功会让 B 以为自己写进去了", b.Code)
+	}
+}
+
+// 内容比的是 JSON 语义不是字符串：键顺序和空白不同的同一份内容仍是重放。
+// 按字符串比会把真重放误判成版本冲突。
+func TestUpdate_ReplayComparesJSONSemanticsNotBytes(t *testing.T) {
+	ctx, s, _ := newStore(t)
+	id := uuid.NewString()
+	mustDraft(t, ctx, s, id, "登录成功")
+
+	original := completeDraft("登录成功", 2)
+	if r := s.Update(ctx, id, 0, original); r.Code != model.OK {
+		t.Fatalf("首次写入应成功，实际 %s", r.Code)
+	}
+
+	// 同一份内容重新序列化一遍 —— 键顺序与空白都可能变
+	var any1 map[string]any
+	if err := json.Unmarshal([]byte(original), &any1); err != nil {
+		t.Fatal(err)
+	}
+	reserialized, err := json.MarshalIndent(any1, "", "    ")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	retry := s.Update(ctx, id, 0, string(reserialized))
+	if retry.Code != model.OK || !retry.Replayed {
+		t.Fatalf("重新序列化的同一份内容仍该判成重放，实际 %s（replayed=%v）",
+			retry.Code, retry.Replayed)
 	}
 }
 

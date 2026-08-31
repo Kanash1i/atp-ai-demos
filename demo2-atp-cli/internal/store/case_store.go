@@ -23,8 +23,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/rule"
@@ -113,7 +115,7 @@ func (s *CaseStore) Update(ctx context.Context, caseID string, expectedVersion i
 	if tag.RowsAffected() == 1 {
 		return s.readBack(ctx, caseID, "更新成功但读不回")
 	}
-	return s.diagnoseMiss(ctx, caseID, expectedVersion, "写入")
+	return s.diagnoseMiss(ctx, caseID, expectedVersion, "写入", draftJSON)
 }
 
 // ---------------------------------------------------------------- Commit
@@ -148,7 +150,7 @@ func (s *CaseStore) Commit(ctx context.Context, caseID string, expectedVersion i
 	}
 	if tag.RowsAffected() != 1 {
 		_ = tx.Rollback(ctx)
-		return s.diagnoseMiss(ctx, caseID, expectedVersion, "提交")
+		return s.diagnoseMiss(ctx, caseID, expectedVersion, "提交", "")
 	}
 
 	row, err := s.findByID(ctx, tx, caseID)
@@ -253,7 +255,22 @@ func (s *CaseStore) Show(ctx context.Context, caseID string) model.Result {
 
 // diagnoseMiss ⭐ rowsAffected == 0 之后必须读回来分情况，绝不能直接报错 ——
 // 否则幂等重放永远过不去，agent 会一直重试到超时。
-func (s *CaseStore) diagnoseMiss(ctx context.Context, caseID string, expectedVersion int, op string) model.Result {
+// sameJSON 按 JSON 语义比，不按字符串。
+//
+// ⚠️ 两侧的键顺序和空白可能不同 —— 按字符串比会把真重放误判成版本冲突。
+func sameJSON(a, b string) bool {
+	var x, y any
+	if json.Unmarshal([]byte(a), &x) != nil || json.Unmarshal([]byte(b), &y) != nil {
+		return false
+	}
+	return reflect.DeepEqual(x, y)
+}
+
+// diagnoseMiss rowsAffected == 0 之后分情况诊断。
+//
+// draftJSON 是本次想写的内容，只有 update 会带（commit 不带内容）——
+// 它是 update 那条重放判据的第二个条件，见下面 default 分支。
+func (s *CaseStore) diagnoseMiss(ctx context.Context, caseID string, expectedVersion int, op, draftJSON string) model.Result {
 	row, err := s.findByID(ctx, s.conn, caseID)
 	if err != nil {
 		return infra(err)
@@ -269,6 +286,20 @@ func (s *CaseStore) diagnoseMiss(ctx context.Context, caseID string, expectedVer
 			"案例已提交（当前状态 %s，version=%d），此后又被修改过，本次%s不予执行",
 			row.Status, row.Version, op))
 	default:
+		// 仍在编写态。版本前进一格【且库里那份就是我想写的那份】= 上次那个
+		// 请求成功了，只是响应丢在路上 —— 重放，退出码 0。
+		//
+		// ⭐ 只看版本不够。考虑：
+		//     A: update(v=3, 内容 X) → 成功，v=4
+		//     B: update(v=3, 内容 Y) → 版本条件同样满足（4 == 3+1）
+		// B 不是重放 —— 它想写的 Y 一个字都没进去。当成功返回的话，
+		// B 会以为自己写成功了，而库里其实是 A 的内容。
+		//
+		// commit 不带内容所以不需要这一条；update 带，所以必须比。
+		// 顺带这也让"两个人恰好写了同样的内容"正确地算成功 —— 写不写都一样。
+		if draftJSON != "" && row.Version == expectedVersion+1 && sameJSON(row.DraftJSON, draftJSON) {
+			return model.Replayed(row)
+		}
 		return model.Fail(model.VersionConflict, fmt.Sprintf(
 			"版本不一致：库中 version=%d，你手上是 %d。内容在你确认之后被改过，请重新 show/preview 再确认",
 			row.Version, expectedVersion))

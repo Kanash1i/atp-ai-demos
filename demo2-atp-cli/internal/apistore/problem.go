@@ -41,6 +41,7 @@ const (
 	kindStateConflict    = "state-conflict"
 	kindValidationFailed = "validation-failed"
 	kindHeaderIncomplete = "header-incomplete"
+	kindDuplicateCode    = "duplicate-case-code"
 )
 
 func (p *problem) kind() string { return strings.TrimPrefix(p.Type, problemPrefix) }
@@ -89,6 +90,11 @@ func toResult(status int, body []byte) model.Result {
 			return model.Fail(model.StateConflict, msg)
 		case kindVersionConflict:
 			return model.Fail(model.VersionConflict, msg)
+		case kindDuplicateCode:
+			// case_code 撞了别人。这是 agent 自己能修的 —— 换个号重写草稿再提交，
+			// 跟 12 的处置一样（读错误、改内容、重发），所以不另立一个码。
+			return model.Invalid(model.ValidationFailed, msg,
+				[]string{"case_code 已被占用，换一个号写回草稿再提交：" + msg})
 		}
 		// 没有 type 就无法区分。宁可报 20 让人来看，也不要猜一个 —— 猜错的那半
 		// 会让 agent 对着一个"重试也没用"的状态无限重来。
