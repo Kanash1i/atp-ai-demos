@@ -114,3 +114,40 @@
   @keyframes atp-up { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: none } }
   .animate-up { opacity: 0; animation: atp-up .8s cubic-bezier(.16,.84,.34,1) forwards; }
 }
+
+/* agent 回复是 Markdown。只给它最小的排版，别把 dashboard 的密度撑散 */
+@layer components {
+  .agent-md > :first-child { margin-top: 0; }
+  .agent-md > :last-child { margin-bottom: 0; }
+  .agent-md p { margin: 0 0 14px; }
+  .agent-md ul, .agent-md ol { margin: 0 0 14px; padding-left: 1.4em; }
+  .agent-md li { margin: 0 0 6px; }
+  .agent-md strong { font-weight: 600; }
+  .agent-md code {
+    font-family: var(--font-mono);
+    font-size: .92em;
+    padding: 1px 5px;
+    border-radius: var(--radius-xs);
+    background: var(--color-line-4);
+    color: var(--color-shu);
+  }
+  .agent-md pre {
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    border-radius: var(--radius-md);
+    background: var(--color-surface-2);
+    border: 1px solid var(--color-line);
+  }
+  .agent-md pre code { padding: 0; background: none; color: var(--color-ink-2); }
+  .agent-md h1, .agent-md h2, .agent-md h3 {
+    font-family: var(--font-jp);
+    font-size: 1.05em;
+    font-weight: 700;
+    margin: 18px 0 10px;
+  }
+  .agent-md a { color: var(--color-shu); text-decoration: underline; }
+  .agent-md table { border-collapse: collapse; margin: 0 0 14px; font-size: .92em; }
+  .agent-md th, .agent-md td { border: 1px solid var(--color-line); padding: 6px 10px; text-align: left; }
+  .agent-md th { background: var(--color-surface-2); }
+}

@@ -269,3 +269,87 @@ export interface ProblemDetail {
   detail: string;
   instance: string;
 }
+
+/* ============================================================
+   写侧（面板⑥）—— 建草稿 → 反复保存 → 提交落地
+   ============================================================ */
+
+/**
+ * `draftJson` 的**编辑期**形状（对象）。
+ *
+ * ⚠️ 表头字段是 **snake_case**，和 `steps[]` 里一样 —— 后端 commit 时按
+ * `case_code` / `title` / `module_id` / `priority` / `author` / `precondition`
+ * 这几个键把它们投影进 `tc_case` 的正式列。用 camelCase 写进去会被当成不存在，
+ * 落库时撞 `ck_case_complete` 约束，报 500 而不是 4xx。
+ *
+ * ⚠️ `case_code` **必须由调用方给**，后端不会按 STD-007 自动生成。
+ */
+export interface DraftHeader {
+  case_code: string | null;
+  title: string | null;
+  module_id: string | null;
+  priority: Priority | null;
+  author: string | null;
+  precondition: string | null;
+}
+
+export interface DraftDocument extends DraftHeader {
+  steps: CaseStep[];
+}
+
+export interface DraftView {
+  caseId: string;
+  /**
+   * JSON 字符串，形状随 status 变：
+   * - `AI_DRAFT`（编辑期）→ 对象 `{title, steps: [...]}`
+   * - `DRAFT`（已提交）  → **纯步骤数组** `[{seq:1,…}]`（老执行器读数组）
+   * 用 `parseDraft()` 解析，不要直接 JSON.parse 后当对象使。
+   */
+  draftJson: string;
+  /** 乐观锁。下次 save/commit 要原样带回来 */
+  version: number;
+  status: CaseStatus;
+  caseType: CaseType;
+  platformStatus: string;
+  validation: ValidationResult;
+}
+
+export interface CreateDraftRequest {
+  /** ⚠️ 由前端生成的 UUID，不是后端返回的。它是幂等键：同一个 id 重复调用不会建出第二条 */
+  caseId: string;
+  title: string;
+  caseType: CaseType;
+  createdBy: string;
+}
+
+export interface ModuleDictEntry {
+  projectId: string;
+  projectCode: string;
+  projectName: string;
+  moduleId: string;
+  moduleCode: string;
+  moduleName: string;
+}
+
+/** 规范校验被拒时后端在 ProblemDetail 上额外挂的两个字段（422） */
+export interface ValidationProblem extends ProblemDetail {
+  violatedCodes?: string[];
+  findings?: ValidationFinding[];
+}
+
+/* ============================================================
+   智能 Agent 助手（面板⑤）—— SSE
+   ============================================================ */
+
+export type ChatEventType = 'route' | 'thinking' | 'message' | 'done' | 'error';
+
+export interface ChatEvent {
+  type: ChatEventType;
+  /** 路由到的助手，会变：CaseAuthoringAgent / KnowledgeAgent / router */
+  agent: string;
+  /**
+   * ⚠️ `thinking` 是**增量**（一次几个字，一轮 150~800 个），要按顺序拼接；
+   * `message` 是**完整**内容，直接替换。把 message 也当增量拼会显示两遍。
+   */
+  content: string;
+}
