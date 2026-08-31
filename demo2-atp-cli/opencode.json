@@ -6,11 +6,12 @@
       "./bin/atp schema*":       "allow",
       "./bin/atp modules*":      "allow",
       "./bin/atp validate*":     "allow",
-      "./bin/atp lint-locator*": "allow",
       "./bin/atp show*":         "allow",
       "./bin/atp preview*":      "allow",
       "./bin/atp draft*":        "allow",
       "./bin/atp update*":       "allow",
+      "./bin/atp inspect*":      "allow",
+      "./bin/atp run*":          "allow",
 
       "./bin/atp commit*":       "ask",
 
