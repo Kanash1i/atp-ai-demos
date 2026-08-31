@@ -10,6 +10,7 @@ import com.atp.platform.service.TaskNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import java.net.URI;
 
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import cn.dev33.satoken.exception.NotLoginException;
@@ -128,6 +129,31 @@ public class ApiExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, e.getMessage());
         pd.setProperty("missingFields", e.missing());
         pd.setType(URI.create(PROBLEM_BASE + "header-incomplete"));
+        return pd;
+    }
+
+    /**
+     * 案例编号撞车 → 409 + type。
+     *
+     * <p>{@code uk_case_code} 是「一个模块下编号唯一」的最后一道防线：
+     * 两个人同时取号会拿到同一个，后写的这个必然撞上。
+     *
+     * <p>⚠️ 不处理的话它是 {@code DuplicateKeyException} → 500，
+     * 而调用方**唯一能区分它的办法是匹配约束名字符串** ——
+     * 约束一改名，重试逻辑就静默失效。给它一个稳定的 type，
+     * 调用方按 type 决定「重新取号再试一次」。
+     *
+     * <p>⚠️ 只认 {@code uk_case_code}：别的唯一约束撞了是另一回事，
+     * 不该一并当成「重取编号就能解决」。
+     */
+    @ExceptionHandler(DuplicateKeyException.class)
+    public ProblemDetail duplicateKey(DuplicateKeyException e) {
+        String raw = e.getMostSpecificCause().getMessage();
+        boolean caseCode = raw != null && raw.contains("uk_case_code");
+
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.CONFLICT,
+                caseCode ? "案例编号已被占用 —— 重新取一次编号再提交" : "唯一约束冲突：" + raw);
+        pd.setType(URI.create(PROBLEM_BASE + (caseCode ? "duplicate-case-code" : "duplicate-key")));
         return pd;
     }
 
