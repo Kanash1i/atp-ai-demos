@@ -1,0 +1,102 @@
+package com.atp.agent.tools;
+
+import com.atp.agent.cli.AtpCliClient;
+import com.atp.agent.cli.CliResult;
+import io.agentscope.core.tool.Tool;
+import io.agentscope.core.tool.ToolParam;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+/**
+ * 跑一次自验 —— 案例写完之后，让它真的在执行机上跑一遍。
+ *
+ * <h3>⭐ 只跑一次，不做「失败就改、改完再跑」的闭环</h3>
+ *
+ * 自动重试听起来很美，但有两个问题，任何一个都足以否掉它：
+ *
+ * <ol>
+ *   <li><b>执行失败 ≠ 案例写错了。</b> 被测系统本身有 bug 时，
+ *       自动改案例会把这个 bug「改没」—— 而发现 bug 正是测试的目的。</li>
+ *   <li><b>改到能跑通 ≠ 改对了。</b> 让 agent 以「跑通」为目标，
+ *       它最省力的路径是**削弱断言**：断言不了就删掉，等不到就放宽。
+ *       测试变绿了，但什么也不保证了。</li>
+ * </ol>
+ *
+ * <p>所以工具返回的文本是**刻意写成「报告用」而不是「修复用」**的 ——
+ * 失败时它明确告诉模型：把现象讲给用户听，不要自己动手改。
+ */
+@Slf4j
+@Component
+public class ExecutionTools {
+
+    @Autowired
+    private AtpCliClient cli;
+
+    @Tool(name = "run_case_once",
+            description = "把已提交的案例在执行机上真跑一次，返回通过与否、失败在第几步、错误信息与录像。"
+                    + "⚠️ 只在案例已经 commit 之后用，而且只跑一次 —— "
+                    + "这是给用户看的验证结果，不是让你反复调整直到跑通。")
+    public String runCaseOnce(
+            @ToolParam(name = "case_id", description = "已提交案例的 caseId") String caseId) {
+        CliResult r = cli.run("run", caseId);
+
+        if (!r.success()) {
+            // 没拿到结论 —— 环境问题，不是案例问题。这两件事绝不能混
+            log.warn("[TOOL][run_case_once] {} 未拿到结论：{}", caseId, r.message());
+            return """
+                    没能拿到执行结果（%s）：%s
+
+                    ⚠️ 这**不是**案例本身的问题，是执行环境没给出结论（多半是没有执行机在线）。
+                    如实告诉用户「案例已提交，但当前验不了」，**不要因此去改案例**。"""
+                    .formatted(r.code(), r.message().isBlank() ? "未知原因" : r.message());
+        }
+
+        String status = r.str("status");
+        Integer failedSeq = r.data() != null && r.data().hasNonNull("failedSeq")
+                ? r.data().get("failedSeq").asInt() : null;
+        log.info("[TOOL][run_case_once] {} → {}", caseId, status);
+
+        if ("PASSED".equals(status)) {
+            return "执行通过 ✅  批次 %s，耗时 %d ms，录像：%s".formatted(
+                    r.str("runCode"), r.intOr("durationMs", 0), nullSafe(r.str("videoUrl")));
+        }
+
+        // ⚠️ 这段文字是**刻意**引导「报告」而不是「修复」的。
+        //    写成"请修正后重试"的话，模型会立刻开始改案例 —— 而它并不知道
+        //    这次失败到底是案例写错了，还是被测系统真有毛病
+        return """
+                执行未通过 ❌  状态 %s%s
+                耗时 %d ms，批次 %s
+                错误：%s
+                录像：%s
+
+                ⚠️ 接下来**只做一件事：把上面的现象如实讲给用户听**，然后停下等他决定。
+
+                不要自己改案例再跑一遍。原因：
+                  1. 执行失败不等于案例写错了 —— 也可能是被测系统真有 bug，
+                     而那正是这条案例该发现的东西。你把案例改到"能过"，就把 bug 盖住了。
+                  2. 改到能跑通不等于改对了 —— 最省力的改法是削弱断言，
+                     那样测试会变绿，但它什么也不保证了。
+
+                如果你对失败原因有判断（比如定位器可能不对），可以说出来**作为建议**，
+                但要明确区分「我观察到的」和「我猜测的」，由用户决定改不改。"""
+                .formatted(status,
+                        failedSeq == null ? "" : "，失败在第 " + failedSeq + " 步",
+                        r.intOr("durationMs", 0), r.str("runCode"),
+                        firstLine(r.str("errorMsg")), nullSafe(r.str("videoUrl")));
+    }
+
+    /** Playwright 的堆栈能有几十行，模型和人都只看得下第一行 */
+    private String firstLine(String s) {
+        if (s == null || s.isBlank()) {
+            return "（无错误信息）";
+        }
+        int nl = s.indexOf('\n');
+        return nl < 0 ? s : s.substring(0, nl) + " …";
+    }
+
+    private String nullSafe(String s) {
+        return s == null ? "（无）" : s;
+    }
+}

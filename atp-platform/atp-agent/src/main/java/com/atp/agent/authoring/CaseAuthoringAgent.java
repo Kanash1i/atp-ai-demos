@@ -4,6 +4,7 @@ import com.atp.agent.AtpAgent;
 import com.atp.agent.intent.IntentCategory;
 import com.atp.agent.tools.CaseCatalogTools;
 import com.atp.agent.tools.CaseDraftTools;
+import com.atp.agent.tools.ExecutionTools;
 import com.atp.agent.tools.PageInspectTools;
 import com.atp.agent.tools.StandardsTools;
 import io.agentscope.core.ReActAgent;
@@ -58,12 +59,14 @@ public class CaseAuthoringAgent implements AtpAgent {
                               StandardsTools standardsTools,
                               CaseCatalogTools catalogTools,
                               CaseDraftTools draftTools,
-                              PageInspectTools inspectTools) {
+                              PageInspectTools inspectTools,
+                              ExecutionTools executionTools) {
         Toolkit toolkit = new Toolkit();
         toolkit.registerTool(standardsTools);
         toolkit.registerTool(catalogTools);
         toolkit.registerTool(draftTools);
         toolkit.registerTool(inspectTools);
+        toolkit.registerTool(executionTools);
 
         this.agent = ReActAgent.builder()
                 .name(NAME)
