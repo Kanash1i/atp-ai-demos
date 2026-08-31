@@ -60,6 +60,12 @@ mybatis-plus:
       id-type: input
 
 atp:
+  auth:
+    # ⚠️ 过渡开关，默认关：CLI 还没带 token，一上来就强制会让探查与自验全挂。
+    #    顺序是「平台先具备能力 → CLI 改造 → 打开 → PG 才能上云」。
+    #    CLI 改完必须删掉这个开关 —— 留着一行配置就能关掉全部鉴权，本身就是个洞。
+    enabled: ${ATP_AUTH_ENABLED:false}
+
   # ⭐ 平台 agent 的写侧出口 —— 与 opencode 走同一个二进制，格式漂移物理上不可能。
   #    CLI 读的 ATP_DB_* 与平台是同一组环境变量，子进程直接继承，
   #    凭据始终留在平台侧，不因为「走了 CLI」而落到别处。
@@ -105,6 +111,8 @@ atp:
 # Sa-Token：与 gogo-agent 的取舍保持一致（token 放请求头、30 天、不共享 token、随机 128 位）
 sa-token:
   token-name: Authorization
+  # ⭐ 机器主体走标准的 Authorization: Bearer <token>
+  token-prefix: Bearer
   timeout: 2592000
   # 动态活跃续期关掉：演示期间不希望 token 因为闲置被踢
   active-timeout: -1

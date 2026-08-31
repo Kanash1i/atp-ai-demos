@@ -9,6 +9,8 @@ import com.atp.platform.service.TaskNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
+import cn.dev33.satoken.exception.NotLoginException;
+import cn.dev33.satoken.exception.NotPermissionException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -82,6 +84,26 @@ public class ApiExceptionHandler {
      * 但**不是**「服务器开小差了」那种没信息量的提示：把异常类型带上，
      * 演示时看一眼响应就知道该去查哪一层。
      */
+    /**
+     * 没带 token / token 无效 → 401。
+     *
+     * <p>⚠️ 必须写在 {@code Exception.class} 那个兜底之前 —— 否则 Sa-Token 的异常
+     * 会被当成服务器内部错误返回 500，调用方（尤其是 CLI）就分不清
+     * 「我没登录」和「平台挂了」，前者该去换 token，后者该重试或报警。
+     */
+    @ExceptionHandler(NotLoginException.class)
+    public ProblemDetail notLogin(NotLoginException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED,
+                "缺少或无效的 Authorization: Bearer <token>，先调 POST /api/auth/token 换取");
+    }
+
+    /** token 有效但权限不够 → 403。与 401 分开：一个该去换 token，一个换了也没用 */
+    @ExceptionHandler(NotPermissionException.class)
+    public ProblemDetail notPermission(NotPermissionException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN,
+                "当前 token 没有 " + e.getPermission() + " 权限");
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail unexpected(Exception e) {
         log.error("未处理的异常", e);
