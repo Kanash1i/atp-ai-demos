@@ -203,6 +203,8 @@ const ja: Dict = {
     dirty: '未保存の変更があります',
     conflict: 'このケースは他の人に更新されています',
     conflictHint: '手元のバージョンは古くなっています。再読込するとローカルの未保存分は失われますが、上書きすると相手の変更が消えます。',
+    stateConflict: 'このケースは反映済みで、編集できません',
+    stateConflictHint: '書き込み側は AI_DRAFT のみ対象です。再読込しても状態は反映済みのままです。反映済みケースの修正は別経路（変更承認と履歴管理を伴う）で、現時点では未実装です。',
     reload: '再読込',
     errorBlocks: '規範チェックに ERROR があるため反映できません。WARN と INFO は妨げません。',
     missingFields: '必須項目が不足しています（draftJson 直下の snake_case キー）：',

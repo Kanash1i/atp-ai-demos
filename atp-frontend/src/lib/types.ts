@@ -90,9 +90,17 @@ export interface CaseDetail {
   caseType: CaseType;
   author: string | null;
   precondition: string | null;
+  /** tc_case —— 案例本身的最后变更。**编辑草稿不会动它** */
   updatedAt: string;
-  /** 乐观锁版本号，编辑时要原样带回来 */
+  /**
+   * tc_step —— 草稿的最后保存时间。编辑期要显示这个：
+   * 用 updatedAt 的话，用户改完点保存会看到时间纹丝不动，以为没保存成功。
+   */
+  editUpdatedAt?: string | null;
+  /** tc_case.version，展示用，编辑期全程不动 */
   version: number;
+  /** tc_step.version —— **写侧要的是这个**。/api/cases/{id}/draft 返回的 version 就是它 */
+  editVersion?: number;
   steps: CaseStep[];
   validation: ValidationResult;
 }

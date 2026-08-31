@@ -176,6 +176,33 @@ export async function commitDraft(caseId: string, version: number): Promise<Draf
   return post<DraftView>(`/api/cases/${caseId}/commit`, { version });
 }
 
+/**
+ * RFC 7807 的 `type` —— 用它分支，**不要匹配 `detail`**。
+ *
+ * `detail` 是给人看的中文文案，后端会改；`type` 的前缀与 slug 是稳定契约面。
+ * ⚠️ 它是标识符不是地址（RFC 7807 允许不可解引用），别去请求它。
+ */
+export const PROBLEM = {
+  /** 内容在你确认之后被别人改过 —— 提示「已被他人修改」并给「重新载入」 */
+  versionConflict: 'https://atp.example/problems/version-conflict',
+  /**
+   * 案例已经提交过了 —— **没有重试的意义**，别给「重新载入再试」：
+   * 重新载入之后状态还是已提交的，用户会在一个永远失败的循环里打转
+   */
+  stateConflict: 'https://atp.example/problems/state-conflict',
+  /** 规范校验未通过 → 看 findings / violatedCodes */
+  validationFailed: 'https://atp.example/problems/validation-failed',
+  /** 表头必填缺失 → 看 missingFields */
+  headerIncomplete: 'https://atp.example/problems/header-incomplete',
+} as const;
+
+export function problemType(err: unknown): string | null {
+  return err instanceof ApiError ? (err.problem?.type ?? null) : null;
+}
+
+export const isVersionConflict = (e: unknown) => problemType(e) === PROBLEM.versionConflict;
+export const isStateConflict = (e: unknown) => problemType(e) === PROBLEM.stateConflict;
+
 /** 422 的 ProblemDetail 上挂着 findings，取出来直接喂给校验面板 */
 export function findingsOf(err: unknown): ValidationFinding[] {
   if (!(err instanceof ApiError) || !err.problem) return [];
@@ -198,12 +225,16 @@ export function missingFieldsOf(err: unknown): string[] {
  *
  * 取号接口不是原子的：两个人同时新建同一模块的案例会拿到同一个号，
  * 后提交的被 `uk_case_code` 唯一约束拦下。
- * ⚠️ 后端目前把它报成 **500 DuplicateKeyException**（调用方的错报成 5xx），
- * 所以只能靠匹配约束名来认，不能靠状态码。
+ *
+ * ⚠️ 这一个还**没有** problem type：后端仍报 500 `DuplicateKeyException`
+ * （调用方的错报成 5xx），所以只能靠匹配约束名。约束名一改这里就静默失效 ——
+ * 后端给了 type 之后换成按 type 判，这个兜底可以删。
  */
 export function isDuplicateCaseCode(err: unknown): boolean {
   if (!(err instanceof ApiError)) return false;
-  return (err.problem?.detail ?? '').includes('uk_case_code');
+  const p = err.problem;
+  if (p?.type && p.type.endsWith('/duplicate-case-code')) return true;
+  return (p?.detail ?? '').includes('uk_case_code');
 }
 
 /* ---------- 智能 Agent 助手（面板⑤）---------- */

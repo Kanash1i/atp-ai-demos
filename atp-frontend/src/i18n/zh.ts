@@ -208,6 +208,8 @@ const zh = {
     dirty: '有未保存的改动',
     conflict: '这条案例已被他人修改',
     conflictHint: '你手上的版本已经过期。重新载入会丢掉本地未保存的改动 —— 但直接覆盖会抹掉别人的。',
+    stateConflict: '这条案例已经提交，不能再编辑',
+    stateConflictHint: '写侧只对 AI_DRAFT 开放。重新载入也没用 —— 状态还是已提交的。修改已落地的案例是另一条路径（涉及变更审批与历史版本），目前没有实现。',
     reload: '重新载入',
     errorBlocks: '规范校验有 ERROR，提交被拦下。WARN 与 INFO 不拦人。',
     missingFields: '缺必填字段（draftJson 顶层的 snake_case 键）：',

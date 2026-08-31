@@ -203,6 +203,8 @@ const en: Dict = {
     dirty: 'Unsaved changes',
     conflict: 'Someone else has changed this case',
     conflictHint: 'Your copy is out of date. Reloading drops your unsaved edits — overwriting drops theirs.',
+    stateConflict: 'This case is already committed and can no longer be edited',
+    stateConflictHint: 'The write side only accepts AI_DRAFT. Reloading will not help — the status stays committed. Changing a landed case is a different path (change approval, version history) and is not implemented yet.',
     reload: 'Reload',
     errorBlocks: 'Standards check has ERRORs, so the commit was refused. WARN and INFO do not block.',
     missingFields: 'Missing required fields (top-level snake_case keys of draftJson):',
