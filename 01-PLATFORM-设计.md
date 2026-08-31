@@ -558,7 +558,8 @@ Dashboard 五个面板 = 五组 API：
 | **M0** | 骨架 ✅ | Maven 六模块 + PG schema V2~V5（16 张表 + pgvector）+ 种子导入（80 案例 / 412 步骤 / 3 用户）+ STD 校验器 + 健康检查 | ~~PgSession~~ 已取消，用 RedisSession |
 | **M1** | 传统平台功能（**读侧**）✅ | 案例树/详情/规范校验、审批中心（含并发仲裁）、执行看板（3580 条历史）。**先不接 agent，先让平台自己立得住** | STD 校验器（两条路线共用的规则实现） |
 | **M2** | 执行链路 | mock-shop + Playwright runner + 真录像 + SSE 进度 | Action 翻译层；worker 池并发 |
-| **M3** | Agent 层 **+ 案例写侧** | 三层意图路由 + CaseAuthoringAgent + KnowledgeAgent(RAG) + HITL；**agent 写侧改为 exec `atp` CLI**（5.3.1）；案例的新建/编辑/提交审批接口也在这里做 | AgentScope 的坑；pgvector 检索质量；~~写侧要与 CLI 的语义对齐~~ → 直接用 CLI，没有第二套语义 |
+| **M3** | Agent 层 **+ 案例写侧** ✅ | 三层意图路由（L1/L2/L3）+ CaseAuthoringAgent + KnowledgeAgent + ExecutionAgent；**写侧统一走 `atp` CLI**（5.3.1）；页面探查（5.3.2）；提交后自验；窄 token 鉴权；写侧三个接口 | ~~写侧要与 CLI 的语义对齐~~ → 直接用 CLI，没有第二套语义 |
+| | | | |
 
 > ⭐ **写侧为什么押后到 M3**（2026-08-29 决定）：人在 UI 上编辑案例、agent 生成案例，
 > 走的是**同一条写入路径**（草稿 → STD 校验 → 单表单行 CAS 落库）。
@@ -574,6 +575,31 @@ Dashboard 五个面板 = 五组 API：
 > 前端那条仍是独立实现，但那是传统功能链路、由人对账，与两条 AI 路线的一致性无关。
 | **M4** | 前端接线 | 五个面板接真接口，SSE 打通 | |
 | **M5** | 部署 | docker compose（app + runner + PG + Redis + mock-shop），服务器上跑起来 | |
+
+> ### M3 收尾（2026-09-01）
+>
+> **做了的：**
+>
+> | | |
+> |---|---|
+> | 三层意图路由 | L1 规则 / L2 向量 / L3 模型，命中即短路。八种说法实测三层都触发到 |
+> | CaseAuthoringAgent | 写侧全部经 CLI；页面探查；提交后跑一次自验 |
+> | KnowledgeAgent | 规范问答，答案带出处 |
+> | ExecutionAgent | 查状态 / 失败原因 / 录像 / 跑单条自验 |
+> | 窄 token 鉴权 | 机器主体 + scope 白名单，开关默认关（等 CLI 带 token） |
+> | 并发/幂等测试 | 4 个用例对着真 PG 压，是 CLI 迁移的前置 |
+> | 案例写侧三个接口 | 人在 UI 编辑与 agent 生成走同一条路径 |
+>
+> **刻意没做的，以及为什么：**
+>
+> | 未做 | 理由 |
+> |---|---|
+> | CaseQueryAgent / ApprovalAgent | 对应面板本来就在，agent 会如实说「还没接上助手」并指回去。**不是演示必需** |
+> | MasterAgent 编排 | 它解决的是跨意图上下文断裂，而演示时一个会话通常聚焦一件事，撞不上。为它重构整个 ChatService 不划算 |
+> | ~~StandardsGateHook~~ | 校验发生在 CLI 进程内，agent 绕不过去，不需要平台侧再加一道 |
+>
+> **已知边界**（别说成做到了）：跨意图的上下文会断 —— 按意图分开持有 agent 实例，
+> 先写案例再问规范时，问答 agent 不知道刚才写了什么。
 
 **顺序上的一条纪律**（从 demo1 的失败里学到的，换了个形式）：
 **M1 结束时平台要能独立演示**，哪怕 agent 一行没写。
