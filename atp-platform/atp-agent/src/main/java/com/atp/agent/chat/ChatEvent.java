@@ -32,6 +32,14 @@ public record ChatEvent(String type, String agent, String content) {
         return new ChatEvent("message", agent, text);
     }
 
+    /**
+     * 路由结论。前端据此显示「现在是哪个助手在答」——
+     * 用户看得见路由，才能在它判错时立刻说"不是这个意思"，而不是等答完一大段才发现跑偏。
+     */
+    public static ChatEvent route(String agent, String text) {
+        return new ChatEvent("route", agent, text);
+    }
+
     public static ChatEvent done(String agent) {
         return new ChatEvent("done", agent, "");
     }
