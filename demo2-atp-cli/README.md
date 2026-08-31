@@ -39,6 +39,7 @@ make test           # 27 个用例，起真 PostgreSQL 17
 
 ./bin/atp modules -p ECSHOP
 ./bin/atp draft --json --id "$(uuidgen)" -p PC_WEB -t "购物车结算"
+./bin/atp inspect '${base_url}/products/p001'   # 不确定路由/元素时，真的看一眼
 ./bin/atp validate -f draft.json
 ./bin/atp update  <id> --version 0 -f draft.json
 ./bin/atp preview <id>
