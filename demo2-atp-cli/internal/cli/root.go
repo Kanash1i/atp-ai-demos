@@ -72,7 +72,7 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	root.AddCommand(
 		a.schemaCmd(), a.modulesCmd(), a.validateCmd(),
 		a.draftCmd(), a.showCmd(), a.updateCmd(), a.previewCmd(), a.commitCmd(),
-		a.inspectCmd(),
+		a.inspectCmd(), a.runCmd(),
 	)
 
 	if err := root.Execute(); err != nil {
