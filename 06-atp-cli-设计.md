@@ -28,7 +28,6 @@
 | `atp schema` | ✗ | ✓ | 输出目标 JSON Schema + 枚举 + 必填规则 |
 | `atp modules` | ✓ 读 | ✓ | 模块字典（外键取值范围） |
 | `atp validate -f <json>` | ✗ | ✓ | **纯本地规则校验，零网络零模型** |
-| `atp lint-locator <glob...>` | ✗ | ✓ | XPath/CSS 静态检查，**支持批量**（CLI 相对 MCP 的收益就在这条） |
 | `atp draft --id <uuid> --title <s>` | ✓ 写 | ✅ | INSERT 草稿行，返回 `{caseId,status,version}` |
 | `atp show <id>` | ✓ 读 | ✓ | 输出 `tc_step.step_json`（本身就是可编辑的草稿）+ `version` |
 | `atp update <id> --version N -f <json>` | ✓ 写 | CAS | ⭐ **只写 `tc_step` 一行**，单表单行 CAS，`version+1` |
@@ -192,11 +191,12 @@ public Result<CaseRow> commit(String id, int expectedVersion) {
       "atp schema*":       "allow",
       "atp modules*":      "allow",
       "atp validate*":     "allow",
-      "atp lint-locator*": "allow",
       "atp show*":         "allow",
       "atp preview*":      "allow",
       "atp draft*":        "allow",
       "atp update*":       "allow",
+      "atp inspect*":      "allow",
+      "atp run*":          "allow",
       "atp commit*":       "ask",
       "*":                 "ask"
     }
@@ -295,9 +295,9 @@ metadata:
 |---|---|---|
 | ~~M1~~ ✅ | DDL 迁移脚本 + `CaseStore` 的 draft/show/update/commit | **已完成**：Testcontainers 起 PostgreSQL，并发与 TOCTOU 用例绿 |
 | ~~M2~~ ✅ | cobra 命令层 + 退出码 + `--json` 信封 + 本地校验 | **已完成**：`bin/atp` 七步跑通，27 用例绿，冷启动 9 ms |
-| M3 | `lint-locator` + 完整规则引擎（`validate` 的 JSON Schema 部分已在 M2 落地）| 断言零网络零模型 |
+| ~~M3~~ ❌ | `lint-locator` + 完整规则引擎 | **不做**（2026-08-31）：定位器规范已由平台的 `inspect_page` 在**产出侧**保证 —— 探查返回的定位器本就按 STD 筛过，agent 照抄即合规，事后再 lint 一遍是重复。剩下的用途是给人手写的存量案例做体检，不在演示路径上 |
 | M4 | opencode 接入（`opencode.json` + SKILL.md） | 在 opencode 里走完演示脚本 |
-| M5 | XXL-JOB 清理任务 | 造 2500 条过期草稿，分 3 批删净 |
+| ~~M5~~ ❌ | XXL-JOB 清理任务 | **不做**（2026-08-31）：演示不依赖。设计保留在 `05` §8 —— 「无外键」与「锁序」两个决策的代价挂在它身上，删了那两个决策就没有代价承担者 |
 
 **M1 先于 M2**：先把并发测试跑绿，再包 CLI 外壳。
 外壳好写，**并发正确性是这个 demo 唯一的硬内容**。
