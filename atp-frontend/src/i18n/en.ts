@@ -205,6 +205,8 @@ const en: Dict = {
     conflictHint: 'Your copy is out of date. Reloading drops your unsaved edits — overwriting drops theirs.',
     reload: 'Reload',
     errorBlocks: 'Standards check has ERRORs, so the commit was refused. WARN and INFO do not block.',
+    missingFields: 'Missing required fields (top-level snake_case keys of draftJson):',
+    duplicateCode: 'Someone took that case code first. A new number was fetched and the commit retried — numbering is not atomic, so concurrent creates in one module collide.',
     committedReadonly: 'This case is already committed; its header fields live in real columns now, so this view is read-only.',
     needTitle: 'Title is required',
     needModule: 'Module is required',

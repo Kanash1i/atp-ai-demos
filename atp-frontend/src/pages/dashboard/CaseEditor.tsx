@@ -2,11 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AsyncBlock, ColLabel, SectionTitle, Tag } from '../../components/ui';
 import { IconPlus } from '../../components/icons';
-import { ApiError, useCommitDraft, useCreateDraft, useDraft, useModules, useSaveDraft } from '../../lib/queries';
-import { findingsOf, DEMO_USER } from '../../lib/api';
+import {
+  ApiError, useCommitDraft, useCreateDraft, useDraft, useModules, useNextCaseCode, useSaveDraft,
+} from '../../lib/queries';
+import { findingsOf, isDuplicateCaseCode, missingFieldsOf, DEMO_USER } from '../../lib/api';
 import {
   ACTIONS, LOCATOR_TYPES, ON_FAILURES, PRIORITIES, WAIT_STRATEGIES,
-  emptyStep, nextCaseCode, parseDraft, serializeDraft, waitStrategyFor,
+  emptyStep, parseDraft, serializeDraft, waitStrategyFor,
 } from '../../lib/draft';
 import { caseStatusTone, isAssertion, severityTone, toneOf } from '../../lib/format';
 import type {
@@ -181,6 +183,7 @@ export default function CaseEditor({
   const create = useCreateDraft();
   const save = useSaveDraft();
   const commit = useCommitDraft();
+  const nextCode = useNextCaseCode();
 
   // new 模式下 caseId 由前端生成，且**只生成一次** —— 它是幂等键，
   // 每次渲染换一个的话「重试」就会建出第二条空草稿
@@ -237,11 +240,15 @@ export default function CaseEditor({
   const setSteps = (steps: CaseStep[]) => patch({ steps });
 
   const onPickModule = (moduleId: string) => {
-    const code = modules?.find((m) => m.moduleId === moduleId)?.moduleCode;
-    // 选了模块就把 case_code 顺手拼出来 —— 后端不自动生成，留空到 commit 才炸
-    const case_code =
-      code && !doc?.case_code ? nextCaseCode(code, []) : doc?.case_code ?? null;
-    patch({ module_id: moduleId, case_code });
+    patch({ module_id: moduleId });
+    // 选了模块就顺手取号 —— 后端不自动生成 case_code，留空到 commit 才 422。
+    // 取号走后端（agent 的 next_case_code 工具调的是同一份实现），不在前端自己推：
+    // 「已有条数 +1」和「最大序号 +1」在删过案例之后就不一样了，编号是单调的、计数不是。
+    if (!doc?.case_code) {
+      nextCode.mutate(moduleId, {
+        onSuccess: (r) => patch({ case_code: r.caseCode }),
+      });
+    }
   };
 
   const doSave = () => {
@@ -257,19 +264,51 @@ export default function CaseEditor({
     );
   };
 
-  const doCommit = () => {
-    if (!id || !view) return;
+  const finish = (v: DraftView) => {
+    setView(v);
+    setDoc(parseDraft(v));
+    setCommitted(true);
+    onCommitted?.(id!);
+  };
+
+  /**
+   * 提交。撞号时自动换一个号重来一次。
+   *
+   * 取号接口不是原子的 —— 两个人同时新建同一模块的案例会拿到同一个号，
+   * 后提交的被 uk_case_code 拦下。这不是数据写坏了，是号被抢了，
+   * 所以重取一个号、重存、重提交是安全的；只做一次，避免真出问题时死循环。
+   */
+  const doCommit = (retried = false) => {
+    if (!id || !view || !doc) return;
     commit.mutate(
       { caseId: id, version: view.version },
       {
-        onSuccess: (v) => {
-          setView(v);
-          setDoc(parseDraft(v));
-          setCommitted(true);
-          onCommitted?.(id);
-        },
+        onSuccess: finish,
         onError: (e) => {
-          if (e instanceof ApiError && e.isConflict) setConflict(true);
+          if (e instanceof ApiError && e.isConflict) {
+            setConflict(true);
+            return;
+          }
+          if (!retried && isDuplicateCaseCode(e) && doc.module_id) {
+            nextCode.mutate(doc.module_id, {
+              onSuccess: (r) => {
+                const retryDoc = { ...doc, case_code: r.caseCode };
+                setDoc(retryDoc);
+                save.mutate(
+                  { caseId: id, draftJson: serializeDraft(retryDoc), version: view.version },
+                  {
+                    onSuccess: (v2) => {
+                      setView(v2);
+                      commit.mutate(
+                        { caseId: id, version: v2.version },
+                        { onSuccess: finish },
+                      );
+                    },
+                  },
+                );
+              },
+            });
+          }
         },
       },
     );
@@ -281,6 +320,8 @@ export default function CaseEditor({
   };
 
   const commitFindings = findingsOf(commit.error);
+  const missingFields = missingFieldsOf(commit.error);
+  const duplicateCode = isDuplicateCaseCode(commit.error);
   const blocked = (view?.validation?.errorCount ?? 0) > 0 || commitFindings.length > 0;
   const missing = !doc?.title?.trim() ? t('editor.needTitle') : !doc?.module_id ? t('editor.needModule') : null;
 
@@ -332,6 +373,25 @@ export default function CaseEditor({
         {!editable && view && (
           <div className="shrink-0 border-b border-line bg-surface-2 px-6 py-2.5 text-[11.5px] leading-[1.8] text-ink-3">
             {committed ? t('editor.committed') : t('editor.committedReadonly')}
+          </div>
+        )}
+
+        {/*
+          422：六个 snake_case 表头键少了哪几个。后端把名字直接给出来了，
+          照抄比让人去比对文档快
+        */}
+        {missingFields.length > 0 && (
+          <div className="shrink-0 border-b border-line bg-yamabuki-soft px-6 py-2.5">
+            <span className="text-[11.5px] text-ink-2">{t('editor.missingFields')}</span>
+            {missingFields.map((f) => (
+              <span key={f} className="ml-2 font-mono text-[11px] text-yamabuki">{f}</span>
+            ))}
+          </div>
+        )}
+
+        {duplicateCode && (
+          <div className="shrink-0 border-b border-line bg-yamabuki-soft px-6 py-2.5 text-[11.5px] leading-[1.8] text-ink-2">
+            {t('editor.duplicateCode')}
           </div>
         )}
 
@@ -485,7 +545,7 @@ export default function CaseEditor({
             type="button"
             disabled={!editable || commit.isPending || dirty || Boolean(missing)}
             title={dirty ? t('editor.dirty') : undefined}
-            onClick={doCommit}
+            onClick={() => doCommit()}
             className="rounded-md bg-shu px-4 py-[7px] text-[12.5px] text-white hover:bg-shu-hover disabled:cursor-not-allowed disabled:opacity-45"
           >
             {commit.isPending ? t('editor.committing') : t('editor.commit')}

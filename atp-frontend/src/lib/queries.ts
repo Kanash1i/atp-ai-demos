@@ -135,6 +135,11 @@ export function useDecide() {
 export const useModules = () =>
   useQuery({ queryKey: ['modules'], queryFn: api.modules, staleTime: 10 * 60_000, ...once });
 
+/** 取号是有副作用语义的（并发下会重号），所以按需调用，不做缓存 */
+export function useNextCaseCode() {
+  return useMutation({ mutationFn: (moduleId: string) => api.nextCaseCode(moduleId), retry: 0 });
+}
+
 export const useDraft = (caseId: string | null) =>
   useQuery({
     queryKey: ['draft', caseId],

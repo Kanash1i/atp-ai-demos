@@ -210,6 +210,8 @@ const zh = {
     conflictHint: '你手上的版本已经过期。重新载入会丢掉本地未保存的改动 —— 但直接覆盖会抹掉别人的。',
     reload: '重新载入',
     errorBlocks: '规范校验有 ERROR，提交被拦下。WARN 与 INFO 不拦人。',
+    missingFields: '缺必填字段（draftJson 顶层的 snake_case 键）：',
+    duplicateCode: '案例编号被别人抢先用掉了。已自动取一个新号重试 —— 取号接口不是原子的，同一模块并发新建时会撞。',
     committedReadonly: '这条案例已经提交落地，编辑期的表头字段已投影进正式列，这里只读。',
     needTitle: '标题必填',
     needModule: '模块必填',

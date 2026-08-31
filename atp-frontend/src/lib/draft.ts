@@ -87,19 +87,3 @@ export function serializeDraft(doc: DraftDocument): string {
   });
 }
 
-/**
- * 按 STD-007 拼 case_code：`ATP-{MODULE_CODE}-{4 位序号}`。
- *
- * ⚠️ 后端**不会**自动生成它 —— commit 时直接从 draftJson 的 `case_code` 取，
- * 为 null 就撞 ck_case_complete 约束报 500。序号也没有「取下一个」的接口，
- * 所以这里按该模块已有案例的最大序号 +1 推，够用但不是权威分配。
- */
-export function nextCaseCode(moduleCode: string, existing: string[]): string {
-  const prefix = `ATP-${moduleCode}-`;
-  const max = existing
-    .filter((c) => c.startsWith(prefix))
-    .map((c) => Number.parseInt(c.slice(prefix.length, prefix.length + 4), 10))
-    .filter((n) => Number.isFinite(n))
-    .reduce((a, b) => Math.max(a, b), 0);
-  return `${prefix}${String(max + 1).padStart(4, '0')}`;
-}

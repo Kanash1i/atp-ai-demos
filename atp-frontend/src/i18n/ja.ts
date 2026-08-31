@@ -205,6 +205,8 @@ const ja: Dict = {
     conflictHint: '手元のバージョンは古くなっています。再読込するとローカルの未保存分は失われますが、上書きすると相手の変更が消えます。',
     reload: '再読込',
     errorBlocks: '規範チェックに ERROR があるため反映できません。WARN と INFO は妨げません。',
+    missingFields: '必須項目が不足しています（draftJson 直下の snake_case キー）：',
+    duplicateCode: 'ケース番号が先に使われました。新しい番号を取り直して再送します —— 採番は原子的ではないため、同一モジュールの同時作成では衝突します。',
     committedReadonly: 'このケースは反映済みです。ヘッダ項目は正式カラムへ投影されており、ここは読み取り専用です。',
     needTitle: 'タイトルは必須です',
     needModule: 'モジュールは必須です',

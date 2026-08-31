@@ -98,6 +98,15 @@ export const api = {
   /** 平铺不分页（当前 12 条）。新建案例的模块下拉框用它 */
   modules: () => get<ModuleDictEntry[]>('/api/modules'),
 
+  /**
+   * 按 STD-007 取该模块的下一个 case_code。
+   *
+   * 后端与 agent 的 `next_case_code` 工具调的是同一份实现 —— 两边不会算出不同的号。
+   * ⚠️ 并发下两个人仍可能拿到同一个号，后提交的会被 `uk_case_code` 拦下（见 commit 的重试）。
+   */
+  nextCaseCode: (moduleId: string) =>
+    get<{ caseCode: string }>(`/api/modules/${moduleId}/next-case-code`),
+
   /** 读回当前草稿。刷新页面、或撞到 409 之后重新载入时用 */
   draft: (caseId: string) => get<DraftView>(`/api/cases/${caseId}/draft`),
 
@@ -172,6 +181,29 @@ export function findingsOf(err: unknown): ValidationFinding[] {
   if (!(err instanceof ApiError) || !err.problem) return [];
   const p = err.problem as ProblemDetail & { findings?: ValidationFinding[] };
   return Array.isArray(p.findings) ? p.findings : [];
+}
+
+/**
+ * 缺必填字段时 422 的 `missingFields` —— 六个 snake_case 键里少了哪几个。
+ * 它们是 draftJson 顶层的键，提交时被投影进案例表。
+ */
+export function missingFieldsOf(err: unknown): string[] {
+  if (!(err instanceof ApiError) || !err.problem) return [];
+  const p = err.problem as ProblemDetail & { missingFields?: string[] };
+  return Array.isArray(p.missingFields) ? p.missingFields : [];
+}
+
+/**
+ * case_code 撞号了吗。
+ *
+ * 取号接口不是原子的：两个人同时新建同一模块的案例会拿到同一个号，
+ * 后提交的被 `uk_case_code` 唯一约束拦下。
+ * ⚠️ 后端目前把它报成 **500 DuplicateKeyException**（调用方的错报成 5xx），
+ * 所以只能靠匹配约束名来认，不能靠状态码。
+ */
+export function isDuplicateCaseCode(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  return (err.problem?.detail ?? '').includes('uk_case_code');
 }
 
 /* ---------- 智能 Agent 助手（面板⑤）---------- */
