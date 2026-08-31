@@ -125,6 +125,13 @@ class CaseWriteConcurrencyTest {
         assertEquals(baseVersion + 1, currentVersion(caseId),
                 "版本应当且只应当被推进一格");
 
+        // ⭐ 「编辑期只写 tc_step」这个核心设计的证据：tc_case.version 全程不动。
+        //    这条不变量原先由 CLI 侧的测试守着（它能直接读 tc_case.version）；
+        //    迁移后 CLI 看不见这个字段了 —— **看得见反而说明边界没划干净**，
+        //    所以断言搬到这一侧。迁移会搬走证据，得确保它在新地方落了地而不是路上掉了。
+        assertEquals(0, caseMapper.selectById(caseId).getVersion(),
+                "编辑期只写 tc_step，tc_case.version 不该被动过");
+
         cleanup(caseId);
     }
 
