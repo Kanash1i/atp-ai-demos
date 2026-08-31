@@ -79,6 +79,21 @@ public class AtpCliClient {
      * @param args 子命令与参数，**不经过 shell**，所以参数里有空格、引号都不需要转义
      */
     public CliResult run(String... args) {
+        return runWithin(timeoutSeconds, args);
+    }
+
+    /**
+     * 指定这一次的等待上限。
+     *
+     * <p>⚠️ 存在的理由是**两层超时必须有正确的层级关系**：CLI 自己也在等平台
+     * （比如 {@code atp run} 要等执行机出结果，它的 HTTP 超时是 timeoutSec+30s）。
+     * 我这边的进程超时若比它短，就会在 CLI 还没拿到结论时把它强杀 ——
+     * agent 收到的是「没拿到结论」，而实际上再等十几秒结论就有了。
+     *
+     * <p>实测撞过：默认 30 秒 exec 超时把 {@code atp run} 杀在半路，
+     * agent 如实报告「状态未知」——行为是对的，但那个未知是我造成的。
+     */
+    public CliResult runWithin(int seconds, String... args) {
         List<String> cmd = new ArrayList<>();
         cmd.add(bin);
         // --version / --help 这类不吃 --json，多带一个反而报错
@@ -110,10 +125,10 @@ public class AtpCliClient {
 
         int exit;
         try {
-            if (!p.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            if (!p.waitFor(seconds, TimeUnit.SECONDS)) {
                 p.destroyForcibly();
                 throw new IllegalStateException(
-                        "CLI 执行超过 %d 秒未返回：%s".formatted(timeoutSeconds, String.join(" ", args)));
+                        "CLI 执行超过 %d 秒未返回：%s".formatted(seconds, String.join(" ", args)));
             }
             exit = p.exitValue();
         } catch (InterruptedException e) {
