@@ -134,8 +134,8 @@ curl -s localhost:8080/api/health
 |---|---|---|
 | M0 ✅ | 骨架 | Maven 六模块 + PG schema（16 表 + pgvector）+ 种子导入（80 案例/412 步骤）+ STD 校验器 |
 | M1 ✅ | 传统平台功能（读侧） | 案例树/详情/规范校验、审批中心（含并发仲裁）、执行看板（3580 条历史） |
-| M2 | 执行链路 | mock-shop + Playwright runner + 真录像 + SSE |
-| M3 | Agent 层 | 三层意图路由 + 案例生成 + RAG + HITL |
+| M2 ✅ | 执行链路 | mock-shop + Playwright runner + 真录像 + SSE |
+| M3 ✅ | Agent 层 + 写侧 | 三层意图路由 + 三个子 agent + 页面探查 + 提交后自验 + 窄 token 鉴权 + 并发测试 |
 | M4 | 前端接线 | 五个面板接真接口 |
 | M5 | 部署 | docker compose，服务器上跑起来 |
 
