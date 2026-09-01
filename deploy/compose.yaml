@@ -22,8 +22,11 @@ services:
     # ⚠️ 只编排不构建 —— 镜像由 deploy/build.sh 打好。
     #    容器内构建在这个网络环境下成功率取决于当次运气，见 platform.Dockerfile 顶部
     image: atp-platform:latest
-    ports:
-      - "${ATP_WEB_PORT:-8080}:8080"
+    # ⚠️ 部署时不暴露到宿主：外部一律走 Caddy 的 :80，
+    #    平台直接开在公网上等于绕过了反代那一层（同源、缓存、日志都在那）。
+    #    本地调试要直连的话用 `--profile debug` 或临时加 -p
+    expose:
+      - "8080"
     environment:
       # ── 数据库与 Redis（指向 infra 那一份）──
       ATP_DB_URL: ${ATP_DB_URL}
@@ -76,6 +79,42 @@ services:
       # JVM + Spring 启动约 4 秒，给足余量再开始探
       start_period: 60s
 
+  # ── 前端产物投递（一次性任务，倒完就退）──────────────────────
+  # ⚠️ 镜像**不自带 web server**：前端自带一个 Caddy 的话，这里和 infra/Caddyfile
+  #    就是两套配置。这个项目已经吃过几次「两份实现」的亏。
+  atp-frontend-dist:
+    image: atp-frontend:latest
+    volumes:
+      - web-dist:/srv
+    restart: "no"
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      atp-frontend-dist:
+        # 等 dist 倒完再起，否则 Caddy 会先挂载到一个空目录
+        condition: service_completed_successfully
+      platform:
+        condition: service_started
+    volumes:
+      - web-dist:/srv:ro
+      - ../infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ../atp-frontend/Caddyfile.snippet:/etc/caddy/atp-frontend.snippet:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    environment:
+      # 片段里 reverse_proxy 的上游，默认 platform:8080（同一个 compose 网络内）
+      ATP_PLATFORM_UPSTREAM: platform:8080
+    ports:
+      - "80:80"
+      # ⚠️ 443 必须开，而且 TCP/UDP 都要：
+      #    TCP 是 HTTPS 本身与 ACME 的 TLS-ALPN-01 challenge，
+      #    UDP 是 HTTP/3（QUIC）—— 少了它 Caddy 起得来、HTTPS 也能用，
+      #    只是悄悄退回 HTTP/2，属于那种"不报错但少了一半"的配置。
+      - "443:443"
+      - "443:443/udp"
+    restart: unless-stopped
+
   mock-shop:
     image: atp-mock-shop:latest
     ports:
@@ -88,3 +127,6 @@ services:
 
 volumes:
   atp-artifacts:
+  web-dist:
+  caddy-data:
+  caddy-config:

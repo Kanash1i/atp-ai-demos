@@ -1,0 +1,45 @@
+# ATP 平台的反向代理与静态站点
+#
+# ⭐ 前端与 /api **必须同源**，这不是偏好而是硬约束：
+#    浏览器对非 GET/HEAD 的请求即使同源也会带 Origin。同源时 Origin 与 Host 一致，
+#    后端判定同源、不进 CORS 分支。一旦分域，就必须配 CORS 白名单并允许
+#    Authorization 头 —— 而前端在生产没有办法摘掉浏览器自己加的 Origin。
+#
+# 引用的片段来自 atp-frontend/Caddyfile.snippet（由前端 session 维护）。
+
+# ⚠️ 先 import 文件（它定义了 (atp-frontend) 这个片段），
+#    下面才能用 `import atp-frontend` 引用它。两步不能省成一步。
+import /etc/caddy/atp-frontend.snippet
+
+{
+	admin off
+}
+
+# ── 正式入口：域名 + 自动 HTTPS ────────────────────────────────
+#
+# ⭐ 上 HTTPS 不只是「更安全」，它直接决定前端能不能用：
+#    crypto.randomUUID / crypto.subtle / navigator.clipboard 这些 API
+#    **只在 secure context 存在**。http + 裸 IP 不是 secure context，
+#    而 https 和 http://localhost 是。
+#    实测：http 访问时 AI 助手面板整页白屏（crypto.randomUUID is not a function）。
+#
+# Caddy 会自动申请并续期 Let's Encrypt 证书，不需要任何额外配置 ——
+# 前提是 80 和 443 都能从公网访问（ACME 的 challenge 走这两个端口）。
+k4suka.top, www.k4suka.top {
+	import atp-frontend
+
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}
+
+# ── 内部直连：IP 与 tailscale 地址 ─────────────────────────────
+#
+# ⚠️ 保留它是为了调试（tailscale 内网访问、curl 探活），**不是给用户用的**。
+#    裸 IP 申请不到证书，所以这一块只有 HTTP —— 走它访问的话，
+#    上面说的那些 secure context API 依然不可用。
+:80 {
+	import atp-frontend
+}
