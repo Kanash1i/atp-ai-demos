@@ -19,7 +19,7 @@ const ja: Dict = {
     signingIn: 'ログイン中…',
     badCredentials: 'ユーザー名またはパスワードが正しくありません',
     demoAccounts: 'デモ用アカウント',
-    passwordHint: '3 アカウント共通のパスワードは、バックエンドの .env（ATP_DEMO_PASSWORD）にあります。フロントには埋め込みません。',
+    passwordHint: '3 アカウント共通のパスワードは VITE_DEMO_PASSWORD から自動入力されます。架空のデモ用データであり、実システムの資格情報ではありません。',
     signOut: 'ログアウト',
     switchUser: '身元を切り替え',
     noPermission: 'このアカウントにはこの操作の権限がありません',

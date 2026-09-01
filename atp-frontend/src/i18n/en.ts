@@ -19,7 +19,7 @@ const en: Dict = {
     signingIn: 'Signing in…',
     badCredentials: 'Wrong username or password',
     demoAccounts: 'Demo accounts',
-    passwordHint: 'All three accounts share one password, configured as ATP_DEMO_PASSWORD in the backend .env. It is not baked into the frontend.',
+    passwordHint: 'All three accounts share one password, prefilled from VITE_DEMO_PASSWORD. Fictional demo data — not a credential for any real system.',
     signOut: 'Sign out',
     switchUser: 'Switch user',
     noPermission: 'This account is not allowed to do that',

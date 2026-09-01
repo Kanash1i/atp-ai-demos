@@ -24,7 +24,7 @@ const zh = {
     signingIn: '登录中…',
     badCredentials: '用户名或密码不正确',
     demoAccounts: '演示账号',
-    passwordHint: '三个账号共用同一个口令，配置在后端 .env 的 ATP_DEMO_PASSWORD。前端不内置口令。',
+    passwordHint: '三个账号共用同一个口令，已由 VITE_DEMO_PASSWORD 预填。虚构演示数据，不是任何真实系统的凭据。',
     signOut: '退出登录',
     switchUser: '切换身份',
     noPermission: '当前账号没有权限做这个操作',

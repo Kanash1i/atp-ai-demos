@@ -8,8 +8,10 @@ import { isBadCredentials, login } from '../lib/api';
 /**
  * 三个演示账号。
  *
- * ⚠️ 只填用户名，**不填密码** —— 口令在后端的 `.env`（`ATP_DEMO_PASSWORD`），
- * 内置到前端就等于把它提交进仓库了。演示时敲一次，之后 30 天不掉线。
+ * 口令从 `VITE_DEMO_PASSWORD` 读并预填 —— 演示时点一下就能进，不用每次敲。
+ * ⚠️ 走环境变量而不是写死在代码里：值在 `.env.example`（与后端 `.env` 的
+ * `ATP_DEMO_PASSWORD` 保持一致），部署到别处时改环境变量即可，
+ * 不设就留空手动输入。这是虚构演示数据，不是任何真实系统的凭据。
  */
 const DEMO_ACCOUNTS = [
   { username: 'kaneshiro', display: '金城 悠人', initials: 'KY' },
@@ -26,7 +28,7 @@ export default function Login() {
   const from = (location.state as { from?: string } | null)?.from ?? '/dashboard/cases';
 
   const [username, setUsername] = useState(prefill || DEMO_ACCOUNTS[0].username);
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(import.meta.env.VITE_DEMO_PASSWORD ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -97,7 +99,6 @@ export default function Login() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             autoComplete="current-password"
-            autoFocus
             className="w-full rounded-md border border-line bg-paper px-3 py-2.5 text-[13px] outline-none focus:border-line-2"
           />
         </label>
