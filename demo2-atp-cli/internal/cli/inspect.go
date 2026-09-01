@@ -41,12 +41,13 @@ func (a *app) inspectCmd() *cobra.Command {
 			"⚠️ 本命令不碰数据库，只需要 ATP_API_URL。",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			base, err := config.Load().APIBase()
+			cfg := config.Load()
+			base, err := cfg.APIBase()
 			if err != nil {
 				a.code = a.w().Fail(model.InfraError, err.Error(), nil)
 				return nil
 			}
-			res, err := inspect.New(base).Inspect(context.Background(), args[0])
+			res, err := inspect.New(base, cfg.Optional(config.EnvClientID), cfg.Optional(config.EnvClientSecret)).Inspect(context.Background(), args[0])
 			if err != nil {
 				// 连不上、超时、返回非 JSON —— 都是环境问题，不是 agent 写错了
 				a.code = a.w().Fail(model.InfraError, err.Error(), nil)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/httpx"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
 )
 
@@ -14,9 +15,9 @@ import (
 // ⭐ 它跟 store.CaseStore 返回【完全一样】的 model.Result —— 这是对拍的前提：
 // 同一组输入分别喂两个实现，比返回值。返回类型不一致的话，
 // 迁移正确性就只能靠"两边各自的测试都绿"，那弱得多。
-type APIStore struct{ c *Client }
+type APIStore struct{ c *httpx.Client }
 
-func New(base, id, secret string) *APIStore { return &APIStore{c: newClient(base, id, secret)} }
+func New(base, id, secret string) *APIStore { return &APIStore{c: httpx.New(base, id, secret)} }
 
 func (s *APIStore) Close(context.Context) {}
 
@@ -111,7 +112,7 @@ func (s *APIStore) ok(raw []byte) model.Result {
 // 调用方靠它区分同样映射成 13 的两种情况：409 state-conflict（状态冲突，
 // 可能其实是重放）与 403（scope 不够，跟状态无关，不该去探测）。
 func (s *APIStore) call(ctx context.Context, method, path string, in any) (model.Result, string) {
-	status, raw, err := s.c.do(ctx, method, path, in)
+	status, raw, err := s.c.Do(ctx, method, path, in)
 	if err != nil {
 		return model.Fail(model.InfraError, err.Error()), ""
 	}
@@ -189,7 +190,7 @@ func (s *APIStore) Show(ctx context.Context, caseID string) model.Result {
 }
 
 func (s *APIStore) ListModules(ctx context.Context) ([]model.ModuleEntry, error) {
-	status, raw, err := s.c.do(ctx, http.MethodGet, "/api/modules", nil)
+	status, raw, err := s.c.Do(ctx, http.MethodGet, "/api/modules", nil)
 	if err != nil {
 		return nil, err
 	}

@@ -6,12 +6,12 @@
 package inspect
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/httpx"
 	"time"
 )
 
@@ -46,15 +46,24 @@ type Result struct {
 	Page   Page
 }
 
+// Client 走共用的 httpx —— 鉴权、401 重换 token 都在那里。
+//
+// ⚠️ 这里【曾经】有一个自己的裸 http.Client。平台把鉴权打开之后，
+// inspect 拿裸请求打过去、收到 401 就报错退出，因为换 token 那段代码
+// 不在这个客户端里。两个客户端就会有一个先长出能力、另一个落下。
 type Client struct {
-	Base string
-	HTTP *http.Client
+	c *httpx.Client
 }
 
-func New(base string) *Client {
+func New(base, clientID, clientSecret string) *Client {
 	// 探查要真的打开页面渲染，比一般接口慢。30s 足够，又不至于让 agent 干等。
-	return &Client{Base: base, HTTP: &http.Client{Timeout: 30 * time.Second}}
+	h := httpx.New(base, clientID, clientSecret)
+	h.HTTP.Timeout = 30 * time.Second
+	return &Client{c: h}
 }
+
+// Base 平台地址，报错信息里要带上。
+func (c *Client) Base() string { return c.c.Base }
 
 // Inspect 把路径【原样透传】给平台。
 //
@@ -62,38 +71,16 @@ func New(base string) *Client {
 // ${base_url}/products/p001（案例原文写法，agent 多半直接从步骤里贴过来）。
 // CLI 不做任何解析或改写 —— 解析规则只应存在于一个地方。
 func (c *Client) Inspect(ctx context.Context, path string) (*Result, error) {
-	body, err := json.Marshal(map[string]string{"path": path})
+	status, raw, err := c.c.Do(ctx, http.MethodPost, "/api/inspect/page",
+		map[string]string{"path": path})
 	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.Base+"/api/inspect/page", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("调不通平台探查接口 %s: %w", c.Base, err)
-	}
-	defer resp.Body.Close()
-
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("调不通平台探查接口 %s: %w", c.c.Base, err)
 	}
 	var page Page
 	if err := json.Unmarshal(raw, &page); err != nil {
 		// 平台没按契约返回 JSON —— 这是环境问题，不是 agent 写错了
-		return nil, fmt.Errorf("平台返回的不是合法 JSON（HTTP %d）: %s", resp.StatusCode, truncate(string(raw), 200))
+		return nil, fmt.Errorf("平台返回的不是合法 JSON（HTTP %d）: %s",
+			status, httpx.Truncate(string(raw), 200))
 	}
-	return &Result{Status: resp.StatusCode, Page: page}, nil
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
+	return &Result{Status: status, Page: page}, nil
 }
