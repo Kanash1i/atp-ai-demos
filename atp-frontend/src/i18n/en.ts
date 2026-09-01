@@ -79,6 +79,8 @@ const en: Dict = {
     },
     ctaTitle: ['Just ', 'see it running', '.'],
     ctaBody: 'Open the dashboard for the real thing: case tree, run board and approval queue over 3 projects, 12 modules, 80 cases and 3,580 execution records — all read from the database.',
+    contact: 'CONTACT',
+    contactRole: 'Author of this project · AI application engineering',
     footerNote: 'Interview demo · fictional subject matter',
   },
   cases: {

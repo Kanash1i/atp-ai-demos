@@ -1,7 +1,9 @@
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import LangSwitcher from '../../components/LangSwitcher';
-import { IconArrowRight, IconShield, IconSplit, IconTable, LogoMark } from '../../components/icons';
+import {
+  IconArrowRight, IconMail, IconPhone, IconShield, IconSplit, IconTable, LogoMark,
+} from '../../components/icons';
 import Typewriter from './Typewriter';
 import Reveal from './Reveal';
 import './landing.css';
@@ -235,6 +237,41 @@ export default function Landing() {
             {t('landing.ctaBody')}
           </p>
           <CtaButton size="lg" />
+        </div>
+      </Reveal>
+
+      {/* ============ 联系方式 ============
+          面试官第一眼会看 landing，所以这块要一眼看全 ——
+          不折叠、不塞进页脚小字，邮箱与电话都可直接点。 */}
+      <Reveal as="section" className="relative border-t border-line-dark bg-ink px-18 py-16">
+        <div className="flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
+          <div>
+            <div className="mb-4 flex items-center gap-[14px]">
+              <span className="h-px w-11 bg-shu" />
+              <span className="font-mono text-[11.5px] tracking-[.28em] text-shu">{t('landing.contact')}</span>
+            </div>
+            {/* 姓名不翻译 */}
+            <div className="font-jp text-[32px] leading-[1.3] font-bold text-paper">刘 嘉龙</div>
+            <div className="mt-1.5 text-[13px] tracking-[.06em] text-ink-inv">{t('landing.contactRole')}</div>
+          </div>
+
+          <div className="flex flex-col gap-3 md:items-end">
+            <a
+              href="mailto:kkaibulisi@gmail.com"
+              className="group flex items-center gap-3 text-paper hover:text-paper"
+            >
+              <IconMail size={17} className="shrink-0 text-shu" />
+              <span className="font-mono text-[17px] tracking-[.02em] underline decoration-[#5A4A42] decoration-1 underline-offset-[6px] transition-colors group-hover:decoration-shu">
+                kkaibulisi@gmail.com
+              </span>
+            </a>
+            <a href="tel:+8619002663292" className="group flex items-center gap-3 text-paper hover:text-paper">
+              <IconPhone size={17} className="shrink-0 text-shu" />
+              <span className="font-mono text-[17px] tracking-[.04em] underline decoration-[#5A4A42] decoration-1 underline-offset-[6px] transition-colors group-hover:decoration-shu">
+                190 0266 3292
+              </span>
+            </a>
+          </div>
         </div>
       </Reveal>
 

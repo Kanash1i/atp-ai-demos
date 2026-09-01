@@ -84,6 +84,8 @@ const zh = {
     },
     ctaTitle: ['先', '动手试试', '。'],
     ctaBody: '进 dashboard 看真实数据的案例树、执行看板、审批队列 —— 3 个项目 / 12 个模块 / 80 条案例 / 3580 条执行记录，全部从库里读出来。',
+    contact: 'CONTACT',
+    contactRole: '本项目作者 · AI 应用工程',
     footerNote: '面试演示 · 虚构题材',
   },
   cases: {
