@@ -26,7 +26,7 @@ public enum IntentCategory {
     APPROVAL("审批相关", false),
 
     /** 闲聊、打招呼、以及分不出来的 */
-    OTHER("其他", false);
+    OTHER("其他", true);
 
     private final String display;
 

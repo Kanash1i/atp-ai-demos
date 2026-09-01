@@ -3,6 +3,7 @@ package com.atp.agent.chat;
 import com.atp.agent.AtpAgent;
 import com.atp.agent.authoring.CaseAuthoringAgent;
 import com.atp.agent.execution.ExecutionAgent;
+import com.atp.agent.general.GeneralAgent;
 import com.atp.agent.intent.IntentCategory;
 import com.atp.agent.intent.IntentRouter;
 import com.atp.agent.intent.RouteResult;
@@ -59,12 +60,33 @@ public class ChatService {
             new ConcurrentHashMap<>();
 
     /**
+     * 会话 → 当前接管它的意图（active agent）。
+     *
+     * <h3>⭐ 为什么需要它：每轮都重新路由会打断正在进行的任务</h3>
+     *
+     * 用户让 agent 写了一版案例，接着说「第二步的定位器改成 data-testid」——
+     * 这句话单独看不像「写案例」，会被路由到别处，于是**上一轮的上下文全丢了**，
+     * 新 agent 既不知道有个草稿，也不知道「第二步」指什么。
+     *
+     * <p>有了 active 之后，默认继续交给上一轮那个 agent，只有明确切换话题才换人。
+     *
+     * <h3>为什么不用 ag_active_agent 表</h3>
+     *
+     * agent 实例本身就在内存里（{@code sessions}），进程一重启它们连同 memory 一起没了。
+     * 把 active 单独持久化，恢复出来的只是一个指向已消失实例的名字 ——
+     * 那比没有更糟，因为它看起来是有效的。要持久化就得连 memory 一起（RedisSession），
+     * 那是另一件事。
+     */
+    private final ConcurrentHashMap<String, IntentCategory> activeAgent = new ConcurrentHashMap<>();
+
+    /**
      * 发一句话，拿回一串事件。
      *
      * @param conversationId 会话 id。同一个会话复用同一个 agent 实例，多轮上下文才连得上
      */
     public Flux<ChatEvent> chat(String conversationId, String userMessage) {
-        RouteResult route = router.route(userMessage);
+        RouteResult routed = router.route(userMessage);
+        RouteResult route = applyStickiness(conversationId, routed);
 
         // 没实现的意图**如实说**，不要让某个 agent 硬答。
         // 让编写 agent 去答审批问题，它会一本正经地编一套审批流程出来 —— 那比"还没做"糟得多
@@ -79,6 +101,7 @@ public class ChatService {
                 .computeIfAbsent(conversationId, id -> new ConcurrentHashMap<>())
                 .computeIfAbsent(route.intent(), this::createAgent);
         String agentName = agent.name();
+        activeAgent.put(conversationId, route.intent());
 
         Msg input = Msg.builder().role(MsgRole.USER).name("user")
                 .content(TextBlock.builder().text(userMessage).build()).build();
@@ -116,13 +139,69 @@ public class ChatService {
     /** 结束会话，释放 agent 实例（连同它的 memory） */
     public void close(String conversationId) {
         sessions.remove(conversationId);
+        activeAgent.remove(conversationId);
     }
+
+    /**
+     * ⭐ 会话粘性：默认继续交给上一轮那个 agent，除非有**明确**的切换信号。
+     *
+     * <h3>判据，以及为什么不照搬 gogo 的做法</h3>
+     *
+     * gogo 的 {@code isContinuation} 是关键词完全匹配 —— 消息等于「继续」「好的」
+     * 才算续接。那只能识别最明显的那一类，而**用户提修改意见时同样续不上**：
+     * 「第二步的定位器改成 data-testid」既不等于任何信号词，也不像「写案例」。
+     *
+     * <p>这里反过来：**默认粘住，需要证据才切换**。证据分两档：
+     *
+     * <ul>
+     *   <li>L1 命中另一个意图 —— 规则层只收「说了这个就不可能是别的意思」的表达，
+     *       所以它命中就是强信号，直接切</li>
+     *   <li>L2 命中另一个意图且相似度 ≥ {@value #SWITCH_THRESHOLD} ——
+     *       比路由自身的阈值（0.62）高一截。理由是「切换正在进行的任务」
+     *       比「首次分类」的代价大得多：分错了顶多答偏一句，切错了会丢掉整个上下文</li>
+     * </ul>
+     *
+     * <p>L3 判出的意图**不足以切换**：它是兜底层，本身就意味着「前两层都没把握」，
+     * 拿一个没把握的判断去打断正在进行的任务，方向反了。
+     */
+    private RouteResult applyStickiness(String conversationId, RouteResult routed) {
+        IntentCategory active = activeAgent.get(conversationId);
+        if (active == null || active == routed.intent()) {
+            return routed;
+        }
+
+        boolean strongSwitch = "L1".equals(routed.layer())
+                || ("L2".equals(routed.layer()) && routed.score() >= SWITCH_THRESHOLD);
+
+        if (strongSwitch) {
+            log.info("[ROUTE] 会话 {} 切换 {} → {}（{}{}）", conversationId, active, routed.intent(),
+                    routed.layer(), routed.score() < 0 ? "" : " %.3f".formatted(routed.score()));
+            return routed;
+        }
+
+        // 证据不足 —— 粘住上一轮那个 agent。
+        // ⚠️ layer 标成 STICKY 而不是伪装成正常路由：前端会把它显示出来，
+        //    用户看到「还在案例编写」才知道自己的修改意见被接住了
+        log.info("[ROUTE] 会话 {} 粘住 {}（路由建议 {} {}，证据不足）",
+                conversationId, active, routed.intent(), routed.layer());
+        return new RouteResult(active, "STICKY", -1,
+                "延续上一轮（路由建议 %s，证据不足以切换）".formatted(routed.intent()));
+    }
+
+    /**
+     * 切换正在进行的任务所需的 L2 相似度。
+     *
+     * <p>比路由自身的阈值（0.62）高一截 —— 打断一个进行中的任务，
+     * 代价比首次分类错误大得多。
+     */
+    private static final double SWITCH_THRESHOLD = 0.85;
 
     private AtpAgent createAgent(IntentCategory intent) {
         return switch (intent) {
             case CASE_AUTHORING -> ctx.getBean(CaseAuthoringAgent.class);
             case KNOWLEDGE_QA -> ctx.getBean(KnowledgeAgent.class);
             case EXECUTION -> ctx.getBean(ExecutionAgent.class);
+            case OTHER -> ctx.getBean(GeneralAgent.class);
             // implemented() 已经在上面挡掉了，走到这里说明枚举加了新值却忘了接 —— 直接崩，别静默
             default -> throw new IllegalStateException("没有 agent 处理意图：" + intent);
         };
