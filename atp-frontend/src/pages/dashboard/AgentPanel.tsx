@@ -11,7 +11,7 @@ import { uuidv4 } from '../../lib/uuid';
  * 智能 Agent 助手 —— 设计稿里那个「RAG 问答助手」。
  *
  * 它不只是问答：一屏里同时容纳流式对话、路由结论、思考过程。
- * 对标 gogo-agent 的 ChatWindow + ProcessingPanel。
+ * 对标参考实现的「对话窗 + 处理过程面板」。
  */
 
 interface Turn {

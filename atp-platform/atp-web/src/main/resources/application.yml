@@ -125,7 +125,7 @@ atp:
     # 相对路径的基准是模块目录 atp-web/，所以是 ../../seed。启动脚本会用绝对路径覆盖它
     dir: ${ATP_SEED_DIR:../../seed}
 
-# Sa-Token：与 gogo-agent 的取舍保持一致（token 放请求头、30 天、不共享 token、随机 128 位）
+# Sa-Token：与参考实现的取舍保持一致（token 放请求头、30 天、不共享 token、随机 128 位）
 sa-token:
   token-name: Authorization
   # ⭐ 机器主体走标准的 Authorization: Bearer <token>
