@@ -144,6 +144,22 @@ public class CaseQueryService {
      * 而 409 的文案说「内容被别人改过」—— 把人指向完全错误的方向，
      * 这类误导比直接报错更费时间。
      */
+    /**
+     * 按案例编号查详情。编号在 {@code uk_case_code} 上唯一，所以最多一条。
+     *
+     * <p>⚠️ 大小写不敏感：用户手敲的编号可能是小写，而 STD-007 规定的形状是全大写。
+     * 为这个让人重敲一遍没有道理。
+     */
+    public CaseDetailVO detailByCode(String caseCode) {
+        TcCase c = caseMapper.selectOne(new LambdaQueryWrapper<TcCase>()
+                .eq(TcCase::getCaseCode, caseCode == null ? null : caseCode.trim().toUpperCase())
+                .last("LIMIT 1"));
+        if (c == null) {
+            throw new CaseNotFoundException(caseCode);
+        }
+        return detail(c.getCaseId());
+    }
+
     private TcStep stepOf(String caseId) {
         return stepMapper.selectOne(new LambdaQueryWrapper<TcStep>().eq(TcStep::getCaseId, caseId));
     }

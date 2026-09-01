@@ -48,6 +48,11 @@ public class SaTokenConfigure implements WebMvcConfigurer {
             // 页面探查
             SaRouter.match("/api/inspect/**").check(() -> StpUtil.checkPermission(ApiScope.INSPECT.code()));
 
+            // ⭐ 对话是人的功能：会话按 userId 隔离，必须先知道是谁。
+            //    不要求某个具体 scope，只要求登录 —— 机器主体虽然也能登录，
+            //    但 ChatController 里会拒绝非 user: 前缀的主体
+            SaRouter.match("/api/chat/**").check(() -> StpUtil.checkLogin());
+
             // ⭐ 审批决策 —— 只有人拿得到这个 scope。
             //    agent 能写案例、能自验，但「这条变更该不该放行」是人的判断；
             //    发给机器等于让 agent 自己批准自己提交的东西

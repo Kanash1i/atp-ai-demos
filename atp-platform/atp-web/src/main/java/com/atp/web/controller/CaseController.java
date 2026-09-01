@@ -78,6 +78,27 @@ public class CaseController {
      *
      * <p>案例不存在时 404（{@code CaseNotFoundException}），CLI 映射为退出码 11。
      */
+    /**
+     * 按**案例编号**查案例。
+     *
+     * <h3>为什么需要它</h3>
+     *
+     * caseId 是 UUID 主键，**用户界面上根本看不到**——案例中心显示的是
+     * {@code ATP-CART-0014}。所有"人会直接敲"的入口（CLI 的 run/show/preview、
+     * agent 的工具）都只能拿到编号，需要一步解析。
+     *
+     * <p>做成通用查询而不是给某个命令加一个二选一的入参：
+     * 后者是只为一处打的补丁，而"按编号找案例"这件事不止一处要用。
+     *
+     * @return 404 表示编号不存在。⚠️ 与 caseId 查不到用同一个码——
+     *         对调用方来说「你给的标识找不到案例」是同一件事，
+     *         不该因为标识的种类不同而分成两个错误
+     */
+    @GetMapping("/cases/by-code/{caseCode}")
+    public CaseDetailVO byCode(@PathVariable String caseCode) {
+        return caseQueryService.detailByCode(caseCode);
+    }
+
     @GetMapping("/cases/{caseId}/draft")
     public CaseWriteService.DraftView draftOf(@PathVariable String caseId) {
         return caseWriteService.view(caseId);
