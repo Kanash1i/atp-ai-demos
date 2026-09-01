@@ -128,15 +128,25 @@ func TestInspect_UnreachablePlatformIsTwenty(t *testing.T) {
 	}
 }
 
-// ⭐ inspect 不碰数据库 —— 没有任何 DB 凭证也必须能跑。
-// 这是「agent 那一层不该看到 DB 密码」这个方向上第一个真正做到的命令。
-func TestInspect_NeedsNoDatabaseCredentials(t *testing.T) {
+// ⭐ 凭证边界：整个 CLI 都不碰数据库。
+//
+// 迁移之前这条只断言 inspect —— 那时它是唯一做到的命令，其余全走直连。
+// 现在没有任何命令读数据库凭证了，所以断言范围跟着扩大。
+//
+// 故意把 ATP_DB_* 设成【能连通的假值】而不是空串：空串证明不了什么，
+// CLI 可能只是拿它当"没配"然后走了别的路。设成看起来合法的值，
+// 如果哪天有人把直连加回来，它会真的去连、然后连不上那个地址而挂 ——
+// 也就是说这条测试挡的是"直连被加回来"，不是"配置为空能跑"。
+func TestCLI_NeverReadsDatabaseCredentials(t *testing.T) {
 	_, _ = stubPlatform(t, 200, okBody)
-	t.Setenv(config.EnvDBURL, "")
-	t.Setenv(config.EnvDBUser, "")
-	t.Setenv(config.EnvDBPassword, "")
+	t.Setenv("ATP_DB_URL", "postgres://nobody:nothing@127.0.0.1:1/atp")
+	t.Setenv("ATP_DB_USER", "nobody")
+	t.Setenv("ATP_DB_PASSWORD", "nothing")
 
 	if r := run("inspect", "--json", "/products/p001"); r.code != 0 {
-		t.Fatalf("没有 DB 凭证也该能探查，实际 %d: %s%s", r.code, r.out, r.err)
+		t.Fatalf("inspect 不该碰数据库，实际 %d: %s%s", r.code, r.out, r.err)
+	}
+	if r := run("schema"); r.code != 0 {
+		t.Fatalf("schema 不该碰数据库，实际 %d", r.code)
 	}
 }

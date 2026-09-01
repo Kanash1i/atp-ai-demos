@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
-	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/store"
 )
 
 // APIStore 走平台 HTTP 接口的 Backend 实现。
@@ -189,7 +188,7 @@ func (s *APIStore) Show(ctx context.Context, caseID string) model.Result {
 	return r
 }
 
-func (s *APIStore) ListModules(ctx context.Context) ([]store.ModuleEntry, error) {
+func (s *APIStore) ListModules(ctx context.Context) ([]model.ModuleEntry, error) {
 	status, raw, err := s.c.do(ctx, http.MethodGet, "/api/modules", nil)
 	if err != nil {
 		return nil, err
@@ -198,7 +197,7 @@ func (s *APIStore) ListModules(ctx context.Context) ([]store.ModuleEntry, error)
 		r := toResult(status, raw)
 		return nil, fmt.Errorf("%s", r.Message)
 	}
-	var out []store.ModuleEntry
+	var out []model.ModuleEntry
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return nil, fmt.Errorf("模块字典解析失败: %w", err)
 	}

@@ -140,14 +140,15 @@ func TestRun_HumanOutputWarnsAgainstBlindFixing(t *testing.T) {
 	}
 }
 
-// ⭐ run 和 inspect 一样不碰数据库
-func TestRun_NeedsNoDatabaseCredentials(t *testing.T) {
+// ⭐ run 不碰数据库。见 inspect_test.go 里那条同名断言的注释：
+// 假值设成"能看起来合法"而不是空串，挡的是"直连被加回来"。
+func TestRun_NeverReadsDatabaseCredentials(t *testing.T) {
 	stubRun(t, 200, runPassed)
-	t.Setenv(config.EnvDBURL, "")
-	t.Setenv(config.EnvDBUser, "")
-	t.Setenv(config.EnvDBPassword, "")
+	t.Setenv("ATP_DB_URL", "postgres://nobody:nothing@127.0.0.1:1/atp")
+	t.Setenv("ATP_DB_USER", "nobody")
+	t.Setenv("ATP_DB_PASSWORD", "nothing")
 
 	if r := run("run", "--json", "case-1"); r.code != 0 {
-		t.Fatalf("没有 DB 凭证也该能跑，实际 %d: %s%s", r.code, r.out, r.err)
+		t.Fatalf("run 不该碰数据库，实际 %d: %s%s", r.code, r.out, r.err)
 	}
 }
