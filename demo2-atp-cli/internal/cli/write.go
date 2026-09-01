@@ -57,7 +57,9 @@ func (a *app) showCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.withBackend(func(ctx context.Context, be Backend) int {
-				return a.w().Emit(be.Show(ctx, args[0]))
+				return a.resolved(be, ctx, args[0], func(id string) int {
+					return a.w().Emit(be.Show(ctx, id))
+				})
 			})
 		},
 	}
@@ -108,7 +110,9 @@ func (a *app) updateCmd() *cobra.Command {
 				}
 			}
 			return a.withBackend(func(ctx context.Context, be Backend) int {
-				return a.w().Emit(be.Update(ctx, args[0], version, string(raw)))
+				return a.resolved(be, ctx, args[0], func(id string) int {
+					return a.w().Emit(be.Update(ctx, id, version, string(raw)))
+				})
 			})
 		},
 	}
@@ -132,22 +136,40 @@ func (a *app) previewCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.withBackend(func(ctx context.Context, be Backend) int {
-				r := be.Show(ctx, args[0])
-				// --json 时只出信封，人类模式才渲染下面这块（两个通道不要混着打）
-				if !r.Succeeded() || a.jsonOut {
-					return a.w().Emit(r)
-				}
-				a.renderPreview(r.Row)
-				return int(model.OK)
+				return a.resolved(be, ctx, args[0], func(id string) int {
+					r := be.Show(ctx, id)
+					// --json 时只出信封，人类模式才渲染下面这块（两个通道不要混着打）
+					if !r.Succeeded() || a.jsonOut {
+						return a.w().Emit(r)
+					}
+					a.renderPreview(r.Row)
+					return int(model.OK)
+				})
 			})
 		},
 	}
 }
 
 func (a *app) renderPreview(row *model.CaseRow) {
+	// ⚠️ 已提交的案例：step_json 已规整成纯步骤数组、表头投影进了 tc_case，
+	//    再按"编辑期草稿"去解析必然失败 —— 而失败信息是一整坨 Go 类型名，
+	//    对着它没人知道发生了什么。这里直说，并且【不打 commit 提示】：
+	//    已经提交过的案例没有可提交的东西，给个提示只会让人去敲一条必然报错的命令。
+	if row.Status != model.StatusAIDraft {
+		fmt.Fprintln(a.stdout, "──────── 这条案例已经提交过了 ────────")
+		fmt.Fprintf(a.stdout, "平台    : %s   状态: %s\n", row.CaseType, row.Status)
+		fmt.Fprintln(a.stdout, "步骤    :")
+		fmt.Fprintln(a.stdout, prettySteps(row.DraftJSON))
+		fmt.Fprintln(a.stdout, "────────────────────────────────────")
+		fmt.Fprintln(a.stdout, "它已落地为普通案例，在 ATP 界面上按编号就能找到；"+
+			"要跑一次用 atp run <案例编号>。")
+		return
+	}
+
 	h, err := rule.ParseHeader(row.DraftJSON)
 	fmt.Fprintln(a.stdout, "──────── 待确认的案例（来自数据库，不是本地文件）────────")
-	fmt.Fprintf(a.stdout, "caseId  : %s\n", row.CaseID)
+	// ⚠️ 这里【不打 caseId】—— 它是数据库主键，不该出现在人读的文本里。
+	// 下面表头里的「编号」就是用户在 ATP 界面上看得到的那个。
 	fmt.Fprintf(a.stdout, "平台    : %s   状态: %s\n", row.CaseType, row.Status)
 	if err != nil {
 		fmt.Fprintf(a.stdout, "⚠️ 草稿解析失败: %v\n", err)
@@ -163,7 +185,7 @@ func (a *app) renderPreview(row *model.CaseRow) {
 	fmt.Fprintln(a.stdout, "步骤    :")
 	fmt.Fprintln(a.stdout, prettySteps(row.DraftJSON))
 	fmt.Fprintln(a.stdout, "────────────────────────────────────────────────")
-	fmt.Fprintf(a.stdout, "确认无误后执行：atp commit %s --version %d\n", row.CaseID, row.Version)
+	fmt.Fprintf(a.stdout, "确认无误后执行：atp commit %s --version %d\n", row.DisplayRef(), row.Version)
 }
 
 // commitCmd 提交：AI_DRAFT → DRAFT。
@@ -181,7 +203,9 @@ func (a *app) commitCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return a.withBackend(func(ctx context.Context, be Backend) int {
-				return a.w().Emit(be.Commit(ctx, args[0], version))
+				return a.resolved(be, ctx, args[0], func(id string) int {
+					return a.w().Emit(be.Commit(ctx, id, version))
+				})
 			})
 		},
 	}
@@ -217,7 +241,11 @@ func prettySteps(draftJSON string) string {
 		} `json:"steps"`
 	}
 	if err := json.Unmarshal([]byte(draftJSON), &doc); err != nil {
-		return "  (步骤解析失败: " + err.Error() + ")"
+		// 已提交的案例 step_json 是纯数组（表头投影走了），按对象解会失败 ——
+		// 再按数组解一次。原始的 json 类型错误对人毫无用处，别往外贴。
+		if err2 := json.Unmarshal([]byte(draftJSON), &doc.Steps); err2 != nil {
+			return "  (步骤读不出来)"
+		}
 	}
 	if len(doc.Steps) == 0 {
 		return "  (还没写入步骤，先跑 atp update)"

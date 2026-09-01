@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/caseref"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/httpx"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
 )
@@ -20,6 +21,11 @@ type APIStore struct{ c *httpx.Client }
 func New(base, id, secret string) *APIStore { return &APIStore{c: httpx.New(base, id, secret)} }
 
 func (s *APIStore) Close(context.Context) {}
+
+// Resolve 把案例编号解析成 caseId；已经是 caseId 就原样返回。
+func (s *APIStore) Resolve(ctx context.Context, ref string) (string, error) {
+	return caseref.Resolve(ctx, s.c, ref)
+}
 
 // draftView 是平台三个写接口共同的响应体。
 type draftView struct {

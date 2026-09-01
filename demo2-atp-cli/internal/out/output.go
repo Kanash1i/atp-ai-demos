@@ -67,7 +67,7 @@ func (w *Writer) Ok(row *model.CaseRow, replayed bool, note string, violations [
 			Data: data, Violations: violations, Questions: []string{}}, model.OK)
 	}
 	if row != nil {
-		fmt.Fprintf(w.Out, "%s  status=%s  version=%d\n", row.CaseID, row.Status, row.Version)
+		fmt.Fprintf(w.Out, "%s  status=%s  version=%d\n", row.DisplayRef(), row.Status, row.Version)
 	}
 	switch {
 	case replayed:

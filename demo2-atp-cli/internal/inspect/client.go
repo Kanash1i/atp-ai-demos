@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/caseref"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/httpx"
 	"time"
 )
@@ -64,6 +65,11 @@ func New(base, clientID, clientSecret string) *Client {
 
 // Base 平台地址，报错信息里要带上。
 func (c *Client) Base() string { return c.c.Base }
+
+// Resolve 把案例编号解析成 caseId；已经是 caseId 就原样返回。
+func (c *Client) Resolve(ctx context.Context, ref string) (string, error) {
+	return caseref.Resolve(ctx, c.c, ref)
+}
 
 // Inspect 把路径【原样透传】给平台。
 //
