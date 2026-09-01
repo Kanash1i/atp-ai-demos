@@ -83,10 +83,12 @@ services:
   mock-shop:
     image: atp-mock-shop:latest
     restart: unless-stopped
-    # 端口只在 compose 网络内可见，不映射到宿主：
-    # 除了执行节点，没有别人该访问被测系统
-    expose:
-      - "8088"
+    # ⚠️ 按生产拓扑，被测系统只该对执行机可见（00-SHARED-CONTEXT §2.0），
+    #    这里映射到宿主是**开发便利**，不是生产形态 —— demo 里需要能打开看一眼
+    #    「被测系统长什么样」，面试时也可能被要求当场展示。
+    #    端口按仓库约定选在 254xx 段，避开台式机上那批随时可能被拉起的容器。
+    ports:
+      - "${MOCK_SHOP_PORT:-25488}:8088"
 
 networks:
   # PG 与 Redis 归 infra/compose.yaml 管（project `atp-infra`），这里只是接进去
