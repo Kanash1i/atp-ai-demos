@@ -101,7 +101,13 @@ func nextCaseCode() string {
 	return fmt.Sprintf("ATP-CLIT-%04d", 1000+(codeBase+int64(caseSeq.Add(1)))%9000)
 }
 
-func draftFile(t *testing.T, title string) string {
+// mustDraftFile 只要文件路径时用。
+func mustDraftFile(t *testing.T, title string) string {
+	p, _ := draftFile(t, title)
+	return p
+}
+
+func draftFile(t *testing.T, title string) (path, caseCode string) {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "draft.json")
 	// ⚠️ case_code 上有唯一约束，每个用例必须用不同的编号 ——
@@ -112,6 +118,7 @@ func draftFile(t *testing.T, title string) string {
 	//    因为 CLI 的直连路径根本不跑 STD 校验（规则引擎在 CLI 侧从未实现）。
 	//    「规则是硬的，agent 绕不过去」这句话是迁移之后才为真的。
 	//    STD-008：整条案例至少一个 ASSERT_*。
+	code := nextCaseCode()
 	body := fmt.Sprintf(`{"case_code":%q,"title":%q,"module_id":"M003",
 	 "priority":"P1","author":"qa.kanashi",
 	 "steps":[{"seq":1,"action":"OPEN_URL","input_data":"http://x/cart",
@@ -119,11 +126,11 @@ func draftFile(t *testing.T, title string) string {
 	          {"seq":2,"action":"ASSERT_VISIBLE","locator_type":"CSS",
 	           "locator_value":"[data-testid=\"cart\"]",
 	           "wait_strategy":"VISIBLE","wait_timeout_sec":10,"on_failure":"ABORT"}]}`,
-		nextCaseCode(), title)
+		code, title)
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return p
+	return p, code
 }
 
 // 完整七步：draft → show → validate → update → preview → commit → 重放
@@ -145,7 +152,7 @@ func TestFullFlow(t *testing.T) {
 		t.Fatalf("show 应成功，实际 %d", r.code)
 	}
 
-	f := draftFile(t, "购物车结算")
+	f, code := draftFile(t, "购物车结算")
 	if r := run("validate", "--json", "-f", f); r.code != 0 {
 		t.Fatalf("validate 应通过，实际 %d: %s%s", r.code, r.out, r.err)
 	}
@@ -159,9 +166,15 @@ func TestFullFlow(t *testing.T) {
 	if p.code != 0 {
 		t.Fatalf("preview 应成功，实际 %d", p.code)
 	}
-	want := fmt.Sprintf("atp commit %s --version 1", id)
+	// ⭐ preview 是给【人】看的 —— 提示里用案例编号，不是 caseId。
+	// caseId 是数据库主键，用户在 ATP 界面上根本看不到它，
+	// 让他复制一串 UUID 去敲命令是把内部标识泄漏到了用户语言里。
+	want := fmt.Sprintf("atp commit %s --version 1", code)
 	if !strings.Contains(p.out, want) {
-		t.Fatalf("preview 必须打出要带回 commit 的 version，期望含 %q\n实际:\n%s", want, p.out)
+		t.Fatalf("preview 必须打出要带回 commit 的编号与 version，期望含 %q\n实际:\n%s", want, p.out)
+	}
+	if strings.Contains(p.out, id) {
+		t.Fatalf("给人看的输出里不该出现 caseId(%s)\n实际:\n%s", id, p.out)
 	}
 
 	c := run("commit", "--json", id, "--version", "1")
@@ -189,9 +202,9 @@ func TestFullFlow(t *testing.T) {
 func TestStaleVersionExitsTen(t *testing.T) {
 	id := uuid.NewString()
 	run("draft", "--json", "--id", id, "-p", "PC_WEB", "-t", "登录成功")
-	run("update", "--json", id, "--version", "0", "-f", draftFile(t, "登录成功"))
+	run("update", "--json", id, "--version", "0", "-f", mustDraftFile(t, "登录成功"))
 	// 用户 preview 拿到 version=1；确认之前 agent 又改了一版
-	run("update", "--json", id, "--version", "1", "-f", draftFile(t, "登录成功（被改过）"))
+	run("update", "--json", id, "--version", "1", "-f", mustDraftFile(t, "登录成功（被改过）"))
 
 	if r := run("commit", "--json", id, "--version", "1"); r.code != 10 {
 		t.Fatalf("拿过期 version 提交应返回 10，实际 %d: %s%s", r.code, r.out, r.err)
@@ -214,7 +227,7 @@ func TestMissingVsInvalidAreDifferentExitCodes(t *testing.T) {
 	}
 
 	invalid := filepath.Join(dir, "invalid.json")
-	body, _ := os.ReadFile(draftFile(t, "标题"))
+	body, _ := os.ReadFile(mustDraftFile(t, "标题"))
 	os.WriteFile(invalid, []byte(strings.Replace(string(body), `"P1"`, `"P9"`, 1)), 0o600)
 	r2 := run("validate", "--json", "-f", invalid)
 	if r2.code != 12 {
@@ -299,7 +312,7 @@ func TestContract_ParamErrorStaysPlainWithoutJSONFlag(t *testing.T) {
 func TestContract_DraftTypeChangesAfterCommit(t *testing.T) {
 	id := uuid.NewString()
 	run("draft", "--json", "--id", id, "-p", "PC_WEB", "-t", "类型契约")
-	f := draftFile(t, "类型契约")
+	f, _ := draftFile(t, "类型契约")
 	run("update", "--json", id, "--version", "0", "-f", f)
 
 	if _, ok := run("show", "--json", id).data(t, "draft").(map[string]any); !ok {

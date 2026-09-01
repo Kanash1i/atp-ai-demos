@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/caseref"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/config"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/inspect"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
@@ -39,7 +41,23 @@ func (a *app) runCmd() *cobra.Command {
 				a.code = a.w().Fail(model.InfraError, err.Error(), nil)
 				return nil
 			}
-			res, err := inspect.New(base, cfg.Optional(config.EnvClientID), cfg.Optional(config.EnvClientSecret)).Run(context.Background(), args[0], timeoutSec)
+			ctx := context.Background()
+			c := inspect.New(base, cfg.Optional(config.EnvClientID), cfg.Optional(config.EnvClientSecret))
+
+			// ⭐ 收案例编号（ATP-CART-0014）或 caseId，靠形状区分。
+			// 测试人员在界面上只看得到编号，UUID 他们没渠道拿。
+			id, err := c.Resolve(ctx, args[0])
+			if err != nil {
+				var nf *caseref.NotFoundError
+				if errors.As(err, &nf) {
+					a.code = a.w().Fail(model.NotFound, err.Error(), nil)
+					return nil
+				}
+				a.code = a.w().Fail(model.InfraError, err.Error(), nil)
+				return nil
+			}
+
+			res, err := c.Run(ctx, id, timeoutSec)
 			if err != nil {
 				a.code = a.w().Fail(model.InfraError, err.Error(), nil)
 				return nil

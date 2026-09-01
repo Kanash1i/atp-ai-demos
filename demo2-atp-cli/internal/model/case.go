@@ -1,5 +1,38 @@
 package model
 
+import "encoding/json"
+
+// DisplayRef 给【人】看的案例标识。
+//
+// ⭐ 优先案例编号 —— 那是测试人员在 ATP 界面上看得到的东西。
+// caseId 是数据库主键，不该出现在人读的文本里；--json 里保留它没问题，
+// 那是给程序看的。
+//
+// ⚠️ 编辑期 case_code 在 step_json 的表头里；提交之后表头被投影进 tc_case、
+// step_json 只剩纯步骤数组，这时就取不到了 —— 退回 caseId，
+// 有个标识总比没有强。平台的 DraftView 补上 caseCode 之后这条退路可以去掉。
+func (r *CaseRow) DisplayRef() string {
+	if code := headerString(r.DraftJSON, "case_code"); code != "" {
+		return code
+	}
+	return r.CaseID
+}
+
+func headerString(draftJSON, key string) string {
+	if draftJSON == "" {
+		return ""
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal([]byte(draftJSON), &m) != nil {
+		return "" // 已提交（是数组）或坏 JSON，都取不到表头
+	}
+	var s string
+	if json.Unmarshal(m[key], &s) != nil {
+		return ""
+	}
+	return s
+}
+
 // CaseRow 一份案例的当前样子 —— 由 tc_case 与 tc_step 各取所需拼成。
 //
 // ⭐ 两张表各有自己的 version，管的是两个不同的生命周期：

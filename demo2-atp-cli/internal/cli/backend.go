@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"errors"
 
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/apistore"
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/caseref"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/config"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
 )
@@ -27,6 +29,11 @@ type Backend interface {
 	Show(ctx context.Context, caseID string) model.Result
 	// ListModules 模块字典 —— module_id 的合法取值范围。
 	ListModules(ctx context.Context) ([]model.ModuleEntry, error)
+	// Resolve 把案例编号（ATP-CART-0014）解析成 caseId；已经是 caseId 就原样返回。
+	//
+	// ⭐ 人在 ATP 界面上只看得到编号，caseId 那个 UUID 他们没渠道拿。
+	// 工具的参数应该是用户语言里存在的东西，不是数据库主键。
+	Resolve(ctx context.Context, ref string) (string, error)
 	// Close 释放底层资源。HTTP 实现是空操作。
 	Close(ctx context.Context)
 }
@@ -40,6 +47,23 @@ type Backend interface {
 //
 // CLI 现在只持 ATP_CLIENT_ID / ATP_CLIENT_SECRET，
 // 数据库账号密码只存在于平台那一侧 —— 不是靠约束 agent 别碰库，是它拿不到。
+// resolved 解析案例标识后再跑 fn —— show / preview / commit / update 共用。
+//
+// 编号查不到映射成 11，与 caseId 查不到同一个码：对调用方来说
+// 「你给的标识找不到案例」是同一件事，不该因为标识的种类不同而分成两个码。
+func (a *app) resolved(be Backend, ctx context.Context, ref string,
+	fn func(caseID string) int) int {
+	id, err := be.Resolve(ctx, ref)
+	if err != nil {
+		var nf *caseref.NotFoundError
+		if errors.As(err, &nf) {
+			return a.w().Fail(model.NotFound, err.Error(), nil)
+		}
+		return a.w().Fail(model.InfraError, err.Error(), nil)
+	}
+	return fn(id)
+}
+
 func (a *app) withBackend(fn func(ctx context.Context, be Backend) int) error {
 	ctx := context.Background()
 
