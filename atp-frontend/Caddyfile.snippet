@@ -1,0 +1,55 @@
+# ============================================================
+# atp-frontend 的路由片段 —— 供 infra/ 的 Caddyfile 引用
+#
+# ⭐ 关键前提：前端与 /api **必须同源**。
+#
+# 浏览器对非 GET/HEAD 的请求即使同源也会带 Origin（Fetch 规范）。
+# 同源时 Origin 与 Host 一致，Spring 判定为同源请求，根本不进 CORS 分支。
+# 一旦分域，后端就必须配 CORS 白名单并允许 Authorization 头 ——
+# 而前端**没有办法**在生产环境摘掉浏览器自己加的 Origin
+# （dev 下那招是 vite 代理干的，生产没有那一层）。
+# ============================================================
+
+# 用法：在 infra/Caddyfile 里
+#
+#   demo.example.com {
+#       import atp-frontend
+#   }
+#
+# 或者直接把 handle 块抄过去。
+
+(atp-frontend) {
+	# --- API 反代 ---
+	# 用 handle 而不是 handle_path：/api 前缀要保留，后端的路由带着它。
+	handle /api/* {
+		reverse_proxy {$ATP_PLATFORM_UPSTREAM:platform:8080} {
+			# ⚠️ 不要覆盖 Host。Caddy 默认透传原始 Host，正是我们要的 ——
+			# 后端看到 Host 与 Origin 一致才判定同源。
+			# （nginx 的 proxy_pass 默认把 Host 改成上游地址，会直接触发 403，
+			#   要显式写 proxy_set_header Host $host; 才行。这是选 Caddy 的理由之一。）
+
+			# SSE：agent 对话一轮 1~3 分钟，后端 SseEmitter 超时 300 秒。
+			# Caddy 对 text/event-stream 会自动关闭缓冲、立即 flush，
+			# 且 reverse_proxy 默认没有读超时，所以这里不需要额外配置。
+			# 若将来换成别的反代，务必检查：缓冲要关、读超时要 >= 300s。
+
+			# 录像是 webm，前端 <video> 会发 Range 请求，Caddy 透传即可。
+		}
+	}
+
+	# --- 静态站点 ---
+	handle {
+		root * /srv
+		encode zstd gzip
+
+		# SPA history fallback：/dashboard/cases、/login 这些路径
+		# 在服务器上没有对应文件，要交给 index.html 由前端路由接管。
+		try_files {path} /index.html
+		file_server
+	}
+
+	# 带哈希的产物可以长缓存；index.html 绝不能，否则发版后拿到旧壳子。
+	@hashed path_regexp ^/assets/.+\.[0-9a-zA-Z_-]{8,}\.(js|css|woff2?|webp|png|svg)$
+	header @hashed Cache-Control "public, max-age=31536000, immutable"
+	header /index.html Cache-Control "no-cache"
+}

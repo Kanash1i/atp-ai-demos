@@ -20,6 +20,7 @@ curl -s localhost:8080/api/health
 而不是白屏或者假装有数据。
 
 > 未做的事、推迟的理由、以及**部署前必须处理的四件事**，见 [`BACKLOG.md`](./BACKLOG.md)。
+> 部署交接（构建参数、产物怎么交付、Caddy 要做什么）见 [`DEPLOY.md`](./DEPLOY.md)。
 
 ## 路由
 
