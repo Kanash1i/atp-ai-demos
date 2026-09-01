@@ -47,6 +47,12 @@ public class SaTokenConfigure implements WebMvcConfigurer {
 
             // 页面探查
             SaRouter.match("/api/inspect/**").check(() -> StpUtil.checkPermission(ApiScope.INSPECT.code()));
+
+            // ⭐ 审批决策 —— 只有人拿得到这个 scope。
+            //    agent 能写案例、能自验，但「这条变更该不该放行」是人的判断；
+            //    发给机器等于让 agent 自己批准自己提交的东西
+            SaRouter.match("/api/approvals/*/decision")
+                    .check(() -> StpUtil.checkPermission(ApiScope.APPROVAL_DECIDE.code()));
         })).addPathPatterns("/**");
     }
 }

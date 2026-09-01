@@ -170,6 +170,18 @@ public class ApiExceptionHandler {
                 "当前 token 没有 " + e.getPermission() + " 权限");
     }
 
+    /**
+     * 路径不存在 → 404。
+     *
+     * <p>⚠️ 不拦的话会被 {@code Exception.class} 兜底成 **500** ——
+     * 调用方看到 500 会以为「后端崩了」，实际只是路径写错或接口还没做。
+     * 前端探测一个尚未实现的接口时正是这个症状。
+     */
+    @ExceptionHandler(org.springframework.web.servlet.resource.NoResourceFoundException.class)
+    public ProblemDetail noResource(org.springframework.web.servlet.resource.NoResourceFoundException e) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, "接口不存在：" + e.getResourcePath());
+    }
+
     @ExceptionHandler(Exception.class)
     public ProblemDetail unexpected(Exception e) {
         log.error("未处理的异常", e);

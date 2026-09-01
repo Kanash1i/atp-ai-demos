@@ -28,7 +28,16 @@ public enum ApiScope {
     EXEC_DISPATCH("exec:dispatch"),
 
     /** 页面探查 */
-    INSPECT("inspect");
+    INSPECT("inspect"),
+
+    /**
+     * 审批决策（批准 / 退回 / 挂起）。
+     *
+     * <p>⚠️ **只发给人，不发给机器**。agent 可以写案例、可以自验，
+     * 但「这条变更该不该放行」是人的判断 —— 把它发给机器，
+     * 等于让 agent 自己批准自己提交的东西。
+     */
+    APPROVAL_DECIDE("approval:decide");
 
     private final String code;
 
