@@ -121,10 +121,18 @@ export const IconVideo = (p: P) => (
   </Svg>
 );
 
-export const IconGear = (p: P) => (
+/**
+ * 退出登录 —— 门框 + 向外的箭头。
+ *
+ * 这里原本用的是设计稿上那个圆心加八条放射线的图标，名字叫 IconGear
+ * 但画的其实是太阳：稿子里那个位置本来是深色模式开关。本项目不做深色模式，
+ * 这个位置的行为是退出/换身份，图标要跟着改，不然点之前完全猜不到会发生什么。
+ */
+export const IconLogout = (p: P) => (
   <Svg {...p} strokeWidth={1.7}>
-    <circle cx="12" cy="12" r="3" />
-    <path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6L17 7M7 17l-1.4 1.4" />
+    <path d="M15 4h4v16h-4" />
+    <path d="M14 12H3" />
+    <path d="M7 8l-4 4 4 4" />
   </Svg>
 );
 
