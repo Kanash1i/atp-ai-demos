@@ -9,8 +9,6 @@ import (
 
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/model"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/rule"
-	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/store"
-	"github.com/jackc/pgx/v5"
 	"github.com/spf13/cobra"
 )
 
@@ -39,8 +37,8 @@ func (a *app) modulesCmd() *cobra.Command {
 		Use:   "modules",
 		Short: "列出项目与模块字典（module_id 的合法取值范围）",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return a.withDB(func(ctx context.Context, conn *pgx.Conn) int {
-				all, err := store.NewDictStore(conn).ListModules(ctx)
+			return a.withBackend(func(ctx context.Context, be Backend) int {
+				all, err := be.ListModules(ctx)
 				if err != nil {
 					return a.w().Fail(model.InfraError, err.Error(), nil)
 				}

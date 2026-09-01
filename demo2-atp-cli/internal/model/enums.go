@@ -55,6 +55,24 @@ func (t CaseType) String() string {
 	}
 }
 
+// ParseCaseStatus 名字转码值。
+//
+// ⚠️ 平台在 HTTP 上传的是【名字】不是码值 —— 码值出了那个进程就没人认得。
+// 这里不接受数字：收到 "4" 说明对面把内部表示漏出来了，该报错而不是猜。
+func ParseCaseStatus(s string) (CaseStatus, error) {
+	switch s {
+	case "DRAFT":
+		return StatusDraft, nil
+	case "ACTIVE":
+		return StatusActive, nil
+	case "DEPRECATED":
+		return StatusDeprecated, nil
+	case "AI_DRAFT":
+		return StatusAIDraft, nil
+	}
+	return 0, fmt.Errorf("未知的案例状态 %q（应为 DRAFT / ACTIVE / DEPRECATED / AI_DRAFT）", s)
+}
+
 func ParseCaseType(s string) (CaseType, error) {
 	switch s {
 	case "IOS":

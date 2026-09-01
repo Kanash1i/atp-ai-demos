@@ -32,12 +32,20 @@ type Writer struct {
 // Emit 把 store 层的结果落成输出与退出码。
 func (w *Writer) Emit(r model.Result) int {
 	if r.Succeeded() {
-		return w.Ok(r.Row, r.Replayed, r.Message)
+		return w.Ok(r.Row, r.Replayed, r.Message, r.Violations)
 	}
-	return w.Fail(r.Code, r.Message, nil)
+	return w.Fail(r.Code, r.Message, r.Violations)
 }
 
-func (w *Writer) Ok(row *model.CaseRow, replayed bool, note string) int {
+// Ok 成功输出。
+//
+// ⚠️ violations 在成功时【也可能非空】—— 规范校验的 WARN 不拦操作，
+// 但 agent 看不到就不会去改。ok:true 且 violations 非空是正常状态，
+// 它说的是"过了，但这几处该修"。
+func (w *Writer) Ok(row *model.CaseRow, replayed bool, note string, violations []string) int {
+	if violations == nil {
+		violations = []string{}
+	}
 	var data json.RawMessage
 	if row != nil {
 		d := map[string]any{
@@ -56,7 +64,7 @@ func (w *Writer) Ok(row *model.CaseRow, replayed bool, note string) int {
 	}
 	if w.JSON {
 		return w.print(Envelope{OK: true, Code: model.OK.String(), Replayed: replayed,
-			Data: data, Violations: []string{}, Questions: []string{}}, model.OK)
+			Data: data, Violations: violations, Questions: []string{}}, model.OK)
 	}
 	if row != nil {
 		fmt.Fprintf(w.Out, "%s  status=%s  version=%d\n", row.CaseID, row.Status, row.Version)
@@ -66,6 +74,9 @@ func (w *Writer) Ok(row *model.CaseRow, replayed bool, note string) int {
 		fmt.Fprintln(w.Out, "  (幂等重放：该操作此前已成功，未产生新的变更)")
 	case note != "":
 		fmt.Fprintln(w.Out, "  "+note)
+	}
+	for _, v := range violations {
+		fmt.Fprintln(w.Out, "  ⚠ "+v)
 	}
 	return int(model.OK)
 }

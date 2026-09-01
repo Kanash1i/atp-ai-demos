@@ -18,6 +18,11 @@ const (
 	// 它是 CLI 第一个不碰数据库的命令，也是「CLI 改调平台 API」那步的试水。
 	EnvAPIURL = "ATP_API_URL"
 
+	// 换 token 用的凭证。⭐ 迁移之后 CLI 只持这一对 ——
+	// 数据库账号密码留在平台那一侧，agent 那一层拿不到。
+	EnvClientID     = "ATP_CLIENT_ID"
+	EnvClientSecret = "ATP_CLIENT_SECRET"
+
 	EnvDBURL      = "ATP_DB_URL"
 	EnvDBUser     = "ATP_DB_USER"
 	EnvDBPassword = "ATP_DB_PASSWORD"

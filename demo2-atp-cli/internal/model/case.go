@@ -46,6 +46,14 @@ type Result struct {
 	Replayed bool
 	Row      *CaseRow
 	Message  string
+
+	// Violations 违反明细。只给一句"校验失败"的话 agent 只能瞎改 ——
+	// 它需要知道违反了哪几条才能自我修正。
+	//
+	// ⚠️ 迁移前这条通路是断的：Emit 硬传 nil，只有本地 validate 命令
+	// 直接调 Writer.Fail 才带得上。HTTP 实现要把平台 422 的 findings
+	// 透出来，所以在这里补齐 —— pgx 实现走的 CHECK 约束报错同样受益。
+	Violations []string
 }
 
 func (r Result) Succeeded() bool { return r.Code == OK }
@@ -55,3 +63,8 @@ func Replayed(row *CaseRow) Result {
 	return Result{Code: OK, Replayed: true, Row: row, Message: "幂等重放：该操作此前已成功"}
 }
 func Fail(code ExitCode, msg string) Result { return Result{Code: code, Message: msg} }
+
+// Invalid 带违反明细的失败。
+func Invalid(code ExitCode, msg string, violations []string) Result {
+	return Result{Code: code, Message: msg, Violations: violations}
+}
