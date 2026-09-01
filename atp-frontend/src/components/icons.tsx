@@ -165,3 +165,16 @@ export const IconSplit = (p: P) => (
     <path d="M9 14h6" />
   </Svg>
 );
+
+export const IconMail = (p: P) => (
+  <Svg {...p} strokeWidth={1.7}>
+    <rect x="3" y="5" width="18" height="14" />
+    <path d="M3 7l9 6 9-6" />
+  </Svg>
+);
+
+export const IconPhone = (p: P) => (
+  <Svg {...p} strokeWidth={1.7}>
+    <path d="M7 3h4l1.5 5-2.5 1.5a12 12 0 004.5 4.5L16 11.5 21 13v4a2 2 0 01-2.2 2A17 17 0 015 5.2 2 2 0 017 3z" />
+  </Svg>
+);

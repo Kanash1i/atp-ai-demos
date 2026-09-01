@@ -1,5 +1,6 @@
 import type {
-  Approval, ApprovalStats, AuthUser, CaseDetail, ChatEvent, CreateDraftRequest, Decision,
+  Approval, ApprovalStats, AuthUser, CaseDetail, ChatConversation, ChatEvent, ChatMessage,
+  CreateDraftRequest, Decision,
   DispatchRequest, DispatchResponse, DraftView, ExecNode, ExecStats, LoginResponse,
   ModuleDictEntry, ProblemDetail, Project, RecentRun, RunningBatch, TaskDetail, TreeModule,
   ValidationFinding, ValidationResult,
@@ -350,8 +351,26 @@ export async function streamChat(
   }
 }
 
-/** 关闭会话，释放该会话的 agent 实例与上下文。用户关掉对话面板时调一次 */
-export async function closeChat(conversationId: string): Promise<void> {
+/**
+ * 我的会话列表。按 token 里的 userId 隔离 —— 不接受前端传 userId，
+ * 会话 id 是前端生成的 UUID，靠「猜不到」保护别人的对话不成立。
+ *
+ * ⚠️ 实际返回的是 conversationId / title / createdAt / updatedAt，
+ * **没有** messageCount，时间字段叫 updatedAt 不叫 lastMessageAt。
+ */
+export const listConversations = () => get<ChatConversation[]>('/api/chat/conversations');
+
+/** 某个会话的历史消息 */
+export const conversationMessages = (conversationId: string) =>
+  get<ChatMessage[]>(`/api/chat/${conversationId}/messages`);
+
+/**
+ * 软删除一个会话，同时释放该会话的 agent 实例与上下文。
+ *
+ * ⚠️ 这是**删除**，不是「关闭面板」—— 早先它被当成 onUnmount 的清理调用，
+ * 于是切一下面板旧会话就没了。现在只在用户明确点删除时调。
+ */
+export async function deleteConversation(conversationId: string): Promise<void> {
   await request(`/api/chat/${conversationId}`, { method: 'DELETE' });
 }
 
