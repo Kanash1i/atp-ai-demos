@@ -82,6 +82,30 @@ volumes:
 不想用这个镜像也行 —— `npm ci && npm run build`，把 `dist/` 里的东西丢到
 Caddy 的 `root` 下即可，没有任何后处理步骤。
 
+### ⚠️ 构建前先看一眼 `docker context`
+
+这台笔记本配了 `docker context remote`（指向台式机），而且**它可能是当前 context**。
+在那个 context 下 `docker build` 是在台式机上跑的，本机的路径挂不进去。
+
+**不确认的话会看到这些**（都不指向根因）：
+
+- `COPY` / `-v` 挂载出来的目录**是空的**，或者构建到一半说某个文件不存在 ——
+  而那个文件在本机明明就在
+- Go/Node 那边报 `go.mod file not found` / `package.json not found` 之类，
+  措辞全都是「文件不存在」，没有一个字提到"你在另一台机器上"
+- 构建"成功"但产物是旧的 —— 因为它用的是台式机上某次遗留的缓存
+
+`docker context ls` 看一眼当前是哪个，或者直接钉死：
+
+```bash
+DOCKER_CONTEXT=default docker build …          # 在本机构建
+docker --context default build …               # 同上
+```
+
+> 本项目已经踩过：`deploy/build.sh` 没锁 context，报出来的是
+> `go: go.mod file not found in current directory or any parent directory` ——
+> 文件就在仓库里，错误信息却完全指不到根因。
+
 ---
 
 ## 四、Caddy 那边要做的三件事
@@ -115,4 +139,5 @@ Caddy 的 `root` 下即可，没有任何后处理步骤。
 | agent 对话**跑到 60 秒断掉** | 反代读超时太短 |
 | agent 的 thinking **不实时、一次性刷出来** | 反代开了响应缓冲 |
 | 刷新 `/dashboard/cases` **404** | 少了 SPA history fallback |
-| 发版后仍是旧页面 | `index.html` 被缓存了 |
+| 发版后仍是旧页面 | `index.html` 被缓存了，或者构建跑在了别的 `docker context` 上 |
+| **AI 助手的会话列表 404** | 只重发了前端，平台镜像还是旧的（那几个接口是后加的） |
