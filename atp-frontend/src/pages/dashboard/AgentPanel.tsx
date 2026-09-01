@@ -5,6 +5,7 @@ import { ColLabel, LiveDot, SectionTitle, Tag } from '../../components/ui';
 import { IconAgent, IconArrowRight } from '../../components/icons';
 import { closeChat, streamChat } from '../../lib/api';
 import type { ChatEvent } from '../../lib/types';
+import { uuidv4 } from '../../lib/uuid';
 
 /**
  * 智能 Agent 助手 —— 设计稿里那个「RAG 问答助手」。
@@ -33,7 +34,7 @@ export default function AgentPanel() {
   const { t } = useTranslation();
 
   // 同一个 id 的多轮对话共享上下文；换 id 等于开新会话
-  const conversationId = useRef(crypto.randomUUID());
+  const conversationId = useRef(uuidv4());
   const abort = useRef<AbortController | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const thinkScroller = useRef<HTMLDivElement>(null);

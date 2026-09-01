@@ -16,6 +16,7 @@ import { caseStatusTone, isAssertion, severityTone, toneOf } from '../../lib/for
 import type {
   CaseStep, CaseType, DraftDocument, DraftView, Priority, ValidationFinding, ValidationResult,
 } from '../../lib/types';
+import { uuidv4 } from '../../lib/uuid';
 
 const STEP_COLS = '34px 132px 84px minmax(0,1fr) minmax(0,1fr) 108px 92px 30px';
 
@@ -189,7 +190,7 @@ export default function CaseEditor({
 
   // new 模式下 caseId 由前端生成，且**只生成一次** —— 它是幂等键，
   // 每次渲染换一个的话「重试」就会建出第二条空草稿
-  const generated = useRef<string>(crypto.randomUUID());
+  const generated = useRef<string>(uuidv4());
   const id = mode === 'new' ? generated.current : (caseId ?? null);
 
   const remote = useDraft(mode === 'open' ? id : null);

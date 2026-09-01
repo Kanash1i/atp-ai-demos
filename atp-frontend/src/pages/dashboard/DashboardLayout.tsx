@@ -4,7 +4,7 @@ import LangSwitcher from '../../components/LangSwitcher';
 import { LiveDot } from '../../components/ui';
 import {
   IconAgent, IconApprovals, IconBell, IconCases, IconDatasets,
-  IconGear, IconRuns, IconSearch, LogoMark,
+  IconLogout, IconRuns, IconSearch, LogoMark,
 } from '../../components/icons';
 import { useApprovalStats, useNodes } from '../../lib/queries';
 import { useSession } from '../../lib/useSession';
@@ -133,7 +133,7 @@ export default function DashboardLayout() {
             }}
             className="rounded-sm p-1 text-ink-4 transition-colors hover:text-shu"
           >
-            <IconGear size={15} />
+            <IconLogout size={15} />
           </button>
         </div>
       </aside>
