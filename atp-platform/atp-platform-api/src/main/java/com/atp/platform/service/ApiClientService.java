@@ -1,17 +1,14 @@
 package com.atp.platform.service;
 
 import com.atp.platform.entity.SysApiClient;
+import com.atp.common.util.Secrets;
 import com.atp.platform.mapper.SysApiClientMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,8 +24,6 @@ import java.util.Optional;
 @Slf4j
 @Service
 public class ApiClientService {
-
-    private static final SecureRandom RANDOM = new SecureRandom();
 
     @Autowired
     private SysApiClientMapper mapper;
@@ -49,7 +44,7 @@ public class ApiClientService {
         if (c == null || !Boolean.TRUE.equals(c.getEnabled()) || c.getRevokedAt() != null) {
             return Optional.empty();
         }
-        if (!constantTimeEquals(hash(c.getSecretSalt(), secret), c.getSecretHash())) {
+        if (!Secrets.constantTimeEquals(Secrets.hash(c.getSecretSalt(), secret), c.getSecretHash())) {
             log.warn("[AUTH] {} secret 不匹配", clientId);
             return Optional.empty();
         }
@@ -75,14 +70,14 @@ public class ApiClientService {
      * @return 明文 secret —— **这是唯一一次能拿到它**，调用方必须立刻交给使用者
      */
     public String create(String clientId, String clientName, List<String> scopes, String createdBy) {
-        String salt = randomHex(16);
-        String secret = randomHex(32);
+        String salt = Secrets.randomHex(16);
+        String secret = Secrets.randomHex(32);
 
         SysApiClient c = new SysApiClient();
         c.setClientId(clientId);
         c.setClientName(clientName);
         c.setSecretSalt(salt);
-        c.setSecretHash(hash(salt, secret));
+        c.setSecretHash(Secrets.hash(salt, secret));
         c.setScopes(String.join(",", scopes));
         c.setEnabled(true);
         c.setCreatedBy(createdBy);
@@ -100,36 +95,6 @@ public class ApiClientService {
                 .filter(s -> !s.isEmpty()).toList();
     }
 
-    private String hash(String salt, String secret) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(md.digest((salt + secret).getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
-            throw new IllegalStateException("SHA-256 不可用", e);
-        }
-    }
 
-    /**
-     * 定长比较。
-     *
-     * <p>用 {@code equals} 的话，比较会在第一个不同的字符处提前返回，
-     * 耗时随「猜对了几位」变化 —— 这是可测量的信息泄露。
-     * 这里的字符串很短、调用不频繁，实际难以利用，但没有理由不做对。
-     */
-    private boolean constantTimeEquals(String a, String b) {
-        if (a == null || b == null || a.length() != b.length()) {
-            return false;
-        }
-        int diff = 0;
-        for (int i = 0; i < a.length(); i++) {
-            diff |= a.charAt(i) ^ b.charAt(i);
-        }
-        return diff == 0;
-    }
 
-    private String randomHex(int bytes) {
-        byte[] buf = new byte[bytes];
-        RANDOM.nextBytes(buf);
-        return HexFormat.of().formatHex(buf);
-    }
 }
