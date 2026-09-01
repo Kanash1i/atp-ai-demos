@@ -25,6 +25,8 @@ const zh = {
     refresh: '刷新',
     backendDown: '连不上后端',
     backendDownHint: '先起平台：./infra/infra.sh up 然后 cd atp-platform && ./scripts/run-web.sh --seed',
+    unauthorized: '写侧需要登录',
+    unauthorizedHint: '案例的新建 / 编辑 / 提交现在要求 Authorization: Bearer <token>，而人的登录链路还没做（当前用 ?user= 参数标识身份）。读接口不受影响，其余面板照常。',
     notReady: '即将开放',
     notReadyHint: '写侧（新建 / 编辑 / 申请审批）在 M3 与 agent 的生成路径一起做',
   },

@@ -20,6 +20,8 @@ const en: Dict = {
     refresh: 'Refresh',
     backendDown: "Can't reach the backend",
     backendDownHint: 'Start it first: ./infra/infra.sh up, then cd atp-platform && ./scripts/run-web.sh --seed',
+    unauthorized: 'The write side needs a login',
+    unauthorizedHint: 'Creating, editing and committing cases now require Authorization: Bearer <token>, but there is no human login flow yet (identity is currently carried by ?user=). Reads are unaffected and the other panels work as usual.',
     notReady: 'Coming soon',
     notReadyHint: 'The write side (new / edit / request approval) lands in M3, together with the agent authoring path',
   },

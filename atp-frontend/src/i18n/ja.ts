@@ -20,6 +20,8 @@ const ja: Dict = {
     refresh: '更新',
     backendDown: 'バックエンドに接続できません',
     backendDownHint: '先にプラットフォームを起動：./infra/infra.sh up のあと cd atp-platform && ./scripts/run-web.sh --seed',
+    unauthorized: '書き込み側はログインが必要です',
+    unauthorizedHint: 'ケースの新規 / 編集 / 反映は Authorization: Bearer <token> を要求しますが、人のログイン導線はまだありません（現在は ?user= で身元を示しています）。読み取り側は影響を受けず、他のパネルは通常どおり動きます。',
     notReady: '近日公開',
     notReadyHint: '書き込み側（新規 / 編集 / 承認申請）は M3 で agent の生成経路と一緒に作ります',
   },
