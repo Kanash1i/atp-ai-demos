@@ -16,8 +16,8 @@ import type { ChatEvent, ChatMessage, ChatTimeline } from '../../lib/types';
 /**
  * 智能 Agent 助手。
  *
- * 一屏里同时容纳：会话列表、流式对话、路由结论、思考过程。
- * 对标 gogo-agent 的 ChatWindow + ProcessingPanel。
+ * 它不只是问答：一屏里同时容纳会话列表、流式对话、路由结论、思考过程。
+ * 对标参考实现的「对话窗 + 处理过程面板」。
  */
 
 const SUGGESTION_KEYS = ['agent.q1', 'agent.q2', 'agent.q3'] as const;

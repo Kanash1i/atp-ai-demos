@@ -17,7 +17,7 @@
 >
 > 现在做的是**一个完整的 ATP 平台**：传统功能（案例管理 / 派发执行 / 状态中心 / 录像 / 审批）
 > ＋ 多 agent 协作模块（自然语言生成案例、自己调 Playwright 执行录像）。
-> 参考实现是 `~/llmentor/LLMentor/gogo-agent`。
+> 参考实现是 `~/llmentor/LLMentor/` 下那份多 agent 应用。
 
 ## 红线（不可协商）
 

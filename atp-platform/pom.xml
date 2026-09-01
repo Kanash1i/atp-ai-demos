@@ -35,7 +35,7 @@
     <maven.compiler.target>21</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 
-    <!-- ⚠️ 这几个版本与参考实现 gogo-agent 对齐，别随手升：
+    <!-- ⚠️ 这几个版本与参考实现对齐，别随手升：
          AgentScope 的 Hook/Session API 在小版本间动过。 -->
     <agentscope.version>1.0.12</agentscope.version>
     <mybatis-plus.version>3.5.9</mybatis-plus.version>

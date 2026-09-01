@@ -21,7 +21,7 @@ import org.springframework.context.annotation.Primary;
  * {@code agentscope-spring-boot-starter} 的 {@code ModelProviderType} 只有
  * DASHSCOPE / OPENAI / GEMINI / ANTHROPIC 四种，而我们用的是 **DeepSeek** ——
  * 它兼容 OpenAI 协议但不是 OpenAI。直接构造 {@link OpenAIChatModel} 并指定
- * {@code baseUrl} 即可，参考实现 gogo-agent 的 test-env 已经验证过这条路。
+ * {@code baseUrl} 即可，参考实现的 test-env 已经验证过这条路。
  *
  * <h3>三档模型</h3>
  *

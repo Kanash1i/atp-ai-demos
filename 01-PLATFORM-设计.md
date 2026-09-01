@@ -10,7 +10,7 @@
 做一个 **ATP 自动化测试平台**：既有传统平台该有的功能（案例管理 / 派发执行 / 状态中心 / 录像回放 / 审批中心），
 又有一个 **多 agent 协作模块** —— 用自然语言写案例、自己调 Playwright 执行、自己录像。
 
-参考实现是 `~/llmentor/LLMentor/gogo-agent`（多 agent 差旅助手，Spring Boot 3.4 + AgentScope 1.0.12）。
+参考实现是一份第三方的多 agent 应用（Spring Boot 3.4 + AgentScope 1.0.12），本地路径见 `CLAUDE.md`。
 它的骨架直接可用，业务场景整体换成 ATP。
 
 ---
@@ -39,13 +39,13 @@
 
 ## 2. 技术栈
 
-照搬 gogo-agent，**数据库换 PostgreSQL**。
+照搬参考实现，**数据库换 PostgreSQL**。
 
 | 层 | 选型 | 说明 |
 |---|---|---|
-| 语言 / 框架 | Java 21 + Spring Boot 3.4 | 与 gogo 一致 |
+| 语言 / 框架 | Java 21 + Spring Boot 3.4 | 与参考实现一致 |
 | Agent 框架 | **AgentScope 1.0.12** (`io.agentscope`) + `agentscope-spring-boot-starter` | ReAct 循环、Hook、Tool、Session、工具暂停恢复全都现成 |
-| 模型 | **DeepSeek**，`provider: openai-compatible` | gogo 的 test-env 已验证这条路；三档模型 `fast/strong/stable` 都指向 `deepseek-v4-flash` |
+| 模型 | **DeepSeek**，`provider: openai-compatible` | 参考实现的 test-env 已验证这条路；三档模型 `fast/strong/stable` 都指向 `deepseek-v4-flash` |
 | Embedding / Rerank | 服务机 TEI 两个容器（`:8081` bge-m3 / `:8082` bge-reranker-v2-m3） | 沿用，已部署验证，1024 维 |
 | 向量存储 | **pgvector**，经 AgentScope 自带的 `PgVectorStore` | 框架原生支持，不用自己写适配器。替代 Qdrant |
 | 持久层 | MyBatis-Plus 3.5.9 + PostgreSQL | 与 demo2 共库 |
@@ -57,7 +57,7 @@
 
 ### ⭐ 查证过的两件事（原本以为要自己写，其实框架都有）
 
-**一、向量库不用换。** 参考实现 gogo-agent 用的是 `InMemoryStore`（进程内，每次启动重新索引 docx）
+**一、向量库不用换。** 参考实现用的是 `InMemoryStore`（进程内，每次启动重新索引 docx）
 加 `BailianKnowledge`（阿里云百炼托管），**没有用 Elasticsearch** ——
 ES 是同仓库另一个项目 know-engine 用的。
 而 AgentScope 1.0.12 的 `io.agentscope.core.rag.store` 里自带
@@ -75,7 +75,7 @@ AgentScope 的 Session 实现有 `InMemorySession` / `JsonSession` / `MysqlSessi
 > 前者交给 Redis，后者交给 `PgVectorStore` 自建。
 > 自己再维护一套，就要跟框架的表两头同步，迟早不一致。
 
-### ⚠️ 从 gogo 拆掉的东西
+### ⚠️ 从参考实现拆掉的东西
 
 | 拆掉 | 理由 |
 |---|---|
@@ -128,7 +128,7 @@ atp-platform/                     ← 新增的 Maven 多模块工程
 把连接串写进仓库根 `.env`。**迁移必须一起应用** —— 两条路线共用一个库，
 分开跑的话谁先起库谁的表才在，另一边要到运行时才发现表不存在。
 
-> ⚠️ **端口刻意选在 254xx / 253xx。** 台式机上停着十几个容器（know-engine、rhd、dodo-agent、gogo-test…），
+> ⚠️ **端口刻意选在 254xx / 253xx。** 台式机上停着十几个容器（know-engine、rhd、dodo-agent 等十几个），
 > 它们没在跑但 `HostConfig.PortBindings` 里写着端口，随时会被拉起来撞车。
 > `./infra/infra.sh ports` 会把「所有容器配置的端口」和「Windows 实际监听的端口」都列出来。
 >
@@ -233,7 +233,7 @@ rag_eval_run  评估     eval_id, corpus_id, dataset_name, recall_at_1/3/5, mrr,
 
 ## 5. Agent 层设计
 
-骨架照搬 gogo：`ChatController → ChatAgentExecutor → AgentPipelineService → 三层意图识别 → 直跳子 Agent 或 MasterAgent → ReAct + Tool → Hook 落库`
+骨架照搬参考实现：`ChatController → ChatAgentExecutor → AgentPipelineService → 三层意图识别 → 直跳子 Agent 或 MasterAgent → ReAct + Tool → Hook 落库`
 
 ### 5.1 意图分类（`IntentCategory`）
 
@@ -246,15 +246,15 @@ rag_eval_run  评估     eval_id, corpus_id, dataset_name, recall_at_1/3/5, mrr,
 | `APPROVAL` | 「这条要申请 SLEEP 例外」 | ApprovalAgent |
 | `UNKNOWN` | | MasterAgent 兜底 / 拒答 |
 
-### 5.2 三层意图识别（照搬 gogo 的 L1/L2/L3，命中即短路）
+### 5.2 三层意图识别（照搬参考实现的 L1/L2/L3，命中即短路）
 
 | 层 | 实现 | 手段 |
 |---|---|---|
 | L1 | `IntentRuleMatcher` | 关键词 / 正则。ATP 场景关键词很硬（"执行""跑一遍""新建案例""规范"），命中率会比差旅场景高 |
-| L2 | `IntentVectorMatcher` | 种子语料 `intent-seed.yml` → TEI embedding → **pgvector** Top-1（gogo 用的是 DashScope + 内存库） |
+| L2 | `IntentVectorMatcher` | 种子语料 `intent-seed.yml` → TEI embedding → **pgvector** Top-1（参考实现用的是 DashScope + 内存库） |
 | L3 | `IntentRecognitionAgent` | LLM 兜底，单次 `Model.stream`，不进 ReAct 循环 |
 
-加上 gogo 那两条优化：**查询重写条件触发**（L1/L2 命中就跳过改写）、**单意图高置信直跳子 Agent**（跳过 MasterAgent）。
+加上参考实现那两条优化：**查询重写条件触发**（L1/L2 命中就跳过改写）、**单意图高置信直跳子 Agent**（跳过 MasterAgent）。
 这两条是能讲的点 —— 省掉两次 LLM 调用。
 
 ### 5.3 子 Agent 与工具
@@ -367,7 +367,7 @@ CLI 的 schema 管的是字段形状。URL 对不对**不属于任何一方的�
 
 ### 5.4 Hook
 
-从 gogo 直接迁移：`ProgressNotifierHook`（SSE）、`SessionPersistenceHook`（改 PG）、
+从参考实现直接迁移：`ProgressNotifierHook`（SSE）、`SessionPersistenceHook`（改 PG）、
 `ActiveAgentPersistenceHook`、`AgentExecutionRegistryHook`（优雅中断）、`AgentExecutionLoggerHook`、
 `ToolCircuitBreakerHook`（熔断）。
 
@@ -536,7 +536,7 @@ Dashboard 五个面板 = 五组 API：
 |---|---|
 | 案例中心 | 项目/模块树、案例列表、案例详情（含步骤表 + STD 校验结果） |
 | 案例执行状态 | 今日统计、执行中批次（SSE）、最近执行结果、失败详情 |
-| **智能 Agent 助手**（原稿的「RAG 问答助手」） | SSE 流式对话 + 引用 chip + 检索命中面板 + **执行进度 / 工具调用 / HITL 交互卡片**，对标 gogoagent |
+| **智能 Agent 助手**（原稿的「RAG 问答助手」） | SSE 流式对话 + 引用 chip + 检索命中面板 + **执行进度 / 工具调用 / HITL 交互卡片**，对标参考实现 |
 | 数据集中心 | 语料集列表、检索评估结果、分块设置 |
 | 审批中心 | 三类审批列表、diff、批准/退回/挂起 |
 
@@ -544,7 +544,7 @@ Dashboard 五个面板 = 五组 API：
 
 1. 执行引擎文案「Selenium Grid · node-01…node-08」→ **Playwright Workers**。node 池的概念保留。
 2. 「RAG 问答助手」面板 → **智能 Agent 助手**。它不只是问答：要能展示 agent 的执行进度、
-   工具调用、以及 HITL 的交互卡片（确认 / 选择 / 表单），对标 gogoagent 的 ChatWindow + ProcessingPanel。
+   工具调用、以及 HITL 的交互卡片（确认 / 选择 / 表单），对标参考实现的「对话窗 + 处理过程面板」。
 
 另外设计稿的案例编号与库里的种子数据不对应（稿里 `ATP-LOGIN-0002` 是「密码错 3 次锁定」，
 库里是「正常登录」），前端接线时以库为准。
@@ -609,7 +609,7 @@ Dashboard 五个面板 = 五组 API：
 
 ## 9. 已定的四件事（2026-08-29 拍板）
 
-**一、认证：与 gogo-agent 的取舍保持一致。**
+**一、认证：与参考实现的取舍保持一致。**
 `sa-token-spring-boot3-starter` + `sa-token-redis-jackson`，token 走请求头 `Authorization`，
 30 天有效、`active-timeout: -1`（演示期间不因闲置被踢）、允许多地登录但不共享 token、`random-128`。
 配置已落在 `atp-web/src/main/resources/application.yml`。
