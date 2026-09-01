@@ -35,5 +35,20 @@
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-data-redis</artifactId>
     </dependency>
+    <!--
+      ⚠️ 没有它的话，application.yml 里的 lettuce.pool 配置**被静默忽略** ——
+      Lettuce 退回 shareNativeConnection，所有 Redis 命令挤同一条连接。
+
+      实测后果：节点上有两个线程常驻 BRPOP（执行队列 + 探查队列）再加心跳，
+      互相阻塞导致「Redis command timed out」，探查功能整体不可用 ——
+      而配置文件看起来完全正常，日志里也只有一个语焉不详的超时。
+
+      spring-boot-starter-data-redis 不传递它（optional），必须显式声明。
+      放在这里而不是各模块各加一份：依赖它的 atp-web / atp-runner / atp-agent 都能拿到。
+    -->
+    <dependency>
+      <groupId>org.apache.commons</groupId>
+      <artifactId>commons-pool2</artifactId>
+    </dependency>
   </dependencies>
 </project>

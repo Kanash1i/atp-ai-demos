@@ -36,9 +36,49 @@ public class PageInspectService {
     @Autowired
     private InspectQueue queue;
 
-    /** 被测系统入口。与执行器的 {@code atp.runner.variables.base_url} 是同一个值 */
+    /**
+     * 被测系统入口。与执行器的 {@code atp.runner.variables.base_url} 是同一个值。
+     *
+     * <h3>⭐ 这是「执行机视角」的地址，不是平台视角的</h3>
+     *
+     * 平台只负责把它拼进请求，真正去访问的是执行机。按隔离拓扑
+     * （{@code 00-SHARED-CONTEXT.md} §2.0）**平台自己连不到被测系统** ——
+     * 所以这里配一个平台访问不了的地址是正常的；
+     * 配一个平台能访问、执行机访问不了的地址才是错的。
+     *
+     * <p>⚠️ 实测踩过：容器化部署时给了 {@code host.docker.internal}（容器能解析），
+     * 而节点跑在宿主机上解析不了，最终由 Playwright 报出
+     * {@code Cannot navigate to invalid URL} —— 错误出现在三跳之外的另一台机器上。
+     */
     @Value("${atp.inspect.base-url}")
     private String baseUrl;
+
+    /**
+     * 启动时就确认 base-url 是个绝对地址。
+     *
+     * <h3>不校验的后果（实测撞过）</h3>
+     *
+     * 容器里 {@code MOCK_SHOP_URL} 是**空字符串**而不是未设置 —— yml 里
+     * {@code ${MOCK_SHOP_URL:http://localhost:8088}} 的默认值因此不生效，
+     * baseUrl 成了空串。于是 {@link #resolve} 拼出 {@code /products/p001}，
+     * 一路传到执行机，最后由 Playwright 报出来：
+     *
+     * <pre>Cannot navigate to invalid URL — navigating to "/products/p001"</pre>
+     *
+     * 错误发生在三跳之外的另一台机器上，而根因是这里的一个空配置。
+     * **配置缺失应该在启动时炸，不该让它静默产出非法输入。**
+     */
+    @jakarta.annotation.PostConstruct
+    void validateBaseUrl() {
+        if (baseUrl == null || baseUrl.isBlank()
+                || !(baseUrl.startsWith("http://") || baseUrl.startsWith("https://"))) {
+            throw new IllegalStateException(
+                    "atp.inspect.base-url 必须是绝对地址（http:// 或 https:// 开头），当前是 ["
+                            + baseUrl + "]。检查环境变量 MOCK_SHOP_URL —— "
+                            + "⚠️ 设成空字符串和不设置是两回事，空字符串会让 yml 里的默认值失效");
+        }
+        log.info("[INSPECT] 被测系统入口 {}", baseUrl);
+    }
 
     /**
      * @param pathOrUrl 可以是 {@code /products/p001} 这样的路径，

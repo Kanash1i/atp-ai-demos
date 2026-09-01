@@ -1,0 +1,15 @@
+# 构建产物 —— 传进去会让上下文膨胀几百 MB，而且镜像里用的是容器内重新构建的
+**/target/
+**/bin/
+!deploy/build/
+**/node_modules/
+**/dist/
+
+# 本地状态
+.git/
+.claude/
+**/*.log
+artifacts/
+
+# ⚠️ 密钥绝不进镜像上下文
+.env
