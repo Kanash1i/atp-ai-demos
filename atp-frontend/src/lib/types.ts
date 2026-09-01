@@ -390,3 +390,30 @@ export interface ChatEvent {
    */
   content: string;
 }
+
+/* ---------- 会话历史 ---------- */
+
+export interface ChatConversation {
+  conversationId: string;
+  /** 后端按首条用户消息生成 */
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatMessage {
+  messageId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  /** 哪个 agent 接管的这一轮。user 消息为 null */
+  agentName: string | null;
+  /** JSON 字符串，形如 {"agent":"ExecutionAgent","layer":"L2","score":0.675,…}。路由结论从这里还原 */
+  timelineJson: string | null;
+  createdAt: string;
+}
+
+export interface ChatTimeline {
+  agent?: string;
+  layer?: string;
+  score?: number;
+}
