@@ -8,6 +8,16 @@
 #   ./deploy/build.sh --jar-only 只构建产物，不打镜像
 set -euo pipefail
 
+# ⚠️ 锁定本机 daemon。这个脚本用 -v 把 $REPO_ROOT 挂进构建容器，
+#    挂载路径是 **daemon 那一侧**的路径 —— 而 docker context 是全局状态，
+#    本仓库的笔记本平时指向台式机（context `remote`）。
+#    context 没锁时，挂上去的是台式机上并不存在的目录，报出来是：
+#
+#      go: go.mod file not found in current directory or any parent directory
+#
+#    文件明明在，错误却指向"没有 go.mod"，根因隔着一层看不见。实测踩过。
+export DOCKER_CONTEXT=default
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$REPO_ROOT/deploy/build"
 cd "$REPO_ROOT"
