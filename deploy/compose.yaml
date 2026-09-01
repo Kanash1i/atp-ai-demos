@@ -1,0 +1,91 @@
+# ATP 平台的部署编排 —— 云服务器那一侧
+#
+# ⚠️ 这份**不包含执行节点**。执行节点跑 Playwright、要真浏览器和录像，
+#    按拓扑必须待在能访问被测系统的那台机器上（见 00-SHARED-CONTEXT §2.0），
+#    而云服务器既没有图形界面、也（按隔离原则）连不到被测系统。
+#    节点用 atp-platform/scripts/run-node.sh 在台式机上跑。
+#
+# ⚠️ PG 与 Redis 也不在这里：它们由 infra/compose.yaml 管（project `atp-infra`），
+#    两条路线共用同一个库。部署时要么复用那份，要么把地址指过去。
+#
+#   ⚠️ 用 `source` 而不是 `--env-file`：仓库根 .env 里有 ${SERVICE_HOST} 这类
+#      自引用变量，compose 的 --env-file **不做展开**，结果是一串空值 ——
+#      而且它只 warn 不报错，容器会带着空的数据库地址起来然后连不上。
+#
+#      set -a; source ../.env; set +a
+#      docker compose -f compose.yaml up -d
+
+name: atp-platform
+
+services:
+  platform:
+    # ⚠️ 只编排不构建 —— 镜像由 deploy/build.sh 打好。
+    #    容器内构建在这个网络环境下成功率取决于当次运气，见 platform.Dockerfile 顶部
+    image: atp-platform:latest
+    ports:
+      - "${ATP_WEB_PORT:-8080}:8080"
+    environment:
+      # ── 数据库与 Redis（指向 infra 那一份）──
+      ATP_DB_URL: ${ATP_DB_URL}
+      ATP_DB_USER: ${ATP_DB_USER}
+      ATP_DB_PASSWORD: ${ATP_DB_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+      # ── 模型与向量 ──
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      RERANK_BASE_URL: ${RERANK_BASE_URL}
+
+      # ── agent 的写侧出口 ──
+      # ⚠️ 容器里 CLI 调平台自己，走回环。跨容器的话这里要换成服务名
+      ATP_API_URL: http://localhost:8080
+      ATP_CLIENT_ID: ${ATP_CLIENT_ID:-atp-cli}
+      ATP_CLIENT_SECRET: ${ATP_CLIENT_SECRET:-}
+      ATP_AUTH_ENABLED: ${ATP_AUTH_ENABLED:-false}
+
+      # ── 被测系统入口（探查与执行都指向它）──
+      # ⭐ 这是**执行机视角**的地址，不是平台视角的。
+      #
+      # 平台只负责把它拼进探查/执行请求，真正去访问的是执行机 ——
+      # 按隔离拓扑（00-SHARED-CONTEXT §2.0）**平台自己压根连不到被测系统**，
+      # 所以这里填一个平台访问不了的地址是正常的，填一个平台能访问但执行机
+      # 访问不了的地址才是错的。
+      #
+      # ⚠️ 实测踩过：给了 host.docker.internal（容器能解析），
+      #    节点在宿主机上拿到这个域名解析不了，报到 Playwright 那里成了
+      #    "Cannot navigate to invalid URL" —— 错误出现在三跳之外。
+      MOCK_SHOP_URL: ${MOCK_SHOP_URL}
+
+      # ── 前端来源 ──
+      ATP_CORS_ORIGINS: ${ATP_CORS_ORIGINS:-http://localhost:5173}
+    volumes:
+      # 执行产物（录像/截图）—— 节点回传到这里，前端从这里播
+      - atp-artifacts:/app/artifacts
+    restart: unless-stopped
+    healthcheck:
+      # ⚠️ 用 /api/health 而不是端口探活：端口开着不代表数据库连得上，
+      #    而数据库不通时这个平台什么也做不了
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # JVM + Spring 启动约 4 秒，给足余量再开始探
+      start_period: 60s
+
+  mock-shop:
+    image: atp-mock-shop:latest
+    ports:
+      - "${MOCK_SHOP_PORT:-8088}:8088"
+    restart: unless-stopped
+    profiles:
+      # ⚠️ 默认不起：按拓扑它该在执行机那一侧，不该跟平台同机。
+      #    本地一起跑时用 `--profile with-mock`
+      - with-mock
+
+volumes:
+  atp-artifacts:
