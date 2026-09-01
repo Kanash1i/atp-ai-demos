@@ -2,6 +2,9 @@ package com.atp.agent.tools;
 
 import com.atp.agent.cli.AtpCliClient;
 import com.atp.agent.cli.CliResult;
+import com.atp.platform.entity.TcCase;
+import com.atp.platform.mapper.TcCaseMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
 import lombok.extern.slf4j.Slf4j;
@@ -36,12 +39,28 @@ public class ExecutionTools {
     @Autowired
     private AtpCliClient cli;
 
+    /**
+     * ⚠️ 读侧直接查库，不走 CLI —— 与写侧的原则不同：
+     * 两边查的是同一批表，查询逻辑不同不会导致数据不一致。
+     */
+    @Autowired
+    private TcCaseMapper caseMapper;
+
     @Tool(name = "run_case_once",
             description = "把已提交的案例在执行机上真跑一次，返回通过与否、失败在第几步、错误信息与录像。"
+                    + "case 参数用**案例编号**（如 ATP-CART-0014，用户看到的就是它）；"
+                    + "你自己刚提交的案例也可以直接传 caseId。"
                     + "⚠️ 只在案例已经 commit 之后用，而且只跑一次 —— "
                     + "这是给用户看的验证结果，不是让你反复调整直到跑通。")
     public String runCaseOnce(
-            @ToolParam(name = "case_id", description = "已提交案例的 caseId") String caseId) {
+            @ToolParam(name = "case",
+                    description = "案例编号（ATP-CART-0014）或 caseId。用户说的一定是编号") String caseRef) {
+        String caseId = resolveCaseId(caseRef);
+        if (caseId == null) {
+            return "找不到案例「%s」。用户说的应该是案例编号（形如 ATP-CART-0014）—— 确认编号是否正确，或用 find_similar_cases 查一下。"
+                    .formatted(caseRef);
+        }
+
         // ⚠️ 三层超时的层级：平台 run-once 等执行机 CASE_TIMEOUT_SEC，
         //    CLI 等平台 CASE_TIMEOUT_SEC+30，我等 CLI 再多 30 ——
         //    每一层都必须比它等的那层更有耐心，否则外层会把内层杀在半路，
@@ -96,6 +115,36 @@ public class ExecutionTools {
     }
 
     /** Playwright 的堆栈能有几十行，模型和人都只看得下第一行 */
+    /**
+     * 把「用户说的东西」解析成 caseId。
+     *
+     * <h3>⚠️ 为什么不能只收 caseId</h3>
+     *
+     * caseId 是 UUID 主键，**用户界面上根本看不到它** —— 案例中心显示的是
+     * ATP-CART-0014 这样的编号。工具只收 caseId 的话，用户说「跑一下 ATP-CART-0014」，
+     * agent 只能反问「请提供 caseId」，而那是个用户拿不到的东西。
+     *
+     * <p><b>工具的参数应该是用户语言里存在的东西，不是数据库主键。</b>
+     *
+     * <p>两种都认：agent 刚提交完案例时手上有 caseId，直接传省一次查询；
+     * 用户说的一定是编号。靠形状区分 —— UUID 是 36 位 5 段，编号形如 ATP-XXX-NNNN。
+     */
+    private String resolveCaseId(String ref) {
+        if (ref == null || ref.isBlank()) {
+            return null;
+        }
+        String v = ref.trim();
+
+        // UUID 形状：直接当 caseId，但仍确认存在 —— 不存在的话下游 CLI 报的错更难懂
+        if (v.length() == 36 && v.chars().filter(c -> c == '-').count() == 4) {
+            return caseMapper.selectById(v) == null ? null : v;
+        }
+
+        TcCase c = caseMapper.selectOne(new LambdaQueryWrapper<TcCase>()
+                .eq(TcCase::getCaseCode, v.toUpperCase()).last("LIMIT 1"));
+        return c == null ? null : c.getCaseId();
+    }
+
     private String firstLine(String s) {
         if (s == null || s.isBlank()) {
             return "（无错误信息）";

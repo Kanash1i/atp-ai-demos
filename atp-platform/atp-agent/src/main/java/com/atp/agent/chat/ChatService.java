@@ -7,6 +7,7 @@ import com.atp.agent.general.GeneralAgent;
 import com.atp.agent.intent.IntentCategory;
 import com.atp.agent.intent.IntentRouter;
 import com.atp.agent.intent.RouteResult;
+import com.atp.platform.service.ChatHistoryService;
 import com.atp.agent.knowledge.KnowledgeAgent;
 import io.agentscope.core.agent.Event;
 import io.agentscope.core.agent.EventType;
@@ -46,6 +47,9 @@ public class ChatService {
     @Autowired
     private IntentRouter router;
 
+    @Autowired
+    private ChatHistoryService history;
+
     /**
      * 会话 → 该会话下每种意图各自的 agent 实例。
      *
@@ -84,16 +88,22 @@ public class ChatService {
      *
      * @param conversationId 会话 id。同一个会话复用同一个 agent 实例，多轮上下文才连得上
      */
-    public Flux<ChatEvent> chat(String conversationId, String userMessage) {
+    public Flux<ChatEvent> chat(String conversationId, String userMessage, String userId) {
+        // ⚠️ 先落库再开始跑。反过来的话，agent 中途出错这条提问就丢了 ——
+        //    而用户看到的是「我明明问了」，回看历史却没有
+        history.recordUser(conversationId, userId, userMessage);
+
         RouteResult routed = router.route(userMessage);
         RouteResult route = applyStickiness(conversationId, routed);
 
         // 没实现的意图**如实说**，不要让某个 agent 硬答。
         // 让编写 agent 去答审批问题，它会一本正经地编一套审批流程出来 —— 那比"还没做"糟得多
         if (!route.intent().implemented()) {
+            String reply = unimplemented(route.intent());
+            history.recordAssistant(conversationId, reply, "router", timeline(route, null));
             return Flux.just(
                     ChatEvent.route("router", describe(route)),
-                    ChatEvent.message("router", unimplemented(route.intent())),
+                    ChatEvent.message("router", reply),
                     ChatEvent.done("router"));
         }
 
@@ -122,17 +132,37 @@ public class ChatService {
                 .includeActingChunk(true)
                 .build();
 
+        // ⚠️ 只收集最终回复（message），不收集 thinking ——
+        //    一轮能有几百个增量片段、几十 KB，而回看历史时没人要重读思考过程
+        StringBuilder answer = new StringBuilder();
+
         return agent.raw().stream(input, options)
                 .map(e -> toChatEvent(e, agentName))
                 .filter(e -> e.content() != null && !e.content().isBlank())
+                .doOnNext(e -> {
+                    if ("message".equals(e.type())) {
+                        answer.append(e.content());
+                    }
+                })
                 .startWith(ChatEvent.route(agentName, describe(route)))
                 .concatWithValues(ChatEvent.done(agentName))
+                .doOnComplete(() -> {
+                    // ⚠️ 在 doOnComplete 里落库而不是 doOnNext：message 事件可能分多次到，
+                    //    而且只有跑完了才知道这一轮的最终回复是什么
+                    if (!answer.isEmpty()) {
+                        history.recordAssistant(conversationId, answer.toString(),
+                                agentName, timeline(route, agentName));
+                    }
+                })
                 .onErrorResume(e -> {
                     // ⚠️ 错误也要推给前端。吞掉的话前端会一直等 done，
                     //    表现为「对话卡住了」，而后端日志里其实有完整堆栈
                     log.error("会话 {} 执行失败", conversationId, e);
-                    return Flux.just(ChatEvent.error(agentName,
-                            e.getClass().getSimpleName() + ": " + e.getMessage()));
+                    String msg = e.getClass().getSimpleName() + ": " + e.getMessage();
+                    // 失败也要留痕 —— 回看历史时「这里报过一次错」比一段空白有用
+                    history.recordAssistant(conversationId, "（执行失败）" + msg,
+                            agentName, timeline(route, agentName));
+                    return Flux.just(ChatEvent.error(agentName, msg));
                 });
     }
 
@@ -195,6 +225,20 @@ public class ChatService {
      * 代价比首次分类错误大得多。
      */
     private static final double SWITCH_THRESHOLD = 0.85;
+
+    /**
+     * 这一轮的过程轨迹。存路由结论，不存 thinking 全文。
+     *
+     * <p>回看历史时要的是「它当时怎么判的、谁接的」，不是重读一遍思考过程。
+     */
+    private String timeline(RouteResult route, String agentName) {
+        return """
+                {"intent":"%s","layer":"%s","score":%s,"reason":"%s","agent":"%s"}"""
+                .formatted(route.intent(), route.layer(),
+                        route.score() < 0 ? "null" : "%.3f".formatted(route.score()),
+                        route.reason() == null ? "" : route.reason().replace("\"", "'"),
+                        agentName == null ? "" : agentName);
+    }
 
     private AtpAgent createAgent(IntentCategory intent) {
         return switch (intent) {
