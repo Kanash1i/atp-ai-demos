@@ -31,6 +31,12 @@ func stubRun(t *testing.T, status int, body string) *map[string]any {
 	t.Helper()
 	var received map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 鉴权：桩也要能发 token —— CLI 现在所有打平台的请求都先换 token。
+		// （auth_test.go 里有专门要求 token 的桩，这里只是让老用例继续能跑。）
+		if r.URL.Path == "/api/auth/token" {
+			w.Write([]byte(`{"token":"t","expiresIn":2592000}`))
+			return
+		}
 		if r.URL.Path != "/api/executions/run-once" {
 			t.Errorf("打错了路径: %s", r.URL.Path)
 		}

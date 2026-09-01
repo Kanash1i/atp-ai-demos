@@ -1,12 +1,12 @@
 package inspect
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
+
+	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/httpx"
 	"time"
 )
 
@@ -41,36 +41,21 @@ type RunResult struct {
 //
 // 所以命令的语义是：跑一次、如实报告、人决定。
 func (c *Client) Run(ctx context.Context, caseID string, timeoutSec int) (*Result2, error) {
-	body, err := json.Marshal(map[string]any{"caseId": caseID, "timeoutSec": timeoutSec})
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.Base+"/api/executions/run-once", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
 	// ⚠️ HTTP 客户端必须比平台等得久 —— 否则平台还在等执行机，
 	//    我这边先超时了，agent 拿到的会是 20（环境坏了）而不是平台的真实结论。
-	hc := &http.Client{Timeout: time.Duration(timeoutSec)*time.Second + 30*time.Second}
-	resp, err := hc.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("调不通平台执行接口 %s: %w", c.Base, err)
-	}
-	defer resp.Body.Close()
+	c.c.HTTP.Timeout = time.Duration(timeoutSec)*time.Second + 30*time.Second
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	status, raw, err := c.c.Do(ctx, http.MethodPost, "/api/executions/run-once",
+		map[string]any{"caseId": caseID, "timeoutSec": timeoutSec})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("调不通平台执行接口 %s: %w", c.c.Base, err)
 	}
 	var run RunResult
 	if err := json.Unmarshal(raw, &run); err != nil {
 		return nil, fmt.Errorf("平台返回的不是合法 JSON（HTTP %d）: %s",
-			resp.StatusCode, truncate(string(raw), 200))
+			status, httpx.Truncate(string(raw), 200))
 	}
-	return &Result2{Status: resp.StatusCode, Run: run}, nil
+	return &Result2{Status: status, Run: run}, nil
 }
 
 // Result2 带上 HTTP 状态 —— 退出码的分派依据是它。

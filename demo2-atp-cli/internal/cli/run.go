@@ -33,12 +33,13 @@ func (a *app) runCmd() *cobra.Command {
 			"⚠️ 本命令不碰数据库，只需要 ATP_API_URL。",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			base, err := config.Load().APIBase()
+			cfg := config.Load()
+			base, err := cfg.APIBase()
 			if err != nil {
 				a.code = a.w().Fail(model.InfraError, err.Error(), nil)
 				return nil
 			}
-			res, err := inspect.New(base).Run(context.Background(), args[0], timeoutSec)
+			res, err := inspect.New(base, cfg.Optional(config.EnvClientID), cfg.Optional(config.EnvClientSecret)).Run(context.Background(), args[0], timeoutSec)
 			if err != nil {
 				a.code = a.w().Fail(model.InfraError, err.Error(), nil)
 				return nil

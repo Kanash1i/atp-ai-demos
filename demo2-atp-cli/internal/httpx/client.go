@@ -1,4 +1,16 @@
-package apistore
+// Package httpx 是【唯一】的平台 HTTP 客户端 —— 所有打平台的请求都走它。
+//
+// ⚠️ 这个包是从一次真实的 bug 里长出来的：迁移之前 inspect/run 有自己的
+// 裸客户端，迁移时我只给新写的 apistore 加了鉴权。平台把 auth 打开之后，
+// inspect 直接拿裸请求打过去、收到 401 就报错退出 —— 换 token 那段代码
+// 根本没执行到，因为它不在这个客户端里。
+//
+// ⭐ 而 50 个用例全绿：鉴权关着时不带 token 也返回 200，
+// 「401 → 换 token → 重试」这条分支【一次都没被触发过】。
+// 覆盖看起来有，但触发它的前提在测试环境里不成立。
+//
+// 所以只留一个客户端。两个客户端就会有一个先长出能力、另一个落下。
+package httpx
 
 import (
 	"bytes"
@@ -24,7 +36,7 @@ type Client struct {
 	token string // 本进程内缓存，够用
 }
 
-func newClient(base, id, secret string) *Client {
+func New(base, id, secret string) *Client {
 	return &Client{Base: base, ID: id, Secret: secret,
 		HTTP: &http.Client{Timeout: 30 * time.Second}}
 }
@@ -47,13 +59,13 @@ func (c *Client) login(ctx context.Context) error {
 
 	raw, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("换 token 失败（HTTP %d）：%s", resp.StatusCode, truncate(string(raw), 200))
+		return fmt.Errorf("换 token 失败（HTTP %d）：%s", resp.StatusCode, Truncate(string(raw), 200))
 	}
 	var out struct {
 		Token string `json:"token"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil || out.Token == "" {
-		return fmt.Errorf("换 token 的响应里没有 token：%s", truncate(string(raw), 200))
+		return fmt.Errorf("换 token 的响应里没有 token：%s", Truncate(string(raw), 200))
 	}
 	c.token = out.Token
 	return nil
@@ -63,7 +75,7 @@ func (c *Client) login(ctx context.Context) error {
 //
 // ⭐ 只重试一次，不循环 —— 换完 token 仍然 401 说明凭证本身不对（id/secret 错、
 // 或被吊销），再试一百次也一样，而循环会把"配置写错了"变成一次挂起。
-func (c *Client) do(ctx context.Context, method, path string, in any) (int, []byte, error) {
+func (c *Client) Do(ctx context.Context, method, path string, in any) (int, []byte, error) {
 	send := func() (*http.Response, error) {
 		var rdr io.Reader
 		if in != nil {
@@ -114,4 +126,12 @@ func (c *Client) do(ctx context.Context, method, path string, in any) (int, []by
 		return resp2.StatusCode, raw, nil
 	}
 	return resp.StatusCode, raw, nil
+}
+
+// Truncate 截断长响应体 —— 报错信息里贴一整页 HTML 对谁都没用。
+func Truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
