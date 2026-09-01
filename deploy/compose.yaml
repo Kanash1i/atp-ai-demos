@@ -65,6 +65,10 @@ services:
 
       # ── 前端来源 ──
       ATP_CORS_ORIGINS: ${ATP_CORS_ORIGINS:-http://localhost:5173}
+      # ⚠️ 必须与下面挂的 volume 路径一致。平台默认值是 /tmp/atp-artifacts，
+      #    那是容器内的临时目录 —— 录像能正常上传和播放，但**容器一重启就全没了**。
+      #    这类"看起来正常、重启才发现"的配置错，只有对着 volume 数数才能发现。
+      ATP_ARTIFACT_DIR: /app/artifacts
     volumes:
       # 执行产物（录像/截图）—— 节点回传到这里，前端从这里播
       - atp-artifacts:/app/artifacts
