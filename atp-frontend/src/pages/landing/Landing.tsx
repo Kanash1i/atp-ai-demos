@@ -250,8 +250,8 @@ export default function Landing() {
               <span className="h-px w-11 bg-shu" />
               <span className="font-mono text-[11.5px] tracking-[.28em] text-shu">{t('landing.contact')}</span>
             </div>
-            {/* 姓名不翻译 */}
-            <div className="font-jp text-[32px] leading-[1.3] font-bold text-paper">刘 嘉龙</div>
+            {/* 姓名照用户给的原样写，不翻译、不加日式姓名排版的分隔空格 */}
+            <div className="font-jp text-[32px] leading-[1.3] font-bold text-paper">刘嘉龙</div>
             <div className="mt-1.5 text-[13px] tracking-[.06em] text-ink-inv">{t('landing.contactRole')}</div>
           </div>
 
