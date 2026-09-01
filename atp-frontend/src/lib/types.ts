@@ -305,6 +305,25 @@ export interface DraftDocument extends DraftHeader {
   steps: CaseStep[];
 }
 
+export interface AuthUser {
+  userId: string;
+  username: string;
+  /** 日文姓名，原样显示，不参与 i18n */
+  displayName: string;
+  /** 圆头像里那两个字母，KY / SM / TN */
+  avatarText: string;
+  role: string;
+  /** 审批中心的「批准 / 退回 / 挂起」按这个开关 */
+  canApprove: boolean;
+}
+
+export interface LoginResponse {
+  token: string;
+  tokenName: string;
+  expiresIn: number;
+  user: AuthUser;
+}
+
 export interface DraftView {
   caseId: string;
   /**
@@ -319,6 +338,16 @@ export interface DraftView {
   status: CaseStatus;
   caseType: CaseType;
   platformStatus: string;
+  /**
+   * 这次调用是一次**幂等重放** —— 对应的写入上一次其实就成功了
+   * （响应丢在路上，调用方重试了）。HTTP 仍是 200，重放在语义上是成功。
+   *
+   * ⚠️ 有自动重试逻辑的地方要看它：`true` 意味着第一次已经成功，
+   * 不该算成第二次写入，也不该提示「新建成功」。
+   */
+  replayed?: boolean;
+  /** tc_step —— 草稿的最后保存时间。tc_case 的 updatedAt 编辑草稿不会动 */
+  editUpdatedAt?: string | null;
   validation: ValidationResult;
 }
 

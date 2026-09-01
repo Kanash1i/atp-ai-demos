@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AsyncBlock, Tag } from '../../components/ui';
 import { ApiError, useApprovalStats, useDecide, useMyApprovals, usePendingApprovals } from '../../lib/queries';
+import { isForbidden } from '../../lib/api';
+import { useSession } from '../../lib/useSession';
 import { initials } from '../../lib/format';
 import type {
   Approval, ApprovalType, CaseChangePayload, DatasetReleasePayload, Decision, RuleExceptionPayload,
@@ -71,6 +73,9 @@ function PayloadChips({ item }: { item: Approval }) {
 
 function ApprovalCard({ item, readOnly }: { item: Approval; readOnly: boolean }) {
   const { t } = useTranslation();
+  const session = useSession();
+  // sys_user.role → REVIEWER / ADMIN 为 true，QA_ENGINEER 为 false
+  const canApprove = session?.user.canApprove ?? false;
   const meta = TYPE_META[item.type];
   const decide = useDecide();
   const [note, setNote] = useState('');
@@ -81,6 +86,11 @@ function ApprovalCard({ item, readOnly }: { item: Approval; readOnly: boolean })
   const payload = item.payload as CaseChangePayload;
   const changed = isChange && payload.before ? diffKeys(payload.before, payload.after) : [];
 
+  /*
+   * ⚠️ decidedBy 后端不再从请求体取，改成从 token 解 —— 请求体里那个字段保留但被忽略。
+   * 所以「谁批的」一定是当前登录者：用 ?user=sato 看佐藤的待办然后点批准，
+   * 记录上仍会是当前登录的人。要演示两个视角就真的换登录（侧栏齿轮）。
+   */
   const submit = (decision: Decision) => {
     // 退回时 note 必填 —— 提交人只看得到这一句
     if (decision === 'REJECTED' && !note.trim()) {
@@ -92,6 +102,8 @@ function ApprovalCard({ item, readOnly }: { item: Approval; readOnly: boolean })
   };
 
   const conflict = decide.error instanceof ApiError && decide.error.isConflict;
+  // 403 = token 有效但缺 approval:decide。**不是**没登录，重新登录也拿不到这个权限
+  const forbidden = isForbidden(decide.error);
 
   return (
     <div
@@ -173,17 +185,19 @@ function ApprovalCard({ item, readOnly }: { item: Approval; readOnly: boolean })
             )}
             <button
               type="button"
-              disabled={decide.isPending}
+              disabled={decide.isPending || !canApprove}
+              title={canApprove ? undefined : t('login.noPermission')}
               onClick={() => submit(item.type === 'DATASET_RELEASE' ? 'HOLD' : 'REJECTED')}
-              className="rounded-md border border-line bg-card px-3.5 py-[7px] text-[12.5px] text-ink-2 transition-colors hover:bg-line-4 disabled:opacity-50"
+              className="rounded-md border border-line bg-card px-3.5 py-[7px] text-[12.5px] text-ink-2 transition-colors hover:bg-line-4 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {item.type === 'DATASET_RELEASE' ? t('approvals.hold') : t('approvals.reject')}
             </button>
             <button
               type="button"
-              disabled={decide.isPending}
+              disabled={decide.isPending || !canApprove}
+              title={canApprove ? undefined : t('login.noPermission')}
               onClick={() => submit('APPROVED')}
-              className="rounded-md bg-shu px-4 py-[7px] text-[12.5px] text-white transition-colors hover:bg-shu-hover disabled:opacity-50"
+              className="rounded-md bg-shu px-4 py-[7px] text-[12.5px] text-white transition-colors hover:bg-shu-hover disabled:cursor-not-allowed disabled:opacity-45"
             >
               {decide.isPending ? t('approvals.submitting') : t('approvals.approve')}
             </button>
@@ -191,7 +205,13 @@ function ApprovalCard({ item, readOnly }: { item: Approval; readOnly: boolean })
         )}
       </div>
 
-      {!readOnly && (
+      {!readOnly && !canApprove && (
+        <div className="mt-3 rounded-md border border-line bg-surface-2 px-3 py-2 text-[11.5px] text-ink-3">
+          {t('login.noPermission')}
+        </div>
+      )}
+
+      {!readOnly && canApprove && (
         <div className="mt-3">
           <input
             value={note}
@@ -215,7 +235,11 @@ function ApprovalCard({ item, readOnly }: { item: Approval; readOnly: boolean })
       */}
       {decide.error && (
         <div className="mt-3 rounded-md border border-shu/30 bg-shu-soft px-3 py-2 text-[11.5px] leading-[1.7] text-shu">
-          {conflict ? t('approvals.conflict') : (decide.error as Error).message}
+          {conflict
+            ? t('approvals.conflict')
+            : forbidden
+              ? t('login.noPermission')
+              : (decide.error as Error).message}
           {conflict && decide.error instanceof ApiError && decide.error.problem && (
             <div className="mt-1 font-mono text-[10.5px] text-ink-2">{decide.error.problem.detail}</div>
           )}

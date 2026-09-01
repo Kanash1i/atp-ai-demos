@@ -24,6 +24,7 @@ curl -s localhost:8080/api/health
 | 路径 | 内容 |
 |---|---|
 | `/` | Landing。三语循环打字机、滚动淡入、「立即体验」进 dashboard |
+| `/login` | 登录页。三个演示账号一键填用户名（**不填口令**） |
 | `/dashboard/cases` | 案例中心：项目 pill → 模块树 → 案例详情（步骤表 + 规范校验） |
 | `/dashboard/runs` | 执行状态：四张统计卡、执行中批次（真派发 + 2 秒轮询）、最近执行、失败详情抽屉（播真录像） |
 | `/dashboard/agent` | 智能 Agent 助手：SSE 流式对话、路由结论、思考过程实时流 |
@@ -44,7 +45,10 @@ cp .env.example .env.local
 |---|---|
 | `VITE_API_ORIGIN` | dev 时 vite 把 `/api` 代理到这里，默认 `http://localhost:8080` |
 | `VITE_API_BASE` | 前端请求前缀，默认空 = 同源 `/api`。只有不经代理、直连别的域时才设 |
-| `VITE_DEMO_USER` | M1 还没接 Sa-Token，当前用户由 `?user=` 带。`kaneshiro` / `sato` / `tanaka` |
+| `VITE_DEMO_USER` | 审批中心 `?user=` 查询参数的默认值（看谁的待办）。`kaneshiro` / `sato` / `tanaka` |
+
+演示账号的口令在**后端** `.env` 的 `ATP_DEMO_PASSWORD`。**前端不内置口令** ——
+登录页只帮你把用户名填好，口令要敲一次，之后 30 天不掉线。
 
 > ⚠️ **代理会把 `Origin` 头摘掉**，这是必需的而不是优化。浏览器对非 GET/HEAD
 > 的请求即使同源也会带 `Origin`；`changeOrigin` 改了 `Host` 却留着指向 dev server
@@ -70,6 +74,26 @@ cp .env.example .env.local
 
 **没有中止接口**，所以「中止」按钮还是置灰的。
 
+## 登录与权限
+
+`POST /api/auth/login` 换 token，存 `localStorage`，之后所有请求带
+`Authorization: Bearer <token>`（和 CLI 的机器 token 同一个头）。
+
+**401 与 403 处置相反**：
+
+| | 含义 | 前端 |
+|---|---|---|
+| 401 | 没带 token / token 无效或过期 | 清 token → 路由守卫送回登录页 |
+| 403 | token 有效但缺 scope | **不清、不跳**。重新登录也拿不到那个权限，踢回登录页只会让人再登一次、再撞一次同样的 403 |
+
+**审批的「批准 / 退回 / 挂起」按 `user.canApprove` 开关**（来自 `sys_user.role`：
+`REVIEWER` / `ADMIN` 为 true，`QA_ENGINEER` 为 false）。
+
+⚠️ **`decidedBy` 由 token 决定，不是请求体里那个字段。** 所以「谁批的」一定是当前登录者：
+用 `?user=sato` 看佐藤的待办然后点批准，记录上仍会是当前登录的人。
+要演示「提交人 ↔ 审批人」两个视角，**真的换登录**（侧栏齿轮）——
+这比参数切换更真实，也不会出现两个身份来源。
+
 ## 案例写侧（M3）
 
 三段式：`POST /api/cases/draft` 建草稿 → `PUT /api/cases/{id}/draft` 反复保存 →
@@ -94,6 +118,14 @@ agent 的 `next_case_code` 工具调的是同一份实现，两边不会算出�
 `uk_case_code` 拦下。编辑器撞到这个会**自动重取一个号、重存、重提交一次**（只一次，
 避免真出问题时死循环）—— 这不是数据写坏了，是号被抢了，重试是安全的。
 ⚠️ 后端目前把它报成 **500 `DuplicateKeyException`**，所以只能靠匹配约束名来认，不能靠状态码。
+
+**保存反馈以 version 为准，时间戳只是补充。** 同一分钟内保存两次，`editUpdatedAt`
+看不出变化，而 `version` 每次必跳。`editUpdatedAt` 来自 `tc_step`（草稿的最后保存时间），
+不是 `tc_case` 的 `updatedAt` —— 后者是案例本身的最后变更，编辑草稿根本不动它。
+
+**`replayed: true` 表示这次调用是一次幂等重放** —— 对应的写入上一次其实就成功了
+（响应丢在路上，调用方重试了）。撞号自动重试那条路径要看它：`true` 意味着第一次
+已经成功，不该算成第二次写入，界面也不说「保存成功」而是说清楚发生了什么。
 
 **`draftJson` 的形状在 commit 那一步会变**：编辑期是对象 `{title, steps: [...]}`，
 落地后是**纯步骤数组** `[{seq:1,…}]`（老执行器读数组）。`parseDraft()` 按 `status` 分支，
