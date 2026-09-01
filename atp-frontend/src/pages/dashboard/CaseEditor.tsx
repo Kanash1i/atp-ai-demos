@@ -195,17 +195,12 @@ export default function CaseEditor({
   const remote = useDraft(mode === 'open' ? id : null);
 
   /*
-   * 编辑期本该显示 editUpdatedAt（tc_step，草稿的最后保存时间）而不是 updatedAt
-   * （tc_case，编辑草稿不会动它）—— 但它只在 CaseDetailVO 上，DraftView 没带。
+   * 保存反馈以 **version 为准**，时间戳只是补充：
+   * 同一分钟内保存两次，时间戳看不出变化，而 version 每次必跳。
    *
-   * 而 GET /api/cases/{id} 对 AI_DRAFT 案例直接 500：
-   *   "UncheckedIOException: 案例 … 的 step_json 解析失败"
-   * 因为编辑期 step_json 是对象 {title, steps}，而详情接口按数组解析，没有分支。
-   * 恰恰在编辑器唯一能开的那个状态下取不到。
-   *
-   * 所以这里不去取。保存反馈用「已保存 · v{n}」和顶栏的 version ——
-   * 版本号跳了就是存进去了，比时间戳更不容易看错。
-   * 已请后端把 editUpdatedAt 加进 DraftView，并让详情接口按 status 分支。
+   * editUpdatedAt 来自 tc_step（草稿的最后保存时间），不是 tc_case 的 updatedAt ——
+   * 后者是案例本身的最后变更，编辑草稿根本不动它，拿它显示「最后修改」的话，
+   * 用户改完点保存会看到时间纹丝不动。
    */
 
   const [view, setView] = useState<DraftView | null>(null);
@@ -370,6 +365,9 @@ export default function CaseEditor({
               </Tag>
               <span className="font-mono text-[11px] text-ink-4">v{view.version}</span>
             </>
+          )}
+          {view?.editUpdatedAt && (
+            <span className="font-mono text-[10.5px] text-ink-4">{view.editUpdatedAt}</span>
           )}
           {dirty && <span className="text-[11.5px] text-yamabuki">{t('editor.dirty')}</span>}
           <div className="grow" />
@@ -570,7 +568,17 @@ export default function CaseEditor({
           {blocked && <span className="text-[11.5px] text-shu">{t('editor.errorBlocks')}</span>}
           {!blocked && missing && editable && <span className="text-[11.5px] text-yamabuki">{missing}</span>}
           {save.isSuccess && !dirty && !save.isPending && view && (
-            <span className="text-[11.5px] text-matsu">{t('editor.saved', { version: view.version })}</span>
+            <span className="text-[11.5px] text-matsu">
+              {t('editor.saved', { version: view.version })}
+              {view.editUpdatedAt && <span className="ml-1.5 font-mono text-ink-4">{view.editUpdatedAt}</span>}
+            </span>
+          )}
+          {/*
+            replayed = 这次调用是一次幂等重放：对应的写入上一次其实就成功了。
+            不提示「保存成功」而是说清楚发生了什么 —— 否则用户会以为自己多存了一份。
+          */}
+          {view?.replayed && (
+            <span className="text-[11.5px] text-ai">{t('editor.replayed')}</span>
           )}
           <div className="grow" />
           <button

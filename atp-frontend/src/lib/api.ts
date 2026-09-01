@@ -1,9 +1,10 @@
 import type {
-  Approval, ApprovalStats, CaseDetail, ChatEvent, CreateDraftRequest, Decision,
-  DispatchRequest, DispatchResponse, DraftView, ExecNode, ExecStats, ModuleDictEntry,
-  ProblemDetail, Project, RecentRun, RunningBatch, TaskDetail, TreeModule,
+  Approval, ApprovalStats, AuthUser, CaseDetail, ChatEvent, CreateDraftRequest, Decision,
+  DispatchRequest, DispatchResponse, DraftView, ExecNode, ExecStats, LoginResponse,
+  ModuleDictEntry, ProblemDetail, Project, RecentRun, RunningBatch, TaskDetail, TreeModule,
   ValidationFinding, ValidationResult,
 } from './types';
+import { clearSession, getToken, setSession } from './auth';
 
 /**
  * dev 下走 vite 代理（同源 /api），生产同域部署也是同源。
@@ -48,12 +49,19 @@ async function parseProblem(res: Response): Promise<ProblemDetail | null> {
   }
 }
 
+/** 有 token 就带上。和机器 token 同一个头 —— Sa-Token 那套配置是全局的 */
+function authHeader(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T | NoContent> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       Accept: 'application/json',
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      ...authHeader(),
       ...init?.headers,
     },
   });
@@ -61,7 +69,20 @@ async function request<T>(path: string, init?: RequestInit): Promise<T | NoConte
   if (res.status === 204) return NO_CONTENT;
 
   if (!res.ok) {
-    throw new ApiError(res.status, await parseProblem(res), `${res.status} ${res.statusText}`);
+    const problem = await parseProblem(res);
+
+    /*
+     * 401 = 没带 token / token 无效或过期 → 清掉登录态，路由守卫会把人送回登录页。
+     * 403 = token 有效但缺 scope → **不清、不跳**。重新登录也拿不到那个权限，
+     *       把人踢回登录页只会让他再登一次、再撞一次同样的 403。
+     *
+     * 登录接口自己的 401（用户名或密码不正确）不走这里 —— 那时本来就没有登录态。
+     */
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      clearSession();
+    }
+
+    throw new ApiError(res.status, problem, `${res.status} ${res.statusText}`);
   }
 
   return (await res.json()) as T;
@@ -147,6 +168,25 @@ export async function dispatchRun(body: DispatchRequest): Promise<DispatchRespon
   });
   if (out === NO_CONTENT) throw new ApiError(204, null, 'unexpected 204');
   return out;
+}
+
+/* ---------- 登录 ---------- */
+
+/** 登录成功即写入 session；后续所有请求自动带 Authorization */
+export async function login(username: string, password: string): Promise<AuthUser> {
+  const out = await post<LoginResponse>('/api/auth/login', { username, password });
+  setSession(out.token, out.user);
+  return out.user;
+}
+
+/** 凭据不对（用户名或密码错），区别于「token 过期」那种 401 */
+export function isBadCredentials(err: unknown): boolean {
+  return problemType(err) === 'https://atp.example/problems/bad-credentials';
+}
+
+/** token 有效但缺权限。detail 会写明缺哪个 scope */
+export function isForbidden(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 403;
 }
 
 /* ---------- 写侧（面板⑥）---------- */
@@ -270,7 +310,7 @@ export async function streamChat(
 ): Promise<void> {
   const res = await fetch(`${BASE}/api/chat/${conversationId}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream', ...authHeader() },
     body: JSON.stringify({ message }),
     signal,
   });

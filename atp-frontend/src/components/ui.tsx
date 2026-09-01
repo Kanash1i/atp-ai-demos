@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
+import { ApiError } from '../lib/api';
 
 /** 稿子里那种小方角标签：状态、优先级、STD 编号 */
 export function Tag({
@@ -107,11 +108,20 @@ export function AsyncBlock({
   }
 
   if (error) {
+    /*
+     * 401 不是「连不上后端」—— 后端好好的，是这个请求没有身份。
+     * 两者的提示完全不同：一个要去起服务，一个要去登录。
+     * 写侧（新建/编辑/提交）现在需要 token，而人的登录链路还没做。
+     */
+    const unauthorized = error instanceof ApiError && error.status === 401;
+
     return (
       <div className="p-10 text-center">
-        <div className="text-[13px] text-shu">{t('common.backendDown')}</div>
-        <div className="mx-auto mt-3 max-w-[520px] font-mono text-[11px] leading-[1.9] text-ink-4">
-          {t('common.backendDownHint')}
+        <div className="text-[13px] text-shu">
+          {unauthorized ? t('common.unauthorized') : t('common.backendDown')}
+        </div>
+        <div className="mx-auto mt-3 max-w-[520px] text-[11.5px] leading-[1.9] text-ink-4">
+          {unauthorized ? t('common.unauthorizedHint') : t('common.backendDownHint')}
         </div>
         <div className="mt-2 font-mono text-[11px] text-ink-5">
           {error instanceof Error ? error.message : String(error)}

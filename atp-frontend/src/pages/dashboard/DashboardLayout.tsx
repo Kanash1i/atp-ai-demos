@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import LangSwitcher from '../../components/LangSwitcher';
 import { LiveDot } from '../../components/ui';
@@ -7,7 +7,8 @@ import {
   IconGear, IconRuns, IconSearch, LogoMark,
 } from '../../components/icons';
 import { useApprovalStats, useNodes } from '../../lib/queries';
-import { DEMO_USER } from '../../lib/api';
+import { useSession } from '../../lib/useSession';
+import { clearSession } from '../../lib/auth';
 
 const NAV = [
   { to: 'cases', key: 'cases', Icon: IconCases },
@@ -16,13 +17,6 @@ const NAV = [
   { to: 'datasets', key: 'datasets', Icon: IconDatasets },
   { to: 'approvals', key: 'approvals', Icon: IconApprovals },
 ] as const;
-
-/** 三个演示账号，M1 用 ?user= 带；接上 Sa-Token 之后这个参数保留用于切身份 */
-const USERS: Record<string, { name: string; initials: string }> = {
-  kaneshiro: { name: '金城 悠人', initials: 'KY' },
-  sato: { name: '佐藤 美咲', initials: 'SM' },
-  tanaka: { name: '田中 直樹', initials: 'TN' },
-};
 
 function EngineCard() {
   const { t } = useTranslation();
@@ -64,9 +58,11 @@ function EngineCard() {
 
 export default function DashboardLayout() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const { pathname } = useLocation();
   const { data: stats } = useApprovalStats();
-  const user = USERS[DEMO_USER] ?? { name: DEMO_USER, initials: DEMO_USER.slice(0, 2).toUpperCase() };
+  const session = useSession();
+  const user = session?.user;
 
   const activeKey = NAV.find((n) => pathname.includes(`/dashboard/${n.to}`))?.key ?? 'cases';
 
@@ -115,13 +111,30 @@ export default function DashboardLayout() {
 
         <div className="flex items-center gap-2.5 border-t border-line px-[18px] py-[14px]">
           <span className="flex h-[30px] w-[30px] items-center justify-center rounded-full bg-ai font-mono text-[11.5px] text-white">
-            {user.initials}
+            {user?.avatarText ?? '??'}
           </span>
           <div className="min-w-0 grow">
-            <div className="text-[12.5px] text-ink">{user.name}</div>
-            <div className="text-[10.5px] text-ink-4">{t('nav.role')}</div>
+            {/* 姓名来自 sys_user，是日文名，原样显示不翻译 */}
+            <div className="truncate text-[12.5px] text-ink">{user?.displayName ?? '—'}</div>
+            <div className="font-mono text-[10px] text-ink-4">{user?.role ?? ''}</div>
           </div>
-          <IconGear size={15} className="text-ink-4" />
+          {/*
+            退出即切身份。审批的 decidedBy 是从 token 解的，不是请求体里那个字段 ——
+            所以演示「提交人 ↔ 审批人」必须真的换登录，用 ?user= 参数切出来的视角
+            点了批准，记录上仍会是当前登录的那个人。
+          */}
+          <button
+            type="button"
+            title={t('login.switchUser')}
+            aria-label={t('login.signOut')}
+            onClick={() => {
+              clearSession();
+              navigate(`/login?u=${encodeURIComponent(user?.username ?? '')}`, { replace: true });
+            }}
+            className="rounded-sm p-1 text-ink-4 transition-colors hover:text-shu"
+          >
+            <IconGear size={15} />
+          </button>
         </div>
       </aside>
 
