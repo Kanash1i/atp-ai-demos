@@ -31,9 +31,11 @@ mkdir -p "$OUT"
 
 echo "→ 1/3 构建平台与 mock-shop"
 # ⚠️ 跳过测试：并发测试要连真 PG，构建机上未必有。测试单独跑（mvn -pl atp-platform-api test）
-(cd atp-platform && mvn -B -q -pl atp-web,mock-shop -am package -DskipTests)
+(cd atp-platform && mvn -B -q -pl atp-web,mock-shop,atp-runner -am package -DskipTests)
 cp atp-platform/atp-web/target/atp-web-*.jar       "$OUT/app.jar"
 cp atp-platform/mock-shop/target/mock-shop-*.jar   "$OUT/mock-shop.jar"
+# 执行节点。⚠️ 它部署在台式机上，与平台不同机 —— 见 deploy/runner-compose.yaml
+cp atp-platform/atp-runner/target/atp-runner-*.jar "$OUT/runner.jar"
 
 echo "→ 2/3 构建 atp CLI"
 # ⚠️ 两个都不能省：

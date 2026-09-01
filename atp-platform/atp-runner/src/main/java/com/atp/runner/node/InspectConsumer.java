@@ -105,9 +105,7 @@ public class InspectConsumer implements ApplicationRunner {
 
                 if (browser == null) {
                     playwright = Playwright.create();
-                    browser = playwright.chromium().launch(new BrowserType.LaunchOptions()
-                            .setChannel(props.getBrowserChannel())
-                            .setHeadless(true));  // 探查不录像，headless 就够
+                    browser = playwright.chromium().launch(BrowserLaunch.options(props, true));  // 探查不录像，headless 就够
                 }
                 lastUsed = System.currentTimeMillis();
                 queue.reply(inspect(browser, req));

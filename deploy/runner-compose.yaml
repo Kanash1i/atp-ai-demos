@@ -1,0 +1,96 @@
+# 执行节点池 + 被测系统 —— 跑在台式机上
+#
+# ⭐ 为什么单独一份 compose，而不是并进 deploy/compose.yaml：
+#    按网络隔离拓扑（00-SHARED-CONTEXT §2.0），**只有执行机连得到被测系统**。
+#    平台和执行节点本来就该在不同机器上，两份 compose 正好对应两台机器。
+#
+# ⚠️ 节点必须和 mock-shop 同侧。搬节点就要搬 mock-shop，这不是配置问题是拓扑决定的。
+#
+# 部署（在笔记本上执行，docker context 指向台式机）：
+#
+#   docker --context remote compose -f deploy/runner-compose.yaml up -d
+#
+# ⚠️ 用 `source` 而不是 --env-file：仓库根 .env 里有自引用变量，
+#    compose 的 --env-file 不做展开，且只 warn 不报错。
+
+name: atp-runner
+
+# ── 五个节点共用的定义 ────────────────────────────────────────
+# ⚠️ 不能用 deploy.replicas —— 副本之间环境变量完全相同，
+#    5 个节点会用同一个 node-name 注册成**同一行**，看板上永远只有一个。
+#    节点名是稳定标识（NodeRegistrar 靠它复用注册行），必须一个一个给。
+x-node: &node
+  image: atp-runner:latest
+  restart: unless-stopped
+  environment: &node-env
+    # ── 数据库与 Redis：就在这台机器上，走容器名直连内部端口 ──
+    # ⭐ 不走宿主映射的 25432/25379 —— 同一个 docker 网络内没必要绕出去
+    # ⚠️ 用 ATP_DB_*（应用侧那套），不是 ATP_PG_*。
+    #    仓库根 .env 里只定义了 ATP_DB_* —— ATP_PG_* 仅作为 infra/compose.yaml
+    #    的内联默认值存在，在 .env 里查不到，引用它只会得到空串。
+    #    而"密码是空串"在 compose 这里不报错，一路带到 JDBC 才炸成
+    #    "The server requested SCRAM-based authentication, but no password was provided"。
+    ATP_DB_URL: jdbc:postgresql://atp-infra-postgres:5432/${ATP_PG_DB:-atp}
+    ATP_DB_USER: ${ATP_DB_USER}
+    ATP_DB_PASSWORD: ${ATP_DB_PASSWORD}
+    REDIS_HOST: atp-infra-redis
+    REDIS_PORT: 6379
+    REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+    # ── 录像回传的目的地 ──
+    # ⭐ 走公网域名而不是 Tailscale 地址：面试官的浏览器不在 Tailscale 网络里，
+    #    产物必须落在他能访问到的那一侧。用域名也让节点不依赖组网。
+    ATP_PLATFORM_URL: ${ATP_PLATFORM_URL:-https://k4suka.top}
+    ATP_UPLOAD_ENABLED: "true"
+
+    # ── 被测系统：同一个 compose 网络内的 mock-shop ──
+    MOCK_SHOP_URL: http://mock-shop:8088
+  networks:
+    - infra
+    - default
+  depends_on:
+    mock-shop:
+      condition: service_started
+
+services:
+  node-01:
+    <<: *node
+    environment:
+      <<: *node-env
+      ATP_NODE_NAME: node-01
+  node-02:
+    <<: *node
+    environment:
+      <<: *node-env
+      ATP_NODE_NAME: node-02
+  node-03:
+    <<: *node
+    environment:
+      <<: *node-env
+      ATP_NODE_NAME: node-03
+  node-04:
+    <<: *node
+    environment:
+      <<: *node-env
+      ATP_NODE_NAME: node-04
+  node-05:
+    <<: *node
+    environment:
+      <<: *node-env
+      ATP_NODE_NAME: node-05
+
+  # 被测系统。⚠️ 这一侧才是它该待的地方 —— 平台那份 compose 里它默认不起
+  mock-shop:
+    image: atp-mock-shop:latest
+    restart: unless-stopped
+    # 端口只在 compose 网络内可见，不映射到宿主：
+    # 除了执行节点，没有别人该访问被测系统
+    expose:
+      - "8088"
+
+networks:
+  # PG 与 Redis 归 infra/compose.yaml 管（project `atp-infra`），这里只是接进去
+  infra:
+    name: atp-infra_default
+    external: true
+  default:

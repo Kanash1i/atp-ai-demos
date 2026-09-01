@@ -51,7 +51,15 @@ public class RunnerProperties {
     /** 取任务的阻塞时长（秒）。到点返回 null，让循环有机会检查停止标志与刷心跳 */
     private int pollTimeoutSeconds = 5;
 
-    /** 浏览器渠道。chrome = 用系统已装的 Chrome，省掉 450MB 下载 */
+    /**
+     * 浏览器渠道。{@code chrome} = 用系统已装的 Chrome，省掉 450MB 下载。
+     *
+     * <p>⚠️ <b>留空 = 用 Playwright 自带的 chromium。</b> 容器里必须留空 ——
+     * Playwright 官方镜像自带的是它自己构建的 chromium，并没有 Google Chrome，
+     * 而 {@code setChannel("chrome")} 在那种环境下会在<b>启动浏览器时</b>才失败，
+     * 不是在启动进程时：节点能正常注册、心跳正常、看板显示在线，
+     * 只是每来一条任务就失败一条。
+     */
     private String browserChannel = "chrome";
 
     private boolean headless = true;

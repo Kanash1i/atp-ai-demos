@@ -85,9 +85,7 @@ public class TaskConsumer implements ApplicationRunner {
 
     private void loop() {
         try (Playwright playwright = Playwright.create()) {
-            Browser browser = playwright.chromium().launch(new BrowserType.LaunchOptions()
-                    .setChannel(props.getBrowserChannel())
-                    .setHeadless(props.isHeadless()));
+            Browser browser = playwright.chromium().launch(BrowserLaunch.options(props, props.isHeadless()));
             log.info("浏览器就绪：channel={} headless={}", props.getBrowserChannel(), props.isHeadless());
 
             while (running) {
