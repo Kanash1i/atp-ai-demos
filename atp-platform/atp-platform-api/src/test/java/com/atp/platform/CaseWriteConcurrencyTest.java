@@ -101,11 +101,18 @@ class CaseWriteConcurrencyTest {
         AtomicInteger conflicted = new AtomicInteger();
         ConcurrentLinkedQueue<String> unexpected = new ConcurrentLinkedQueue<>();
 
+        java.util.concurrent.atomic.AtomicInteger seq = new java.util.concurrent.atomic.AtomicInteger();
         runConcurrently(() -> {
             try {
                 // 10 个线程都拿着同一个 baseVersion —— 这正是「用户 A 与用户 B
                 // 同时打开同一条草稿编辑」的形状
-                writeService.update(caseId, minimalDraft(), baseVersion);
+                //
+                // ⚠️ 每个线程写**不同的内容**，这一点在加入幂等重放判定之后变成必须的：
+                //    内容相同的话，CAS 落空的那几个会被正确识别为「你要写的东西已经在库里了」
+                //    → 幂等成功。那是对的行为，但它测不出「恰好一个赢」——
+                //    因为大家想要的结果本来就一样，谁写进去的都无所谓。
+                //    **真正的竞争写入必须内容不同**，否则测的是幂等不是仲裁。
+                writeService.update(caseId, minimalDraft("线程 " + seq.incrementAndGet()), baseVersion);
                 won.incrementAndGet();
             } catch (CaseConflictException e) {
                 conflicted.incrementAndGet();
@@ -145,7 +152,7 @@ class CaseWriteConcurrencyTest {
         //    同样能让并发测试通过（恰好 0 个赢不了、1 个赢……）却让正常流程完全不可用。
         //    「拒绝所有人」和「只让一个人过」在并发断言下长得很像
         for (int i = 1; i <= 5; i++) {
-            version = writeService.update(caseId, minimalDraft(), version).version();
+            version = writeService.update(caseId, minimalDraft("第 " + i + " 次"), version).version();
             assertEquals(i, version, "第 " + i + " 次更新后版本应为 " + i);
         }
         cleanup(caseId);
@@ -185,17 +192,23 @@ class CaseWriteConcurrencyTest {
         assertTrue(done.await(60, TimeUnit.SECONDS), "并发任务未在 60 秒内全部结束");
     }
 
-    /** 一份形状合法的最小草稿。这组测试关心的是并发，不是内容 */
-    private String minimalDraft() {
+    /**
+     * 一份形状合法的最小草稿。
+     *
+     * @param mark 写进 title 的标记 —— 让每次调用产出**不同的内容**。
+     *             并发用例依赖这一点：内容相同的话，落空的那几个会被幂等重放判定
+     *             识别成成功，于是测不出「恰好一个赢」
+     */
+    private String minimalDraft(String mark) {
         return """
-                {"case_code":"ATP-CART-9999","title":"并发测试","module_id":"M003",
+                {"case_code":"ATP-CART-9999","title":"并发测试 %s","module_id":"M003",
                  "priority":"P2","author":"test","precondition":null,
                  "steps":[{"seq":1,"action":"OPEN_URL","input_data":"${base_url}/cart",
                            "wait_strategy":"NONE","wait_timeout_sec":10,"on_failure":"ABORT"},
                           {"seq":2,"action":"ASSERT_VISIBLE","locator_type":"XPATH",
                            "locator_value":"//div[@data-testid='cart-page']",
                            "wait_strategy":"VISIBLE","wait_timeout_sec":10,"on_failure":"ABORT"}]}
-                """;
+                """.formatted(mark);
     }
 
     private void cleanup(String caseId) {

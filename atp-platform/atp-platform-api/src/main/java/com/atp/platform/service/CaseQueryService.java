@@ -111,6 +111,9 @@ public class CaseQueryService {
         // 而 80 条案例、每条 5 步的校验本身是微秒级的，没有缓存的必要。
         ValidationResult result = validator.validate(toDomain(entity, module, steps));
 
+        // 编辑期的版本与保存时间都在 tc_step 上，取一次复用
+        TcStep step = stepOf(entity.getCaseId());
+
         return new CaseDetailVO(
                 entity.getCaseId(),
                 entity.getCaseCode(),
@@ -125,9 +128,11 @@ public class CaseQueryService {
                 entity.getAuthor(),
                 entity.getPrecondition(),
                 DisplayTime.toMinute(entity.getUpdatedAt()),
+                // ⚠️ 编辑期只有 tc_step 会动，tc_case 那个要等提交才变
+                DisplayTime.toMinute(step == null ? null : step.getUpdatedAt()),
                 entity.getVersion() == null ? 0 : entity.getVersion(),
                 // ⚠️ 写侧要的是 tc_step 的版本，不是 tc_case 的
-                stepVersion(entity.getCaseId()),
+                step == null || step.getVersion() == null ? 0 : step.getVersion(),
                 steps,
                 toVO(result));
     }
@@ -139,10 +144,8 @@ public class CaseQueryService {
      * 而 409 的文案说「内容被别人改过」—— 把人指向完全错误的方向，
      * 这类误导比直接报错更费时间。
      */
-    private int stepVersion(String caseId) {
-        TcStep step = stepMapper.selectOne(
-                new LambdaQueryWrapper<TcStep>().eq(TcStep::getCaseId, caseId));
-        return step == null || step.getVersion() == null ? 0 : step.getVersion();
+    private TcStep stepOf(String caseId) {
+        return stepMapper.selectOne(new LambdaQueryWrapper<TcStep>().eq(TcStep::getCaseId, caseId));
     }
 
     /**
@@ -192,14 +195,14 @@ public class CaseQueryService {
         if (step == null || step.getStepJson() == null || step.getStepJson().isBlank()) {
             return List.of();
         }
-        try {
-            return json.readValue(step.getStepJson(), new TypeReference<List<Step>>() {
-            });
-        } catch (IOException e) {
-            // ⚠️ 不吞掉：step_json 解析不了意味着这条案例根本没法执行，
-            //    静默返回空列表会让它在 UI 上显示成「一步都没有的案例」，比报错难查得多
-            throw new UncheckedIOException("案例 " + caseId + " 的 step_json 解析失败", e);
-        }
+        // ⚠️ 必须走 StepJson.parseSteps，不能自己 readValue 成 List<Step>：
+        //    step_json 有**两种形状** —— 编辑期是对象 {title, steps:[…]}，落地后是纯数组。
+        //    按数组直解会在 AI_DRAFT 状态下抛 UncheckedIOException → 500。
+        //
+        //    这个坑我在前端契约里用 ⚠️ 标出来提醒别人，**读侧自己却踩了一次** ——
+        //    因为这里写了第二份解析，而共享的那份早就把两种形状都处理了。
+        //    重复实现的代价不是多写几行，是修了一处另一处还错着。
+        return StepJson.parseSteps(step.getStepJson());
     }
 
     /** 实体 → 领域模型，喂给校验器。校验器只认领域模型，不认持久层实体 */

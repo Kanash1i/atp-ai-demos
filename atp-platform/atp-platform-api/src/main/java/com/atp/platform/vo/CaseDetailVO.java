@@ -34,7 +34,18 @@ public record CaseDetailVO(
         String caseType,
         String author,
         String precondition,
+        /**
+         * {@code tc_case.updated_at} —— 案例本身的最后变更时间。
+         * ⚠️ **编辑草稿不会改它**，只有提交才会。想显示「上次保存于」用 {@link #editUpdatedAt}。
+         */
         String updatedAt,
+        /**
+         * {@code tc_step.updated_at} —— 草稿内容的最后保存时间。
+         *
+         * <p>编辑期该看这个：用户改了草稿点保存，`tc_case.updated_at` 纹丝不动，
+         * 界面上显示「最后修改」却没变，人会以为没保存成功。
+         */
+        String editUpdatedAt,
         /**
          * {@code tc_case.version} —— 平台版本，编辑期全程不动。
          * ⚠️ **不要拿它去调 PUT/POST**，那两个要的是 {@link #editVersion}。
