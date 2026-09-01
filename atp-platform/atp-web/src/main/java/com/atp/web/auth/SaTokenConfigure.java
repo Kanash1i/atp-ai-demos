@@ -5,7 +5,6 @@ import cn.dev33.satoken.router.SaRouter;
 import cn.dev33.satoken.stp.StpUtil;
 import com.atp.common.enums.ApiScope;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -18,28 +17,23 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 前端目前没有登录态，把读接口也保护上，M1 那套面板会立刻全白 ——
  * 而人的登录链路是另一件事（{@code sys_user} + 密码），不该塞进这次改动里。
  *
- * <h3>过渡开关</h3>
+ * <h3>没有开关，这是有意的</h3>
  *
- * {@code atp.auth.enabled} 默认关。因为 CLI 还没开始带 token，
- * 一上来就强制会让 agent 的探查与自验立刻全挂。
- * 顺序是：平台先具备能力 → CLI 改造 → 打开开关 → 然后 PG 才能上云。
+ * 迁移期间这里有过一个 {@code atp.auth.enabled}，因为那时 CLI 还直连数据库、
+ * 不会带 token，强制鉴权会让 agent 的探查与自验立刻全挂。
  *
- * <p>⚠️ 这个开关是**过渡状态**，不是长期设计。CLI 改完就该删掉它 ——
- * 留着一个「一行配置就能关掉全部鉴权」的开关，本身就是个洞。
+ * <p>CLI 完成迁移之后（2026-09-01）它被**删掉**了，不是设成默认 true ——
+ * 留着一行能关掉全部鉴权的配置本身就是那个洞：
+ * **它不会被审计发现（配置看起来完全正常），只会在某次排查问题时被人临时关掉，然后忘了打开。**
+ *
+ * <p>要临时绕过鉴权只能改代码，而改代码会留在 diff 里。
  */
 @Slf4j
 @Configuration
 public class SaTokenConfigure implements WebMvcConfigurer {
 
-    @Value("${atp.auth.enabled:false}")
-    private boolean authEnabled;
-
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        if (!authEnabled) {
-            log.warn("[AUTH] 鉴权未启用（atp.auth.enabled=false）—— 过渡状态，CLI 改造完成后必须打开");
-            return;
-        }
         log.info("[AUTH] 鉴权已启用：写案例 / 自验 / 探查 需要窄 token");
 
         registry.addInterceptor(new SaInterceptor(handle -> {

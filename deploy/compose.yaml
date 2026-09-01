@@ -46,7 +46,6 @@ services:
       ATP_API_URL: http://localhost:8080
       ATP_CLIENT_ID: ${ATP_CLIENT_ID:-atp-cli}
       ATP_CLIENT_SECRET: ${ATP_CLIENT_SECRET:-}
-      ATP_AUTH_ENABLED: ${ATP_AUTH_ENABLED:-false}
 
       # ── 被测系统入口（探查与执行都指向它）──
       # ⭐ 这是**执行机视角**的地址，不是平台视角的。
