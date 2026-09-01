@@ -22,10 +22,6 @@ const (
 	// 数据库账号密码留在平台那一侧，agent 那一层拿不到。
 	EnvClientID     = "ATP_CLIENT_ID"
 	EnvClientSecret = "ATP_CLIENT_SECRET"
-
-	EnvDBURL      = "ATP_DB_URL"
-	EnvDBUser     = "ATP_DB_USER"
-	EnvDBPassword = "ATP_DB_PASSWORD"
 )
 
 type Config struct{ values map[string]string }
@@ -61,30 +57,6 @@ func (c *Config) APIBase() (string, error) {
 		return "", err
 	}
 	return strings.TrimRight(v, "/"), nil
-}
-
-// DSN 拼出 pgx 能用的连接串。ATP_DB_URL 支持两种写法：
-// 直接给 postgres://... 就原样用；给 jdbc:postgresql://host:port/db 则转换 ——
-// 因为 .env 是两侧共用的，知识侧那边是 Java。
-func (c *Config) DSN() (string, error) {
-	raw, err := c.Require(EnvDBURL)
-	if err != nil {
-		return "", err
-	}
-	user, err := c.Require(EnvDBUser)
-	if err != nil {
-		return "", err
-	}
-	pass := c.Optional(EnvDBPassword)
-
-	if strings.HasPrefix(raw, "postgres://") || strings.HasPrefix(raw, "postgresql://") {
-		return raw, nil
-	}
-	hostPart, ok := strings.CutPrefix(raw, "jdbc:postgresql://")
-	if !ok {
-		return "", fmt.Errorf("%s 格式无法识别: %s（支持 postgres://... 或 jdbc:postgresql://...）", EnvDBURL, raw)
-	}
-	return fmt.Sprintf("postgres://%s:%s@%s", user, pass, hostPart), nil
 }
 
 // 从当前目录向上找仓库根的 .env，最多找 5 层。找不到返回空表，不报错 ——

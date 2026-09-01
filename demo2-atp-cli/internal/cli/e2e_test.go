@@ -2,57 +2,43 @@ package cli_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
-	atpcli "github.com/Kanash1i/atp-ai-demos/atp-cli"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/cli"
 	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/config"
-	"github.com/Kanash1i/atp-ai-demos/atp-cli/internal/store"
 	"github.com/google/uuid"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-var dsn string
-
+// TestMain 把 e2e 指向【真实运行的平台】，不再起 PG 容器。
+//
+// ⚠️ 迁移之前这里起一个 postgres:17 容器、跑 DDL、注入 DSN —— 那是 CLI
+// 直连数据库时代的形状。现在 CLI 一句 SQL 都没有（arch_test 守着），
+// 端到端的另一端就是平台本身。
+//
+// 打真平台而不是写桩，是因为桩要把版本推进、CAS、重放全模拟一遍 ——
+// 那等于把平台再实现一次，而且模拟错了测试照样绿。
+//
+// 平台不可达时跳过：e2e 需要真环境，但不该让没有环境的人 go test ./... 挂掉。
 func TestMain(m *testing.M) {
-	ctx := context.Background()
-	c, err := tcpostgres.Run(ctx, "postgres:17",
-		tcpostgres.WithDatabase("atp"), tcpostgres.WithUsername("atp"), tcpostgres.WithPassword("atp"),
-		testcontainers.WithWaitStrategy(wait.ForListeningPort("5432/tcp")))
+	base, err := config.Load().APIBase()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "起容器失败:", err)
-		os.Exit(1)
+		fmt.Fprintln(os.Stderr, "跳过 e2e：没有 ATP_API_URL —", err)
+		os.Exit(0)
 	}
-	defer testcontainers.TerminateContainer(c) //nolint:errcheck
-
-	dsn, _ = c.ConnectionString(ctx, "sslmode=disable")
-	conn, err := store.Open(ctx, dsn)
+	c, err := net.DialTimeout("tcp", strings.TrimPrefix(strings.TrimPrefix(base, "http://"), "https://"), 2*time.Second)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "连不上:", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "跳过 e2e：平台不可达（%s）— %v\n", base, err)
+		os.Exit(0)
 	}
-	v0, v1 := atpcli.MigrationSQL()
-	for _, sql := range []string{v0, v1} {
-		if _, err := conn.Exec(ctx, sql); err != nil {
-			fmt.Fprintln(os.Stderr, "迁移失败:", err)
-			os.Exit(1)
-		}
-	}
-	conn.Close(ctx)
-
-	// CLI 从环境变量读配置 —— 这里直接注入，比 Java 版本靠系统属性干净
-	os.Setenv(config.EnvDBURL, dsn)
-	os.Setenv(config.EnvDBUser, "atp")
-	os.Setenv(config.EnvDBPassword, "atp")
+	c.Close()
 
 	os.Exit(m.Run())
 }
@@ -98,8 +84,21 @@ func run(args ...string) result {
 //	validate 直接判 12，而症状看起来像"业务逻辑挂了"，很误导。
 var caseSeq atomic.Int32
 
+// nextCaseCode 取一个本轮唯一的案例编号。
+//
+// ⚠️ 迁移之前每次跑都起一个新的 PG 容器，库是空的，固定号段就够用。
+// 现在 e2e 打的是持久化的平台库 —— 固定号段会跟【上一次跑】撞，
+// 症状是首次跑过、第二次挂，比"单跑过全量挂"更难查，因为它跟并发无关。
+// 所以基数取自启动时刻。
+//
+// 用 ATP-CLIT- 前缀而不是 ATP-CART-：后者里有 agent 端到端跑通的演示资产
+// （ATP-CART-0013/0014），测试不该往那个号段里塞东西。
+// ⚠️ schema 的 pattern 是 ^ATP-[A-Z]+-[0-9]{4}$ —— 前缀只能是字母，
+// 所以不能叫 ATP-E2E（"E2E" 里有数字，我第一版就是这么挂的）。
+var codeBase = int64(time.Now().Unix() % 9000)
+
 func nextCaseCode() string {
-	return fmt.Sprintf("ATP-CART-%04d", 1000+caseSeq.Add(1))
+	return fmt.Sprintf("ATP-CLIT-%04d", 1000+(codeBase+int64(caseSeq.Add(1)))%9000)
 }
 
 func draftFile(t *testing.T, title string) string {
@@ -108,10 +107,18 @@ func draftFile(t *testing.T, title string) string {
 	// ⚠️ case_code 上有唯一约束，每个用例必须用不同的编号 ——
 	//    否则先提交的那条会让后面的用例撞 uk_case_code，
 	//    而且症状是"某个用例单跑过、全量跑挂"，很难查。
+	// ⚠️ 内容必须【合规】—— 迁移之后 commit 必经平台的 StandardsValidator，
+	//    ERROR 一律拦下。迁移之前这里只有一个 OPEN_URL 也能提交成功，
+	//    因为 CLI 的直连路径根本不跑 STD 校验（规则引擎在 CLI 侧从未实现）。
+	//    「规则是硬的，agent 绕不过去」这句话是迁移之后才为真的。
+	//    STD-008：整条案例至少一个 ASSERT_*。
 	body := fmt.Sprintf(`{"case_code":%q,"title":%q,"module_id":"M003",
 	 "priority":"P1","author":"qa.kanashi",
 	 "steps":[{"seq":1,"action":"OPEN_URL","input_data":"http://x/cart",
-	           "wait_strategy":"PRESENCE","wait_timeout_sec":10,"on_failure":"ABORT"}]}`,
+	           "wait_strategy":"PRESENCE","wait_timeout_sec":10,"on_failure":"ABORT"},
+	          {"seq":2,"action":"ASSERT_VISIBLE","locator_type":"CSS",
+	           "locator_value":"[data-testid=\"cart\"]",
+	           "wait_strategy":"VISIBLE","wait_timeout_sec":10,"on_failure":"ABORT"}]}`,
 		nextCaseCode(), title)
 	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
