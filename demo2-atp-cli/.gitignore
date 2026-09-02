@@ -1,1 +1,9 @@
 bin/atp
+
+# opencode 包的构建产物 —— 由 `make pack` 现场生成，不进仓库。
+# ⚠️ 五个平台的二进制合计约 35MB，提交进来会让每次 clone 都背着它们，
+#    而它们从源码一条命令就能重建。
+packages/opencode-atp/bin/
+packages/opencode-atp/*.tgz
+# SKILL.md 的唯一来源是 .opencode/skills/，这里是 make pack 复制过去的副本
+packages/opencode-atp/skills/
