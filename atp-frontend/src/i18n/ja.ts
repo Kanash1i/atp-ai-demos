@@ -126,6 +126,7 @@ const ja: Dict = {
     noRunning: '実行中のバッチはありません',
     noRunningHint: '履歴はシードだが「今走っている」ことは本物でなければならない —— その場で投げて初めて動き出す',
     dispatch: '実行を投げる',
+    dispatching: '{{count}} 件を投入中…',
     abort: '中止',
     recent: '直近の実行結果',
     showingLast: '直近 {{count}} 件を表示',

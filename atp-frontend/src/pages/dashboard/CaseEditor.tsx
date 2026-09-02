@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AsyncBlock, ColLabel, SectionTitle, Tag } from '../../components/ui';
 import { IconPlus } from '../../components/icons';
+import Modal from '../../components/Modal';
 import {
   useCommitDraft, useCreateDraft, useDraft, useModules, useNextCaseCode, useSaveDraft,
 } from '../../lib/queries';
@@ -352,13 +353,17 @@ export default function CaseEditor({
   const missing = !doc?.title?.trim() ? t('editor.needTitle') : !doc?.module_id ? t('editor.needModule') : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-ink/25" onClick={onClose}>
-      <div
-        className="flex h-full w-[1000px] max-w-full flex-col border-l border-line bg-card"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal
+      onClose={onClose}
+      align="right"
+      labelledBy="case-editor-title"
+      className="flex h-full w-[1000px] max-w-full flex-col border-l border-line bg-card"
+    >
+      <>
         <div className="flex shrink-0 items-center gap-3 border-b border-line px-6 py-4">
-          <SectionTitle>{mode === 'new' ? t('editor.newTitle') : t('editor.editTitle')}</SectionTitle>
+          <span id="case-editor-title">
+            <SectionTitle>{mode === 'new' ? t('editor.newTitle') : t('editor.editTitle')}</SectionTitle>
+          </span>
           {view && (
             <>
               <Tag tone={`${toneOf(caseStatusTone, view.status).bg} ${toneOf(caseStatusTone, view.status).fg}`}>
@@ -600,7 +605,7 @@ export default function CaseEditor({
             {commit.isPending ? t('editor.committing') : t('editor.commit')}
           </button>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }

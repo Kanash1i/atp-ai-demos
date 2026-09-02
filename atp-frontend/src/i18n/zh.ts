@@ -131,6 +131,7 @@ const zh = {
     noRunning: '当前无执行中的批次',
     noRunningHint: '历史数据是种子，但「正在跑」这件事必须是真的 —— 现场派发一批它才活起来',
     dispatch: '派发执行',
+    dispatching: '正在派发 {{count}} 条…',
     abort: '中止',
     recent: '最近执行结果',
     showingLast: '显示最近 {{count}} 条',

@@ -30,8 +30,17 @@ export const useCaseDetail = (caseId: string | undefined) =>
     ...once,
   });
 
-export const useExecStats = () =>
-  useQuery({ queryKey: ['exec', 'stats'], queryFn: api.execStats, ...once });
+/**
+ * 顶部四张卡。批次在跑时跟着一起刷 —— 否则进度条在动、统计却停在派发之前，
+ * 看起来像「跑完的结果没算进去」。
+ */
+export const useExecStats = (live = false) =>
+  useQuery({
+    queryKey: ['exec', 'stats'],
+    queryFn: api.execStats,
+    refetchInterval: live ? 5000 : false,
+    ...once,
+  });
 
 /**
  * 执行中的批次。没有批次在跑时后端返回 204，这里 data 是 NO_CONTENT。
@@ -86,8 +95,20 @@ export function useDispatch() {
   });
 }
 
-export const useRecentRuns = (limit = 200) =>
-  useQuery({ queryKey: ['exec', 'recent', limit], queryFn: () => api.execRecent(limit), ...once });
+/**
+ * 「最近执行结果」。
+ *
+ * ⚠️ `live` 必须跟着批次走。之前这张表只在批次**结束**（拿到 204）那一刻刷一次，
+ * 于是跑的过程中上面进度条一直在动、下面表格一条不变 ——
+ * 从用户视角看像「跑完的结果丢了」，而实际上接口早就有新数据了。
+ */
+export const useRecentRuns = (limit = 200, live = false) =>
+  useQuery({
+    queryKey: ['exec', 'recent', limit],
+    queryFn: () => api.execRecent(limit),
+    refetchInterval: live ? 3000 : false,
+    ...once,
+  });
 
 export const useTaskDetail = (taskId: string | null) =>
   useQuery({
