@@ -1,0 +1,14 @@
+{
+  "name": "opencode-atp-cli",
+  "version": "0.1.0",
+  "description": "ATP 自动化测试平台的 atp CLI —— 让 opencode 用自然语言写出符合规范、可真实执行的测试案例",
+  "type": "module",
+  "license": "MIT",
+  "main": "index.js",
+  "exports": { ".": "./index.js" },
+  "files": ["index.js", "bin/", "skills/", "README.md"],
+  "engines": { "node": ">=18" },
+  "keywords": ["opencode", "opencode-plugin", "atp", "test-automation"],
+  "os": ["linux", "darwin", "win32"],
+  "cpu": ["x64", "arm64"]
+}
