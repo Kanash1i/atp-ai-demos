@@ -48,7 +48,11 @@ export default function Login() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-paper px-6">
+    // overflow-hidden 不是可选的：下面那个装饰圆定位到了视口外 180px，
+    // 不裁掉的话 body 会被撑宽、页面可以横向拖动 —— 视觉上完全看不出来
+    // （圆在角落、颜色浅），但触控板上很容易误触。Landing 的根元素有这个类，
+    // 这份布局是从那儿抄过来的，抄漏了。
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-paper px-6">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0"
@@ -122,13 +126,22 @@ export default function Login() {
           <div className="mb-2.5 font-mono text-[9.5px] tracking-[.14em] text-ink-4">
             {t('login.demoAccounts')}
           </div>
-          <div className="flex gap-2">
+          {/*
+            纵向一行一个，不是三个挤一排。
+            横排那版三个按钮正好填满容器、余量 0px —— 在开发机上永远看不出问题，
+            但只要文字宽一点点就溢出：字体回退（没装 Zen Kaku Gothic New）、
+            浏览器缩放、不同字重渲染，任一条都够。窄视口下必坏
+            （375px 视口溢出 65px）。
+            「正好放得下」不是放得下。纵向排完全没有这个临界点，
+            而且姓名和用户名都能完整显示，比截断成「金城…」有用。
+          */}
+          <div className="flex flex-col gap-1.5">
             {DEMO_ACCOUNTS.map((a) => (
               <button
                 key={a.username}
                 type="button"
                 onClick={() => setUsername(a.username)}
-                className={`flex flex-1 items-center gap-2 rounded-sm border px-2.5 py-2 text-left transition-colors ${
+                className={`flex w-full min-w-0 items-center gap-2.5 rounded-sm border px-2.5 py-2 text-left transition-colors ${
                   username === a.username
                     ? 'border-ink bg-ink text-paper'
                     : 'border-line bg-card text-ink-2 hover:bg-line-4'
@@ -141,7 +154,15 @@ export default function Login() {
                 >
                   {a.initials}
                 </span>
-                <span className="min-w-0 truncate text-[11px]">{a.display}</span>
+                {/* 姓名不翻译 */}
+                <span className="min-w-0 truncate text-[12px]">{a.display}</span>
+                <span
+                  className={`ml-auto shrink-0 font-mono text-[10px] ${
+                    username === a.username ? 'text-paper/60' : 'text-ink-5'
+                  }`}
+                >
+                  {a.username}
+                </span>
               </button>
             ))}
           </div>
