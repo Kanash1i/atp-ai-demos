@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ColLabel, LiveDot, SectionTitle, Tag } from '../../components/ui';
 import { IconAgent, IconArrowRight, IconPlus } from '../../components/icons';
@@ -21,6 +22,18 @@ import type { ChatConversation, ChatEvent, ChatMessage, ChatTimeline } from '../
  */
 
 const SUGGESTION_KEYS = ['agent.q1', 'agent.q2', 'agent.q3'] as const;
+
+/**
+ * agent 的表格有时 4~5 列，气泡宽度放不下。
+ * 让表格自己横向滚，而不是把整个对话区撑宽 —— 撑宽的话右边的思考过程面板会被挤掉。
+ */
+const MD_COMPONENTS = {
+  table: ({ children, ...rest }: React.ComponentPropsWithoutRef<'table'>) => (
+    <div className="table-scroll">
+      <table {...rest}>{children}</table>
+    </div>
+  ),
+};
 
 /** 历史消息里的路由结论藏在 timelineJson 里，还原成「案例编写 · L2 0.98」那种标签 */
 function routeOf(msg: ChatMessage): string | null {
@@ -317,7 +330,15 @@ export default function AgentPanel() {
 
                   {turn.answer ? (
                     <div className="agent-md text-[13.5px] leading-[2]">
-                      <Markdown>{turn.answer}</Markdown>
+                      {/*
+                        ⚠️ 表格、删除线、任务列表、自动链接都不是 CommonMark，是 GFM 扩展。
+                        react-markdown 默认只认 CommonMark，不挂 remark-gfm 的话
+                        agent 生成的案例表会原样显示成一堆竖线 ——
+                        而那一屏正是演示里最关键的一屏。
+                      */}
+                      <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+                        {turn.answer}
+                      </Markdown>
                     </div>
                   ) : turn.streaming ? (
                     <div className="text-[12.5px] text-ink-4">{t('common.loading')}</div>
