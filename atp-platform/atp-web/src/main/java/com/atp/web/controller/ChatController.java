@@ -11,12 +11,14 @@ import com.atp.agent.chat.ChatEvent;
 import com.atp.agent.chat.ChatService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -85,9 +87,23 @@ public class ChatController {
         return emitter;
     }
 
-    /** 结束会话，释放 agent 实例与它的多轮上下文 */
-    /** 关闭会话：释放 agent 实例（连同 memory），并把会话标记为已删除 */
+    /**
+     * 关闭会话：释放 agent 实例（连同 memory），并把会话标记为已删除。
+     *
+     * <h3>⚠️ 必须是 204，不能是「200 + 空 body」</h3>
+     *
+     * 返回 {@code void} 时 Spring 给的是 <b>200 加一个零字节的 body</b>，
+     * 而调用方拿到 200 的第一反应是去 {@code res.json()} —— 解析空字符串直接抛异常。
+     *
+     * <p>症状是：<b>后端删干净了，前端却当成删除失败</b>，
+     * 于是它后面的刷新逻辑一步都没执行，列表纹丝不动，手动刷新页面才看得到变化。
+     * 整条链上没有任何一处报错到用户面前。
+     *
+     * <p>204 才是「做完了，没有内容给你」的正确说法，
+     * 而且任何按 HTTP 规范写的客户端都会跳过读 body。
+     */
     @DeleteMapping("/{conversationId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
     public void close(@PathVariable String conversationId) {
         chatService.close(conversationId);
         history.delete(conversationId, currentUserId());
