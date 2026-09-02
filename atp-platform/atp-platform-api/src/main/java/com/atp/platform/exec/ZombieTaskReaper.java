@@ -62,6 +62,22 @@ public class ZombieTaskReaper {
     @Value("${atp.exec.zombie-threshold-seconds:90}")
     private int zombieThresholdSeconds;
 
+    /**
+     * 绝对上限：RUNNING 超过这么久就回收，<b>不管节点在不在线</b>。
+     *
+     * <p>下面那条「节点还在心跳就不动它」的规则有个前提：心跳能代表消费循环还活着。
+     * 这个前提是错的 —— 心跳是独立的 {@code @Scheduled} 线程，
+     * 消费循环死了它照样跳。线上真的撞过：节点心跳正常、状态 IDLE，
+     * 手上那条任务却在 RUNNING 上挂了 <b>7 小时</b>，批次永远收不了尾，
+     * 看板的 Elapsed 一路涨到 436 分钟，看起来像「执行特别慢」。
+     *
+     * <p>所以要一条不依赖任何存活判断的兜底。默认 10 分钟：
+     * 单条案例 16 步、每步超时 10 秒也就 160 秒，加浏览器启动与录像保存，
+     * 10 分钟足够宽，不会误伤真正在跑的慢任务。
+     */
+    @Value("${atp.exec.stuck-threshold-seconds:600}")
+    private int stuckThresholdSeconds;
+
     /** 节点心跳多久算掉线。要大于心跳间隔的两三倍，否则一次网络抖动就误判 */
     @Value("${atp.exec.node-offline-seconds:90}")
     private int nodeOfflineSeconds;
@@ -173,15 +189,28 @@ public class ZombieTaskReaper {
             ExecNode node = nodes.get(task.getNodeName());
             boolean nodeAlive = node != null && node.getHeartbeatAt() != null
                     && node.getHeartbeatAt().isAfter(nodeDeadline);
-            if (nodeAlive) {
-                // 节点还在心跳 —— 任务是真的在跑（只是慢），不能抢
+            boolean stuckTooLong = task.getStartedAt() != null
+                    && task.getStartedAt().isBefore(OffsetDateTime.now().minusSeconds(stuckThresholdSeconds));
+
+            if (nodeAlive && !stuckTooLong) {
+                // 节点还在心跳，且没超过绝对上限 —— 任务是真的在跑（只是慢），不能抢
                 continue;
+            }
+            if (nodeAlive) {
+                // ⚠️ 节点在线却卡了这么久，说明它的消费循环已经不工作了 ——
+                //    心跳线程和消费线程是两个线程，前者活着不代表后者活着。
+                log.warn("任务 {} 在在线节点 {} 上已 RUNNING 超过 {} 秒，判定为卡死并回收",
+                        task.getCaseCode(), task.getNodeName(), stuckThresholdSeconds);
             }
 
             int retried = task.getRetryCount() == null ? 0 : task.getRetryCount();
             if (retried >= maxRetry) {
                 resultWriter.finish(task.getTaskId(), TaskStatus.FAILED, 0, null,
-                        "节点 %s 掉线，且已重试 %d 次仍未完成".formatted(task.getNodeName(), retried),
+                        (nodeAlive
+                                ? "节点 %s 上卡死超过 %d 秒，且已重试 %d 次仍未完成"
+                                        .formatted(task.getNodeName(), stuckThresholdSeconds, retried)
+                                : "节点 %s 掉线，且已重试 %d 次仍未完成"
+                                        .formatted(task.getNodeName(), retried)),
                         null, null, List.of());
                 log.warn("任务 {} 重试 {} 次后判失败", task.getCaseCode(), retried);
             } else {
@@ -195,8 +224,11 @@ public class ZombieTaskReaper {
                         .set("started_at", null)
                         .set("retry_count", retried + 1));
                 requeue.add(task.getTaskId());
-                log.warn("任务 {} 所在节点 {} 已掉线，放回队列（第 {} 次）",
-                        task.getCaseCode(), task.getNodeName(), retried + 1);
+                // ⚠️ 文案要说真话：两种回收原因在排查时指向完全不同的方向 ——
+                //    「掉线」查网络和进程存活，「卡死」查那条案例和消费循环。
+                log.warn("任务 {} 所在节点 {} {}，放回队列（第 {} 次）",
+                        task.getCaseCode(), task.getNodeName(),
+                        nodeAlive ? "仍在心跳但任务已卡死" : "已掉线", retried + 1);
             }
         }
         return requeue;

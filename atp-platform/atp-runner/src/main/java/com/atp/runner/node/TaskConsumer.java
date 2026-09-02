@@ -84,6 +84,7 @@ public class TaskConsumer implements ApplicationRunner {
     }
 
     private void loop() {
+        boolean fatal = false;
         try (Playwright playwright = Playwright.create()) {
             Browser browser = playwright.chromium().launch(BrowserLaunch.options(props, props.isHeadless()));
             log.info("浏览器就绪：channel={} headless={}", props.getBrowserChannel(), props.isHeadless());
@@ -95,11 +96,29 @@ public class TaskConsumer implements ApplicationRunner {
                     // ⚠️ 单条任务的失败不能让整个循环退出 —— 节点会变成「在线但不干活」，
                     //    比直接挂掉更难发现。记日志，继续下一条。
                     log.error("处理任务时出错，继续下一条", e);
+                } catch (Error e) {
+                    // ⚠️ Error 不是「这条任务失败了」，是「这个 JVM 已经不可信了」
+                    //    （OOM、native 层崩溃之类）。继续跑下去只会产出无法解释的失败结果。
+                    //
+                    //    任务已经在 pollOnce 里落地成 FAILED，这里主动退出进程，
+                    //    让 compose 的 restart: unless-stopped 拉起一个干净的节点 ——
+                    //    **重建比苟活可靠**。不退出的话就是之前那个故障：
+                    //    节点在线、心跳正常、永远不再取任务。
+                    log.error("节点遇到 Error，JVM 状态已不可信，主动退出让容器重建", e);
+                    fatal = true;
+                    break;
                 }
             }
             browser.close();
-        } catch (Exception e) {
-            log.error("消费循环异常退出，节点将停止接活", e);
+        } catch (Throwable t) {
+            // ⚠️ 必须是 Throwable：这个方法是 worker.submit() 提交的，
+            //    从它抛出去的任何东西都会被 Future 静默吞掉，一行日志都不留。
+            log.error("消费循环异常退出，节点将停止接活", t);
+            fatal = true;
+        }
+        if (fatal) {
+            // 退出码非 0，容器按 restart 策略重建
+            System.exit(1);
         }
     }
 
@@ -120,14 +139,24 @@ public class TaskConsumer implements ApplicationRunner {
         registrar.busy(taskId);
         try {
             execute(browser, task);
-        } catch (Exception e) {
-            // ⭐ 兜底收尾：**任何**异常路径都必须让任务落地成 FAILED。
+        } catch (Throwable t) {
+            // ⭐ 兜底收尾：**任何**失败路径都必须让任务落地成 FAILED。
             //    否则它会永远挂在 RUNNING —— 批次的
             //    passed+failed+skipped 永远凑不齐 total，整个批次收不了尾，
             //    看板上那个进度条会一直停在 9/10。
             //    这类「少一条」的故障不会报错，只会让人盯着进度条等下去。
-            log.error("任务 {} 执行时异常，标记为失败", task.getCaseCode(), e);
-            safeFail(task, e);
+            //
+            // ⚠️ 这里必须是 Throwable 而不是 Exception。线上真的撞过：
+            //    一条任务抛了 Error，穿过当时的 catch(Exception)、退出消费循环、
+            //    再被 worker.submit() 的 Future 吞掉 —— 全程零日志。
+            //    结果任务在 RUNNING 上挂了 7 小时，而节点心跳一切正常
+            //    （心跳是另一个 @Scheduled 线程，消费循环死了它照样跳）。
+            log.error("任务 {} 执行时异常，标记为失败", task.getCaseCode(), t);
+            safeFail(task, t);
+            // Error 之后 JVM 状态不可信，交给 loop 决定是否退出重建
+            if (t instanceof Error err) {
+                throw err;
+            }
         } finally {
             registrar.idle();
         }
@@ -172,7 +201,7 @@ public class TaskConsumer implements ApplicationRunner {
     }
 
     /** 兜底收尾。这里再抛异常就真没救了，只能记日志 */
-    private void safeFail(ExecTask task, Exception cause) {
+    private void safeFail(ExecTask task, Throwable cause) {
         try {
             resultWriter.finish(task.getTaskId(), TaskStatus.FAILED, 0, null,
                     "执行器异常：" + cause.getMessage(), null, null, List.of());
