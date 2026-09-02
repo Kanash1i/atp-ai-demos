@@ -16,6 +16,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
@@ -108,9 +110,42 @@ public class ExecutionDispatchService {
                 VALUES (?,?,?,?,?,?,?,?,?)
                 """, rows);
 
-        queue.push(taskIds);
+        // ⚠️⚠️ 入队必须发生在**事务提交之后**。
+        //
+        //    这条规则项目里早就写下了（ZombieTaskReaper 的注释），而这里违反了它：
+        //
+        //      PG:    INSERT ... (status=PENDING)   ← 事务未提交，别人查不到这行
+        //      Redis: LPUSH taskId                  ← 立刻可见，节点毫秒级取走
+        //      节点:  claim(taskId) → UPDATE ... WHERE status=PENDING → affected 0
+        //             → 当成「被别人抢了」→ 静默丢弃
+        //
+        //    **消息比数据的可见性更早到达。** 任务留在库里是 PENDING，
+        //    队列里却已经没有它的号了 —— 看板上批次永远 0/N，没有任何报错。
+        //
+        //    这个竞态一直都在，只是逐条 insert 时 commit 很快、窗口极小，
+        //    很少命中；改成批量插入后一次要 flush 上百行 WAL，commit 变慢，
+        //    于是从「偶尔」变成了「必现」。**性能优化把一个潜伏的竞态放大成了故障。**
+        afterCommit(() -> queue.push(taskIds));
         log.info("派发批次 {}：{} 条案例，触发来源 {}", run.getRunCode(), cases.size(), run.getTriggerSource());
         return run;
+    }
+
+    /**
+     * 把动作推迟到当前事务提交之后再执行。
+     *
+     * <p>没有活动事务时（比如单测里直接调）就地执行 —— 那种情况下"提交后"即"现在"。
+     */
+    private void afterCommit(Runnable action) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            action.run();
+            return;
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                action.run();
+            }
+        });
     }
 
     private List<TcCase> resolveCases(String projectId, List<String> caseIds) {
