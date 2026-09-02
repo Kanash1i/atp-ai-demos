@@ -253,6 +253,7 @@ const zh = {
     conversations: '会话',
     newChat: '新对话',
     deleteChat: '删除这个会话',
+    deleteFailed: '删除失败，这条会话还在。刷新看看，或者再试一次。',
     noConversations: '还没有会话。发一句话就会出现在这里，切到别的面板也不会丢。',
     noHistoryThinking: '历史会话只存了最终回复，没有思考过程的增量流',
     toolCall: '工具调用',

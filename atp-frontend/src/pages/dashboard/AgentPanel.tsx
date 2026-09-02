@@ -11,7 +11,7 @@ import {
   addTurn, forgetIfCurrent, newConversation, openConversation, patchTurn, useChat, type Turn,
 } from '../../lib/chatStore';
 import { uuidv4 } from '../../lib/uuid';
-import type { ChatEvent, ChatMessage, ChatTimeline } from '../../lib/types';
+import type { ChatConversation, ChatEvent, ChatMessage, ChatTimeline } from '../../lib/types';
 
 /**
  * 智能 Agent 助手。
@@ -75,11 +75,34 @@ function ConversationRail({
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ['chat', 'conversations'], queryFn: listConversations, retry: 0 });
 
+  /*
+   * 乐观删除：点下去那一刻就把行拿掉，不等接口回来。
+   *
+   * 用户的原话是「点击删除要主动刷新页面下一次才能发现变化」——
+   * 那次的根因是请求在前端看来失败了（200 + 空 body 解析炸了），但即便请求正常，
+   * 「点了之后等一个往返才有反应」本身也不是好的删除手感。
+   *
+   * 失败就把那一行放回去，并且不吞错误 —— 删不掉却装作删掉了，比不动更糟。
+   */
   const del = useMutation({
     mutationFn: (id: string) => deleteConversation(id),
     retry: 0,
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ['chat', 'conversations'] });
+      const previous = qc.getQueryData<ChatConversation[]>(['chat', 'conversations']);
+      qc.setQueryData<ChatConversation[]>(['chat', 'conversations'], (old) =>
+        (old ?? []).filter((c) => c.conversationId !== id),
+      );
+      return { previous };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.previous) qc.setQueryData(['chat', 'conversations'], ctx.previous);
+    },
     onSuccess: (_d, id) => {
+      // 删掉的正好是当前会话时，顺手开一个新的，别停在一个已经不存在的 id 上
       forgetIfCurrent(id);
+    },
+    onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['chat', 'conversations'] });
     },
   });
@@ -100,6 +123,13 @@ function ConversationRail({
         </button>
       </div>
 
+      {/* 删失败要说出来 —— 删不掉却装作删掉了，比列表不动更糟 */}
+      {del.error && (
+        <div className="shrink-0 border-b border-line bg-shu-soft px-3.5 py-2 text-[11px] leading-[1.7] text-shu">
+          {t('agent.deleteFailed')}
+        </div>
+      )}
+
       <div className="scrollable min-h-0 grow p-2">
         {list.data?.length === 0 && (
           <div className="px-2 pt-8 text-center text-[11.5px] leading-[1.8] text-ink-4">
@@ -111,9 +141,9 @@ function ConversationRail({
           return (
             <div
               key={c.conversationId}
-              className={`group mb-0.5 flex items-start gap-1.5 rounded-sm px-2 py-2 transition-colors ${
+              className={`group mb-0.5 flex items-start gap-1.5 rounded-sm px-2 py-2 transition-all ${
                 active ? 'bg-shu-soft shadow-[inset_2px_0_0_var(--color-shu)]' : 'hover:bg-line-4'
-              }`}
+              } ${del.isPending && del.variables === c.conversationId ? 'pointer-events-none opacity-40' : ''}`}
             >
               <button
                 type="button"

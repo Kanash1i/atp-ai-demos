@@ -248,6 +248,7 @@ const ja: Dict = {
     conversations: '会話',
     newChat: '新規',
     deleteChat: 'この会話を削除',
+    deleteFailed: '削除に失敗しました。この会話は残っています。更新するか、もう一度お試しください。',
     noConversations: 'まだ会話がありません。一言送るとここに出てきます。他のパネルへ切り替えても消えません。',
     noHistoryThinking: '過去の会話は最終回答のみ保存され、思考過程の増分は残っていません',
     toolCall: 'ツール呼び出し',
