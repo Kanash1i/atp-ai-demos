@@ -42,14 +42,26 @@
 		root * /srv
 		encode zstd gzip
 
+		# 带哈希的产物可以长缓存；返回 index.html 的那些路径绝不能，
+		# 否则发版后浏览器拿到旧壳子，而旧壳子指向旧的 bundle 哈希 ——
+		# 表现是「发版了但页面还是老的」，而且刷新不一定能好。
+		#
+		# ⚠️ 两条都必须写在 handle 块**内部**，且用「是不是哈希产物」来分，
+		#    不能用 `header /index.html`：Caddy 的 header 指令按 directive order
+		#    跑在 try_files 的重写**之前**，那时路径还是 /login、/dashboard/runs，
+		#    永远不等于 /index.html。SPA 里几乎没有请求真的叫这个名字。
+		#
+		# ⚠️ 正则要收 `-`：Vite 产出的是 index-Dwj6zVqR.js（连字符），
+		#    只写 `\.` 会一个都匹配不上 —— 那样连长缓存也是失效的，
+		#    而失效的长缓存不报错，只是每次访问都重下一遍。
+		@hashed path_regexp ^/assets/.+[.-][0-9a-zA-Z_-]{8,}\.(js|css|woff2?|webp|png|svg)$
+		@notHashed not path_regexp ^/assets/.+[.-][0-9a-zA-Z_-]{8,}\.(js|css|woff2?|webp|png|svg)$
+		header @hashed    Cache-Control "public, max-age=31536000, immutable"
+		header @notHashed Cache-Control "no-cache"
+
 		# SPA history fallback：/dashboard/cases、/login 这些路径
 		# 在服务器上没有对应文件，要交给 index.html 由前端路由接管。
 		try_files {path} /index.html
 		file_server
 	}
-
-	# 带哈希的产物可以长缓存；index.html 绝不能，否则发版后拿到旧壳子。
-	@hashed path_regexp ^/assets/.+\.[0-9a-zA-Z_-]{8,}\.(js|css|woff2?|webp|png|svg)$
-	header @hashed Cache-Control "public, max-age=31536000, immutable"
-	header /index.html Cache-Control "no-cache"
 }
