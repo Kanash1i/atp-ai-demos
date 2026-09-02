@@ -248,6 +248,7 @@ const en: Dict = {
     conversations: 'Chats',
     newChat: 'New',
     deleteChat: 'Delete this chat',
+    deleteFailed: 'Delete failed — this chat is still there. Refresh, or try again.',
     noConversations: 'No chats yet. Send a message and it shows up here — switching panels will not lose it.',
     noHistoryThinking: 'Past chats keep only the final answer, not the streamed thinking',
     toolCall: 'Tool call',

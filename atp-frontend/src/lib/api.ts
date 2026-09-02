@@ -67,7 +67,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T | NoConte
     },
   });
 
-  if (res.status === 204) return NO_CONTENT;
+  /*
+   * 「成功但没有 body」不止 204 一种形状。
+   *
+   * 踩过一次：后端的删除接口返回 200 + 零字节 body，这里只对 204 短路，
+   * 于是走到下面的 res.json() 去解析空字符串，抛 SyntaxError ——
+   * 而链条上每一环看着都正常：库里删掉了、HTTP 200、异常被 catch 吞掉，
+   * 用户唯一看得到的是「列表不动」。没有任何一处报错到他面前。
+   *
+   * 后端那一处已经改成 204 了，但这个形状还会从别处来（反代、网关、
+   * 某些框架的默认行为）。所以按**有没有内容**判断，而不是按状态码。
+   */
+  if (res.status === 204 || res.headers.get('content-length') === '0') return NO_CONTENT;
 
   if (!res.ok) {
     const problem = await parseProblem(res);
@@ -86,7 +97,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T | NoConte
     throw new ApiError(res.status, problem, `${res.status} ${res.statusText}`);
   }
 
-  return (await res.json()) as T;
+  // content-length 可能因为分块传输而缺失，所以还要兜一次：拿到文本再判空
+  const text = await res.text();
+  if (!text) return NO_CONTENT;
+  return JSON.parse(text) as T;
 }
 
 /** 大部分接口不会返回 204，用这个拿到确定的 T */
