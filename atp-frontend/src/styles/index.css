@@ -147,7 +147,38 @@
     margin: 18px 0 10px;
   }
   .agent-md a { color: var(--color-shu); text-decoration: underline; }
-  .agent-md table { border-collapse: collapse; margin: 0 0 14px; font-size: .92em; }
-  .agent-md th, .agent-md td { border: 1px solid var(--color-line); padding: 6px 10px; text-align: left; }
-  .agent-md th { background: var(--color-surface-2); }
+  /* agent 生成的案例表 —— 演示里最关键的一屏，按 dashboard 那套表的画法来：
+     发丝横线、没有竖线和外框、表头 mono 小字。盒子式的边框在这套设计里太吵。 */
+  .agent-md .table-scroll { margin: 0 0 14px; overflow-x: auto; }
+  .agent-md table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .92em;
+    /* 案例表里全是序号和金额，不等宽的话竖着读会错行 */
+    font-variant-numeric: tabular-nums;
+  }
+  .agent-md thead th {
+    padding: 8px 12px 8px 0;
+    border-bottom: 1px solid var(--color-line);
+    font-family: var(--font-mono);
+    font-size: .82em;
+    font-weight: 400;
+    letter-spacing: .1em;
+    color: var(--color-ink-4);
+    text-align: left;
+    white-space: nowrap;
+  }
+  .agent-md tbody td {
+    padding: 8px 12px 8px 0;
+    border-bottom: 1px solid var(--color-line-3);
+    vertical-align: top;
+  }
+  .agent-md thead th:last-child,
+  .agent-md tbody td:last-child { padding-right: 0; }
+  .agent-md tbody tr:last-child td { border-bottom: none; }
+
+  /* GFM 的另外两样：删除线与任务列表 */
+  .agent-md del { color: var(--color-ink-4); }
+  .agent-md li input[type='checkbox'] { margin-right: .5em; accent-color: var(--color-shu); }
+  .agent-md ul:has(> li > input[type='checkbox']) { padding-left: 0; list-style: none; }
 }
