@@ -13,6 +13,7 @@ import com.atp.platform.mapper.TcCaseMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -46,6 +47,8 @@ public class ExecutionDispatchService {
     private TcCaseMapper caseMapper;
     @Autowired
     private ExecutionQueue queue;
+    @Autowired
+    private JdbcTemplate jdbc;
 
     /**
      * @param caseIds  要跑的案例。空表示跑该项目下全部 ACTIVE 案例
@@ -78,21 +81,32 @@ public class ExecutionDispatchService {
         run.setCreatedAt(OffsetDateTime.now());
         runMapper.insert(run);
 
+        // ⚠️ 批量插入，不要逐条 insert。
+        //
+        //    逐条写在同机部署时看不出问题（一次往返零点几毫秒），但这个项目的
+        //    平台在云服务器、PG 在家里的台式机，一次往返 35ms —— 109 条案例
+        //    就是 109 次跨地域往返，加上每条的事务提交，实测派发一个批次要几十秒。
+        //
+        //    而这几十秒里看板显示的是 `0 / 109` 且 Elapsed 已经在涨，
+        //    和「任务卡住了」长得一模一样。**慢和卡在界面上是同一个样子。**
+        OffsetDateTime queuedAt = OffsetDateTime.now();
         List<String> taskIds = new ArrayList<>(cases.size());
+        List<Object[]> rows = new ArrayList<>(cases.size());
         for (TcCase c : cases) {
-            ExecTask task = new ExecTask();
-            task.setTaskId(UUID.randomUUID().toString());
-            task.setRunId(runId);
-            task.setCaseId(c.getCaseId());
-            // 快照：案例后来改名或删除，历史执行记录仍要显示当时跑的是什么
-            task.setCaseCode(c.getCaseCode());
-            task.setCaseTitle(c.getTitle());
-            task.setBrowser(run.getBrowser());
-            task.setStatus(TaskStatus.PENDING);
-            task.setQueuedAt(OffsetDateTime.now());
-            taskMapper.insert(task);
-            taskIds.add(task.getTaskId());
+            String taskId = UUID.randomUUID().toString();
+            taskIds.add(taskId);
+            rows.add(new Object[]{
+                    taskId, runId, c.getCaseId(),
+                    // 快照：案例后来改名或删除，历史执行记录仍要显示当时跑的是什么
+                    c.getCaseCode(), c.getTitle(),
+                    run.getBrowser().code(), TaskStatus.PENDING.code(),
+                    (short) 0, queuedAt});
         }
+        jdbc.batchUpdate("""
+                INSERT INTO exec_task
+                  (task_id, run_id, case_id, case_code, case_title, browser, status, retry_count, queued_at)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                """, rows);
 
         queue.push(taskIds);
         log.info("派发批次 {}：{} 条案例，触发来源 {}", run.getRunCode(), cases.size(), run.getTriggerSource());
