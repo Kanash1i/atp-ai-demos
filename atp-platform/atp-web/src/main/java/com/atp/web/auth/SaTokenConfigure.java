@@ -58,6 +58,14 @@ public class SaTokenConfigure implements WebMvcConfigurer {
             //    发给机器等于让 agent 自己批准自己提交的东西
             SaRouter.match("/api/approvals/*/decision")
                     .check(() -> StpUtil.checkPermission(ApiScope.APPROVAL_DECIDE.code()));
+
+            // ⭐ 签发/吊销机器凭证 —— 只有 ADMIN 拿得到这个 scope，而且只发给人。
+            //    这是唯一一个能凭空造出新主体的权限：拿到它就能给自己签一个
+            //    带任意 scope 的 client，其余所有权限控制都被绕过。
+            //    所以机器主体永远不该有它 —— 一个 agent 能给自己发凭证，
+            //    「窄 token」这件事从一开始就不成立。
+            SaRouter.match("/api/auth/clients/**")
+                    .check(() -> StpUtil.checkPermission(ApiScope.CLIENT_MANAGE.code()));
         })).addPathPatterns("/**");
     }
 }

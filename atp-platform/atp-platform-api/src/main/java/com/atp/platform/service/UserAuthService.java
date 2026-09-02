@@ -104,6 +104,12 @@ public class UserAuthService {
         if (u.getRole() == UserRole.REVIEWER || u.getRole() == UserRole.ADMIN) {
             scopes.add(ApiScope.APPROVAL_DECIDE.code());
         }
+        // ⭐ 只有管理员能签发机器凭证。
+        //    这个权限的性质和其它几个不同：它能造出新主体，
+        //    所以拿到它就等于能给自己签一个带任意 scope 的 client。
+        if (u.getRole() == UserRole.ADMIN) {
+            scopes.add(ApiScope.CLIENT_MANAGE.code());
+        }
         return scopes;
     }
 
