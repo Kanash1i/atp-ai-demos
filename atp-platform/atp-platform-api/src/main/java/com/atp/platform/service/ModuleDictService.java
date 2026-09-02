@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
  * agent 那一层就仍然读得到。** 凭证边界是二元的 —— 漏一个口就是没关上。
  */
 @Service
+@lombok.extern.slf4j.Slf4j
 public class ModuleDictService {
 
     @Autowired
@@ -76,6 +77,9 @@ public class ModuleDictService {
      * **不会写坏数据，只会有一次重试**。真实平台该用序列或号段，
      * 那是为了避免重试，不是为了正确性。演示环境下不值得引入。
      */
+    /** STD-007 规定编号是 4 位序号，所以上限是 9999 */
+    private static final int MAX_SEQ = 9999;
+
     public String nextCaseCode(String moduleId) {
         TcModule module = moduleMapper.selectById(moduleId);
         if (module == null) {
@@ -83,17 +87,41 @@ public class ModuleDictService {
         }
         String prefix = "ATP-" + module.getModuleCode() + "-";
 
-        int max = caseMapper.selectList(new LambdaQueryWrapper<TcCase>()
+        java.util.Set<Integer> used = caseMapper.selectList(new LambdaQueryWrapper<TcCase>()
                         .select(TcCase::getCaseCode)
                         .likeRight(TcCase::getCaseCode, prefix)).stream()
                 .map(TcCase::getCaseCode)
                 .filter(c -> c != null && c.length() > prefix.length())
                 .map(c -> c.substring(prefix.length()))
                 .filter(tail -> tail.matches("\\d+"))
-                .mapToInt(Integer::parseInt)
-                .max().orElse(0);
+                .map(Integer::parseInt)
+                .collect(java.util.stream.Collectors.toSet());
 
-        return "%s%04d".formatted(prefix, max + 1);
+        int max = used.stream().mapToInt(Integer::intValue).max().orElse(0);
+
+        // 常规路径：接着最大的往下发
+        if (max < MAX_SEQ) {
+            return "%s%04d".formatted(prefix, max + 1);
+        }
+
+        // ⚠️ max 已经顶到 9999，再 +1 就是 5 位 —— 而 STD-007 要求恰好 4 位，
+        //    格式化出来的 "10000" 会被自己的校验器拒掉。
+        //
+        //    这不是假想：开发期造的测试案例（ATP-CART-9998/9999 之类）会把序号顶满，
+        //    此后每次取号都产出非法编号。而症状很隐蔽 —— 工具返回成功、
+        //    agent 拿着它去 save_draft 才被校验挡下，报错指向「编号不合规」，
+        //    看起来像 agent 编了个编号，实际是取号工具给的。
+        //
+        //    顶满之后回退到「找最小空洞」：正常序列被删过的号会被复用，
+        //    这在编号顶满的前提下是可接受的代价 —— 比发一个非法编号好。
+        for (int i = 1; i <= MAX_SEQ; i++) {
+            if (!used.contains(i)) {
+                log.warn("模块 {} 的序号已顶到 {}，回退到最小空洞 {}", moduleId, max, i);
+                return "%s%04d".formatted(prefix, i);
+            }
+        }
+        throw new IllegalStateException(
+                "模块 %s 的 4 位序号已全部用尽（0001~%04d）".formatted(moduleId, MAX_SEQ));
     }
 
     private ModuleEntry toEntry(TcModule m, TcProject p) {
