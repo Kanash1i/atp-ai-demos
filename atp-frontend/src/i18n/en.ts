@@ -126,6 +126,7 @@ const en: Dict = {
     noRunning: 'No batch is running',
     noRunningHint: 'History is seeded, but "running right now" has to be real — dispatch a batch and this panel comes alive',
     dispatch: 'Dispatch a run',
+    dispatching: 'Dispatching {{count}}…',
     abort: 'Abort',
     recent: 'Recent runs',
     showingLast: 'Showing last {{count}}',

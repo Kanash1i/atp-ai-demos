@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ColLabel } from '../../components/ui';
+import Modal from '../../components/Modal';
 import { useDispatch, useNodes, useProjects, useProjectTree } from '../../lib/queries';
 import { isRunnableModule } from '../../lib/runnable';
 import { DEMO_USER } from '../../lib/api';
@@ -53,13 +54,16 @@ export default function DispatchDialog({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/25 p-6" onClick={onClose}>
-      <div
-        className="flex max-h-full w-[520px] flex-col overflow-hidden rounded-lg border border-line bg-card"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal
+      onClose={onClose}
+      labelledBy="dispatch-title"
+      className="flex max-h-full w-[520px] flex-col overflow-hidden rounded-lg border border-line bg-card"
+    >
+      <>
         <div className="shrink-0 border-b border-line px-6 py-4">
-          <span className="font-jp text-[14px] font-bold">{t('runs.dispatchTitle')}</span>
+          <span id="dispatch-title" className="font-jp text-[14px] font-bold">
+            {t('runs.dispatchTitle')}
+          </span>
         </div>
 
         <div className="scrollable min-h-0 grow px-6 py-5">
@@ -175,7 +179,7 @@ export default function DispatchDialog({ onClose }: { onClose: () => void }) {
             {dispatch.isPending ? t('runs.dispatchSending') : t('runs.dispatchSubmit')}
           </button>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }

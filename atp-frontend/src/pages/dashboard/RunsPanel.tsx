@@ -6,6 +6,7 @@ import { isNoContent, useExecStats, useRecentRuns, useRunningBatch, useTaskDetai
 import { approxSec, dash, execStatusTone, humanSec, signed, timeOnly, toneOf } from '../../lib/format';
 import { KNOWN_CONFLICT_CASE } from '../../lib/runnable';
 import DispatchDialog from './DispatchDialog';
+import Modal from '../../components/Modal';
 import type { RunningBatch } from '../../lib/types';
 
 const RUN_COLS = '168px minmax(0,1fr) 104px 104px 96px 92px 132px';
@@ -26,9 +27,9 @@ function StatCard({ label, children }: { label: string; children: React.ReactNod
   );
 }
 
-function Stats() {
+function Stats({ live }: { live: boolean }) {
   const { t } = useTranslation();
-  const { data, isLoading, error, refetch } = useExecStats();
+  const { data, isLoading, error, refetch } = useExecStats(live);
 
   return (
     <AsyncBlock isLoading={isLoading} error={error} onRetry={() => void refetch()}>
@@ -86,6 +87,13 @@ function RunningCard({ batch }: { batch: RunningBatch }) {
   const pct = (n: number) => (batch.totalCount ? (n / batch.totalCount) * 100 : 0);
   const eta = approxSec(batch.etaSec);
 
+  /*
+   * 「还在派发」和「执行卡住了」在看板上长得一模一样：都是 done=0 而 Elapsed 在涨。
+   * 但它们是两种状态 —— 前者只要等，后者要去看节点。
+   * 一条都还没跑完却已经过了几秒，先按「正在派发」讲，别显示一个像卡死的 0 / N。
+   */
+  const dispatching = batch.doneCount === 0 && batch.runningCount === 0 && batch.elapsedSec > 5;
+
   return (
     <div className="card-surface mb-[18px] px-[22px] py-5">
       <div className="mb-4 flex flex-wrap items-center gap-[11px]">
@@ -106,8 +114,12 @@ function RunningCard({ batch }: { batch: RunningBatch }) {
           <div className="animate-bar h-full bg-shu" style={{ width: `${pct(batch.failedCount)}%` }} />
           <div className="animate-bar h-full bg-line-2" style={{ width: `${pct(batch.skippedCount)}%` }} />
         </div>
-        <span className="font-mono text-[12.5px]">
-          {batch.doneCount} / {batch.totalCount}
+        <span className="font-mono text-[12.5px] whitespace-nowrap">
+          {dispatching ? (
+            <span className="text-ai">{t('runs.dispatching', { count: batch.totalCount })}</span>
+          ) : (
+            `${batch.doneCount} / ${batch.totalCount}`
+          )}
         </span>
       </div>
 
@@ -156,9 +168,15 @@ function RunningCard({ batch }: { batch: RunningBatch }) {
  * 后端在没有批次时返回 204 而不是 200 加空对象 —— 历史数据是种子，
  * 但「正在跑」这件事必须是真的，摆个不动的假进度条演示时一刷新就露馅。
  */
-function RunningSection({ onDispatch }: { onDispatch: () => void }) {
+function RunningSection({
+  data, isLoading, error, onDispatch,
+}: {
+  data: unknown;
+  isLoading: boolean;
+  error: unknown;
+  onDispatch: () => void;
+}) {
   const { t } = useTranslation();
-  const { data, isLoading, error } = useRunningBatch();
 
   if (isLoading || error) return null;
 
@@ -190,13 +208,17 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
   const { data, isLoading, error } = useTaskDetail(taskId);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-ink/25" onClick={onClose}>
-      <div
-        className="flex h-full w-[620px] max-w-full flex-col border-l border-line bg-card"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Modal
+      onClose={onClose}
+      align="right"
+      labelledBy="task-drawer-title"
+      className="flex h-full w-[620px] max-w-full flex-col border-l border-line bg-card"
+    >
+      <>
         <div className="flex shrink-0 items-center gap-3 border-b border-line px-6 py-4">
-          <SectionTitle>{data?.caseCode ?? t('common.loading')}</SectionTitle>
+          <span id="task-drawer-title">
+            <SectionTitle>{data?.caseCode ?? t('common.loading')}</SectionTitle>
+          </span>
           <div className="grow" />
           <button
             type="button"
@@ -293,22 +315,36 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
             )}
           </AsyncBlock>
         </div>
-      </div>
-    </div>
+      </>
+    </Modal>
   );
 }
 
 export default function RunsPanel() {
   const { t } = useTranslation();
   const limit = 200;
-  const { data: runs, isLoading, error, refetch } = useRecentRuns(limit);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [dispatching, setDispatching] = useState(false);
 
+  /*
+   * useRunningBatch 提到这里调一次，再往下传 —— 它带副作用（批次收尾时作废
+   * stats/recent 缓存），在多个子组件里各调一次会重复触发。
+   * 同时它决定了下面两张表要不要跟着轮询。
+   */
+  const running = useRunningBatch();
+  const live = Boolean(running.data) && !isNoContent(running.data);
+
+  const { data: runs, isLoading, error, refetch } = useRecentRuns(limit, live);
+
   return (
     <div className="scrollable h-full px-6 pt-5 pb-6">
-      <Stats />
-      <RunningSection onDispatch={() => setDispatching(true)} />
+      <Stats live={live} />
+      <RunningSection
+        data={running.data}
+        isLoading={running.isLoading}
+        error={running.error}
+        onDispatch={() => setDispatching(true)}
+      />
 
       <div className="card-surface overflow-hidden">
         <div className="flex items-center border-b border-line px-[22px] py-[15px]">
