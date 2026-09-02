@@ -1,6 +1,7 @@
 package com.atp.platform.service;
 
 import com.atp.platform.entity.SysApiClient;
+import com.atp.common.util.DisplayTime;
 import com.atp.common.util.Secrets;
 import com.atp.platform.mapper.SysApiClientMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -85,6 +86,56 @@ public class ApiClientService {
 
         log.info("[AUTH] 创建机器主体 {}（{}），权限 {}", clientId, clientName, c.getScopes());
         return secret;
+    }
+
+    /** 是否已存在同名主体 —— 创建前查一次，避免撞号后覆盖掉别人的凭证 */
+    public boolean exists(String clientId) {
+        return mapper.selectById(clientId) != null;
+    }
+
+    /**
+     * 列出全部机器主体。
+     *
+     * <p>⚠️ 返回里**没有 secret**，也没有 hash 与 salt —— 它们连"能被看到"这件事都不该发生。
+     * 项目经理要看的是「发过哪些、谁在用、还有效吗」，那些字段一个都不需要。
+     */
+    public List<ClientView> list() {
+        return mapper.selectList(null).stream()
+                .map(c -> new ClientView(c.getClientId(), c.getClientName(), c.getScopes(),
+                        Boolean.TRUE.equals(c.getEnabled()),
+                        c.getCreatedBy(),
+                        c.getCreatedAt() == null ? null : DisplayTime.toMinute(c.getCreatedAt()),
+                        c.getLastUsedAt() == null ? null : DisplayTime.toMinute(c.getLastUsedAt())))
+                .toList();
+    }
+
+    /**
+     * 吊销一个机器主体。
+     *
+     * <p>⚠️ 是禁用不是删除。删掉的话，「这个 client 曾经存在过、谁签的、什么时候停的」
+     * 这条线索就没了 —— 而凭证泄露之后要查的恰恰是这个。
+     *
+     * <p>吊销立刻生效：权限是每次鉴权现查库的（见 StpInterfaceImpl），
+     * 不缓存在 token 里，所以不存在"已签发的 token 还能再用一阵"。
+     */
+    public boolean revoke(String clientId) {
+        SysApiClient c = mapper.selectById(clientId);
+        if (c == null || !Boolean.TRUE.equals(c.getEnabled())) {
+            return false;
+        }
+        SysApiClient patch = new SysApiClient();
+        patch.setClientId(clientId);
+        patch.setEnabled(false);
+        patch.setRevokedAt(OffsetDateTime.now());
+        mapper.updateById(patch);
+        log.info("[AUTH] 吊销机器主体 {}", clientId);
+        return true;
+    }
+
+    /** 给人看的机器主体信息。⚠️ 不含 secret / hash / salt */
+    public record ClientView(String clientId, String clientName, String scopes,
+                             boolean enabled, String createdBy,
+                             String createdAt, String lastUsedAt) {
     }
 
     private List<String> scopesOf(SysApiClient c) {

@@ -37,7 +37,18 @@ public enum ApiScope {
      * 但「这条变更该不该放行」是人的判断 —— 把它发给机器，
      * 等于让 agent 自己批准自己提交的东西。
      */
-    APPROVAL_DECIDE("approval:decide");
+    APPROVAL_DECIDE("approval:decide"),
+
+    /**
+     * 签发与吊销机器凭证。
+     *
+     * <p>⚠️ **只发给 ADMIN，且只发给人**。这是唯一一个能凭空造出新主体的权限 ——
+     * 拿到它就能给自己签一个带任意 scope 的 client，其余所有权限控制都被绕过。
+     *
+     * <p>机器主体永远不该有它：一个 agent 能给自己发凭证，
+     * 等于「窄 token」这件事从一开始就不成立。
+     */
+    CLIENT_MANAGE("client:manage");
 
     private final String code;
 

@@ -144,8 +144,13 @@ public class SeedImporter {
     public int importUsers() {
         List<SysUser> users = List.of(
                 // ⚠️ 金城在设计稿里的职位标签是「QA 工程师」，但他要在审批中心做决策，
-                //    所以权限给 REVIEWER —— 职位标签与权限角色是两回事，别被 UI 文案带跑。
-                user("U001", "kaneshiro", "金城 悠人", UserRole.REVIEWER, "KY"),
+                //    所以权限至少是 REVIEWER —— 职位标签与权限角色是两回事，别被 UI 文案带跑。
+                //
+                // ⭐ 给到 ADMIN 是因为凭证签发（client:manage）只发给 ADMIN：
+                //    测试人员要用 atp CLI，得找项目经理要一对 client_id/secret，
+                //    而这个演示环境里需要有一个人扮演那个角色。
+                //    其余两位保持 REVIEWER —— 正好演示「不是谁都能签发凭证」。
+                user("U001", "kaneshiro", "金城 悠人", UserRole.ADMIN, "KY"),
                 user("U002", "sato", "佐藤 美咲", UserRole.REVIEWER, "SM"),
                 user("U003", "tanaka", "田中 直樹", UserRole.REVIEWER, "TN"));
 
