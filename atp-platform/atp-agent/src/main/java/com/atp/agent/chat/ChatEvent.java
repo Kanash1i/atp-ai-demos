@@ -6,7 +6,7 @@ package com.atp.agent.chat;
  * <p>⚠️ 事件类型是**前端契约**，不是内部枚举 —— 前端按 type 决定渲染成
  * 气泡、进度行还是工具卡片。加类型要同步 {@code 02-前端契约.md}。
  *
- * @param type    thinking / tool / message / done / error
+ * @param type    thinking / tool / message / done / error / interrupted / tool-aborted
  * @param agent   哪个 agent 发出的，前端用它做归属标记
  * @param content 正文
  */
@@ -30,6 +30,34 @@ public record ChatEvent(String type, String agent, String content) {
     /** 最终回复，流式增量 */
     public static ChatEvent message(String agent, String text) {
         return new ChatEvent("message", agent, text);
+    }
+
+    /**
+     * 用户主动打断，agent 已停下。
+     *
+     * <h3>⚠️ 打断的语义是「不再继续下一步」，不是「撤销已做的」</h3>
+     *
+     * 打断时如果 {@code commit_case} 的 HTTP 已经发出去，那条案例就是提交了 ——
+     * 数据库那侧没有回滚，也不该回滚（它是一次合法的、已完成的写入）。
+     *
+     * <p>所以前端必须把这件事说清楚：停止按钮的含义是「别再往下做了」，
+     * 不是「当作什么都没发生」。把它渲染成撤销，用户会以为数据回到了打断前，
+     * 而那是错的 —— 这种误解比不给停止按钮更危险。
+     */
+    public static ChatEvent interrupted(String agent, String reason) {
+        return new ChatEvent("interrupted", agent, reason);
+    }
+
+    /**
+     * 打断时有工具调用正在飞，它们的结果被丢弃了。
+     *
+     * <p>⭐ 单独一个事件类型，而不是并进 {@link #interrupted}：
+     * 「停下了」和「停下时有半截操作」是两件事，后者用户需要知道具体是哪些 ——
+     * 因为其中可能有已经写进库的。AgentScope 的 {@code InterruptContext.pendingToolCalls}
+     * 给的就是这份清单。
+     */
+    public static ChatEvent toolAborted(String agent, String toolNames) {
+        return new ChatEvent("tool-aborted", agent, toolNames);
     }
 
     /**

@@ -154,6 +154,15 @@ public class ChatService {
                                 agentName, timeline(route, agentName));
                     }
                 })
+                .doOnCancel(() -> {
+                    // ⚠️ 订阅被取消 = 下游不要了（SSE 断开、超时、或我们主动 dispose）。
+                    //    这时必须把 agent 也停掉 —— 否则它会继续烧 token、继续调工具，
+                    //    而没有任何人在接收结果。**这是「假打断」最常见的形态**：
+                    //    前端不听了，后端还在跑。
+                    log.info("会话 {} 的流被取消，停止 agent", conversationId);
+                    agent.raw().interrupt();
+                    persistPartial(conversationId, answer, agentName, route);
+                })
                 .onErrorResume(e -> {
                     // ⚠️ 错误也要推给前端。吞掉的话前端会一直等 done，
                     //    表现为「对话卡住了」，而后端日志里其实有完整堆栈
@@ -170,6 +179,57 @@ public class ChatService {
     public void close(String conversationId) {
         sessions.remove(conversationId);
         activeAgent.remove(conversationId);
+    }
+
+    /**
+     * 打断当前会话正在跑的那一轮。
+     *
+     * <h3>⚠️ 打断的语义：不再继续下一步，不撤销已做的</h3>
+     *
+     * AgentScope 的 {@code interrupt()} 是<b>置一个标志位</b>，agent 在下一个检查点
+     * （每次 reasoning、每次工具调用前后）才会真正停下。所以它不是"立刻掐断"：
+     *
+     * <ul>
+     *   <li>正在等模型返回的那次请求会跑完 —— token 已经在路上了</li>
+     *   <li>已经发出去的工具调用会执行完 —— {@code commit_case} 发出去就是提交了，
+     *       数据库那侧没有回滚，也不该回滚（那是一次合法的、已完成的写入）</li>
+     * </ul>
+     *
+     * <p>把它渲染成「撤销」是危险的：用户会以为数据回到了打断前。
+     * 停止按钮的含义只能是「别再往下做了」。
+     *
+     * @return true = 确实有一轮在跑并已请求停止；false = 这个会话此刻空闲
+     */
+    public boolean interrupt(String conversationId) {
+        IntentCategory active = activeAgent.get(conversationId);
+        if (active == null) {
+            return false;
+        }
+        ConcurrentHashMap<IntentCategory, AtpAgent> byIntent = sessions.get(conversationId);
+        AtpAgent agent = byIntent == null ? null : byIntent.get(active);
+        if (agent == null) {
+            return false;
+        }
+        // 带上一条 Msg：AgentScope 把它作为 InterruptContext.userMessage 传给
+        // handleInterrupt，agent 可以据此决定收尾时说什么
+        agent.raw().interrupt(Msg.builder().role(MsgRole.USER).name("user")
+                .content(TextBlock.builder().text("用户请求停止本次生成").build()).build());
+        log.info("会话 {} 已请求打断（agent={}）", conversationId, agent.name());
+        return true;
+    }
+
+    /**
+     * 把打断时已经生成的半截回复落库。
+     *
+     * <p>不落的话历史里那一轮是<b>空白</b>，而用户明明在屏幕上看到过内容。
+     * 「什么都没有」和「说到一半被停了」是两种不同的事实，历史应该能区分。
+     */
+    private void persistPartial(String conversationId, StringBuilder answer,
+                                String agentName, RouteResult route) {
+        String text = answer.isEmpty()
+                ? "（已被用户停止，本轮没有产出）"
+                : answer + "\n\n（已被用户停止）";
+        history.recordAssistant(conversationId, text, agentName, timeline(route, agentName));
     }
 
     /**
