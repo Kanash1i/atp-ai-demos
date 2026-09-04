@@ -49,6 +49,10 @@ atp:
     testdata-dir: ${ATP_TESTDATA_DIR:/tmp/atp-testdata}
     browser-channel: ${ATP_BROWSER_CHANNEL:chrome}
     headless: ${ATP_HEADLESS:true}
+    # 每个浏览器操作之间的停顿（毫秒）。0 = 不停顿。
+    # ⚠️ 只影响录像观感，不影响判定 —— 自动等待与断言逻辑不变。
+    #    案例在同网络里常常 200ms 就跑完，录下来不到一秒，人眼看不清。
+    slow-mo-ms: ${ATP_SLOWMO_MS:250}
     heartbeat-seconds: 30
     poll-timeout-seconds: 5
     # 执行环境。案例里的 ${xxx} 从这里取

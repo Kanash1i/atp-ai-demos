@@ -31,8 +31,22 @@ import java.util.List;
 @Slf4j
 public class CaseRunner {
 
-    private static final int VIDEO_WIDTH = 800;
-    private static final int VIDEO_HEIGHT = 600;
+    /**
+     * 录像与视口尺寸。
+     *
+     * <h3>⚠️ 别再调回 800×600</h3>
+     *
+     * 原来是 800×600，在 1080p 以上的屏幕上放大看明显发糊 ——
+     * 而录像的用途就是「失败了回放看当时页面什么样」，糊了就等于没有。
+     *
+     * <p>720p 是清晰度与体积的平衡点：一条案例的 webm 从几 KB 涨到几十 KB，
+     * 对存储和回传都无所谓，但截图和录像里的文字终于能读了。
+     *
+     * <p>视口和录像尺寸保持一致 —— 不一致的话 Playwright 会缩放，
+     * 那正是「糊」的另一个来源。
+     */
+    private static final int VIDEO_WIDTH = 1280;
+    private static final int VIDEO_HEIGHT = 720;
 
     private final Browser browser;
     private final Path artifactDir;

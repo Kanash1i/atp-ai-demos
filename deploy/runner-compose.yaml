@@ -45,6 +45,10 @@ x-node: &node
 
     # ── 被测系统：同一个 compose 网络内的 mock-shop ──
     MOCK_SHOP_URL: http://mock-shop:8088
+
+    # 录像慢放。演示时录像才看得清，CI 里应设 0。
+    # ⚠️ 只影响观感不影响判定 —— 不会把不稳定的案例「等」成通过
+    ATP_SLOWMO_MS: ${ATP_SLOWMO_MS:-250}
   networks:
     - infra
     - default
