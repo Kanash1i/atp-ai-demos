@@ -25,6 +25,10 @@ final class BrowserLaunch {
 
     static BrowserType.LaunchOptions options(RunnerProperties props, boolean headless) {
         BrowserType.LaunchOptions opts = new BrowserType.LaunchOptions().setHeadless(headless);
+        // ⚠️ 只影响观感，不影响判定 —— 自动等待与断言逻辑完全不变
+        if (props.getSlowMoMs() > 0) {
+            opts.setSlowMo(props.getSlowMoMs());
+        }
         String channel = props.getBrowserChannel();
         // ⚠️ 判空而不是直接 setChannel(null)：Playwright 对 null 与"未设置"处理不同
         if (channel != null && !channel.isBlank()) {

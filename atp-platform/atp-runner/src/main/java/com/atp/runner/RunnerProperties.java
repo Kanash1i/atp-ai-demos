@@ -64,6 +64,22 @@ public class RunnerProperties {
 
     private boolean headless = true;
 
+    /**
+     * 每个浏览器操作之间的停顿（毫秒）。0 = 不停顿。
+     *
+     * <h3>为什么需要它</h3>
+     *
+     * 被测系统与执行节点在同一个 docker 网络里，一条案例常常 200ms 就跑完了 ——
+     * 录下来是不到一秒的视频，人眼根本看不清发生了什么。
+     *
+     * <p>⚠️ 它只影响**观感**，不影响结果：Playwright 的自动等待照常工作，
+     * 断言该失败还是失败。所以调大它不会把不稳定的案例「等」成通过。
+     *
+     * <p>默认 250ms：一条 10 步的案例多花 2.5 秒，录像变得能看清，
+     * 而批量跑 100 条也只多 4 分钟。演示环境按需调，CI 里设 0。
+     */
+    private int slowMoMs = 250;
+
     /** 执行环境的变量，如 base_url / test_user */
     private Map<String, String> variables = new LinkedHashMap<>();
 
