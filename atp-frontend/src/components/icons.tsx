@@ -114,6 +114,13 @@ export const IconPlay = ({ size = 12, ...rest }: P) => (
   </svg>
 );
 
+/** 停止生成 —— 一个实心方块，跟 IconPlay 是同一对语汇 */
+export const IconStop = ({ size = 12, ...rest }: P) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" {...rest}>
+    <rect x="5" y="5" width="14" height="14" rx="1.5" />
+  </svg>
+);
+
 export const IconVideo = (p: P) => (
   <Svg {...p} strokeWidth={1.8}>
     <rect x="3" y="6" width="12" height="12" rx="1" />
