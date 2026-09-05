@@ -4,7 +4,7 @@ import { AsyncBlock, ColLabel, LiveDot, NotReadyButton, SectionTitle, Tag } from
 import { IconPlay, IconVideo } from '../../components/icons';
 import { isNoContent, useExecStats, useRecentRuns, useRunningBatch, useTaskDetail } from '../../lib/queries';
 import { approxSec, dash, execStatusTone, humanSec, signed, timeOnly, toneOf } from '../../lib/format';
-import { KNOWN_CONFLICT_CASE } from '../../lib/runnable';
+import { UNSTABLE_CASE } from '../../lib/runnable';
 import DispatchDialog from './DispatchDialog';
 import Modal from '../../components/Modal';
 import type { RunningBatch } from '../../lib/types';
@@ -264,18 +264,19 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
                 )}
 
                 {/*
-                  ATP-ORDER-0003 是刻意保留的红 —— 它和 ATP-CART-0007 对购物车初始状态的
-                  要求相反。把「为什么它是红的」写在失败详情里，比让人对着一条红记录猜要好。
+                  ATP-ORDER-0003 是刻意保留的不稳定案例。
 
-                  ⚠️ 必须同时判 FAILED。这条案例是**会通过的** —— 它跟 0007 的冲突只在
-                  两条一起跑、且共用购物车初始状态时才触发，单跑就是绿的。
-                  只看 caseCode 的话，绿行点进去也弹「这条红的是刻意保留的」，
-                  说明卡和它上面那个绿色 PASSED 标签当场打架。
+                  ⚠️ 这张卡原来写的是「它与 ATP-CART-0007 的要求相反」—— 那个说法是编的。
+                  执行历史里它在 0007 没跑的批次照样时绿时红。真实成因是它自己不准备数据。
+                  说明卡的价值全在「说的是真的」上：一句能被眼前的错误信息当场否定的话，
+                  比不写更糟。
+
+                  同时判 FAILED：这条案例是**会通过的**，绿的时候挂这张卡自相矛盾。
                 */}
-                {data.caseCode === KNOWN_CONFLICT_CASE && data.status === 'FAILED' && (
+                {data.caseCode === UNSTABLE_CASE && data.status === 'FAILED' && (
                   <div className="mb-5 rounded-md border border-ai/30 bg-ai-soft px-4 py-3">
-                    <div className="mb-1.5 font-mono text-[10px] tracking-[.12em] text-ai">BY DESIGN</div>
-                    <div className="text-[11.5px] leading-[1.85] text-ink-2">{t('runs.knownConflict')}</div>
+                    <div className="mb-1.5 font-mono text-[10px] tracking-[.12em] text-ai">KNOWN FLAKY</div>
+                    <div className="text-[11.5px] leading-[1.85] text-ink-2">{t('runs.unstableCase')}</div>
                   </div>
                 )}
 
