@@ -48,10 +48,24 @@ public class ChatController {
      * 另一个实例，那边的 map 里没有这个句柄 —— 需要 Redis pub/sub 广播。
      * 当前是单实例部署，先不引入那一层。
      */
-    private final ConcurrentHashMap<String, Disposable> running = new ConcurrentHashMap<>();
+    /**
+     * 正在跑的那一轮：conversationId → (emitter, subscription)。
+     *
+     * <h3>⚠️ 两者必须绑在同一个对象里，不能拆成两个 map</h3>
+     *
+     * 拆开的话，「取消订阅」和「关闭连接」会作用到不同轮次的对象上 ——
+     * 实测踩过：打断第 N 轮之后发起第 N+1 轮，新流刚建立就往上一轮那个已关闭的
+     * emitter 里写，抛 {@code ResponseBodyEmitter has already completed}，
+     * 订阅被取消，前端收到 <b>0 个事件</b>。
+     *
+     * <p>症状看起来像「打断之后这个会话就废了」，而根因只是两个 map 不同步。
+     * 一轮对话的两个句柄是同一个事实的两面，就该原子地一起换。
+     */
+    private final ConcurrentHashMap<String, Turn> turns = new ConcurrentHashMap<>();
 
-    /** 同一个会话的 emitter —— 打断时要用它推 interrupted 事件并关闭连接 */
-    private final ConcurrentHashMap<String, SseEmitter> emitters = new ConcurrentHashMap<>();
+    /** 一轮对话的运行时句柄 */
+    private record Turn(SseEmitter emitter, Disposable subscription) {
+    }
 
     private final java.util.concurrent.ExecutorService sseExecutor =
             Executors.newCachedThreadPool(r -> {
@@ -88,6 +102,11 @@ public class ChatController {
         //    **拿不到任何句柄**，也就没法从外面取消 —— 停止按钮做不出来。
         //    subscribe() 返回 Disposable，dispose() 会向上游传播取消信号，
         //    ChatService 的 doOnCancel 收到后再去 interrupt agent。
+        // ⚠️ 先把上一轮（如果还在）彻底停掉再开新的。
+        //    不这么做的话，同一个会话并发两轮，agent 那侧会抛
+        //    "Agent is still running" —— 而那个异常在响应式链里很难追
+        stopTurn(conversationId, false);
+
         Disposable subscription = chatService.chat(conversationId, body.message(), userId)
                 .subscribe(
                         e -> send(emitter, e),
@@ -95,33 +114,31 @@ public class ChatController {
                             // ⚠️ 不处理的话异常会被 Reactor 丢到全局错误钩子，
                             //    前端只看到连接卡死，后端日志里什么也没有
                             log.error("会话 {} 的流失败", conversationId, e);
-                            running.remove(conversationId);
+                            turns.remove(conversationId);
                             emitter.completeWithError(e);
                         },
                         () -> {
-                            running.remove(conversationId);
+                            turns.remove(conversationId);
                             emitter.complete();
                         });
 
         // ⚠️ 记下订阅句柄，interrupt 接口靠它找到「正在跑的那一轮」。
         //    put 之后要再检查一次是否已完成 —— 极快的流可能在 put 之前就结束了，
         //    那样句柄会永远留在 map 里，下一次 interrupt 会作用到一个已死的订阅
-        running.put(conversationId, subscription);
-        emitters.put(conversationId, emitter);
+        // 原子地登记这一轮。⚠️ 极快的流可能在这之前就结束了，
+        //    那样句柄会留在 map 里，下一次打断会作用到一个已死的订阅
+        turns.put(conversationId, new Turn(emitter, subscription));
         if (subscription.isDisposed()) {
-            running.remove(conversationId);
+            turns.remove(conversationId);
         }
 
         // 客户端主动断开（关页面、网络断）也要停 —— 否则 agent 继续烧 token 没人收
-        emitter.onCompletion(() -> {
-            running.remove(conversationId);
-            emitters.remove(conversationId);
-        });
+        emitter.onCompletion(() -> turns.remove(conversationId));
         emitter.onTimeout(() -> {
             log.warn("会话 {} 的 SSE 超时，停止 agent", conversationId);
-            cancel(conversationId);
+            stopTurn(conversationId, false);
         });
-        emitter.onError(e -> cancel(conversationId));
+        emitter.onError(e -> stopTurn(conversationId, false));
 
         return emitter;
     }
@@ -166,47 +183,65 @@ public class ChatController {
      */
     @PostMapping("/{conversationId}/interrupt")
     public Map<String, Object> interrupt(@PathVariable String conversationId) {
+        // ⚠️ 顺序有讲究：先让 agent 停下再取消订阅。
+        //    反过来的话，dispose() 触发的 doOnCancel 里那次 interrupt 会先到，
+        //    而此刻 activeAgent 还在 —— 结果是 interrupt 被调两次。
+        //    调两次本身无害（标志位幂等），但日志里会出现两条「已请求打断」，
+        //    排查时会以为发生了两次打断
+        // ⚠️ 先取在飞清单再打断 —— 打断之后 ChatService 会清空它
+        String pendingTools = chatService.pendingToolsOf(conversationId);
         boolean agentStopped = chatService.interrupt(conversationId);
-        SseEmitter emitter = emitters.get(conversationId);
-        boolean streamStopped = cancel(conversationId);
-        if (emitter != null) {
-            finishAsInterrupted(emitter, conversationId);
-            emitters.remove(conversationId);
-        }
-        log.info("会话 {} 收到打断：agent={} stream={}", conversationId, agentStopped, streamStopped);
-        return Map.of("interrupted", agentStopped || streamStopped);
+        boolean streamStopped = stopTurn(conversationId, true, pendingTools);
+        log.info("会话 {} 收到打断：agent={} stream={} 在飞工具={}",
+                conversationId, agentStopped, streamStopped,
+                pendingTools.isEmpty() ? "无" : pendingTools);
+        return Map.of(
+                "interrupted", agentStopped || streamStopped,
+                // ⭐ 把「停下时有哪些操作做了一半」如实告诉调用方。
+                //    其中可能有已经写进库的 —— 打断不回滚它们
+                "pendingTools", pendingTools);
     }
 
     /**
-     * 取消订阅并清理句柄。返回是否真的取消了什么。
+     * 停掉某个会话正在跑的那一轮。
      *
-     * <h3>⚠️ dispose() 之后必须自己关 emitter</h3>
-     *
-     * {@code subscribe(next, error, complete)} 的三个回调，在订阅被 {@code dispose()}
-     * 之后<b>一个都不会触发</b> —— 取消不是"完成"，也不是"出错"。
-     *
-     * <p>所以 {@code emitter.complete()} 永远没人调，SSE 连接会一直挂着，
-     * 直到 300 秒超时。实测症状：打断后 agent 确实停了（事件不再增加），
-     * 但浏览器那侧连接不关，转圈继续转 —— 用户会以为没打断成功。
+     * @param notifyClient true = 推一条 interrupted 事件再关连接（用户主动打断）；
+     *                     false = 静默收尾（超时、出错、或被新一轮顶掉）
+     * @return 是否真的停掉了什么
      */
-    private boolean cancel(String conversationId) {
-        Disposable d = running.remove(conversationId);
-        if (d == null || d.isDisposed()) {
+    private boolean stopTurn(String conversationId, boolean notifyClient) {
+        return stopTurn(conversationId, notifyClient, "");
+    }
+
+    private boolean stopTurn(String conversationId, boolean notifyClient, String pendingTools) {
+        Turn t = turns.remove(conversationId);
+        if (t == null) {
             return false;
         }
-        d.dispose();
+        if (!t.subscription().isDisposed()) {
+            t.subscription().dispose();
+        }
+        // ⚠️ dispose() 之后 subscribe 的三个回调一个都不会触发 ——
+        //    取消既不是"完成"也不是"出错"。所以 emitter.complete() 永远没人调，
+        //    连接会一直挂到 300 秒超时。实测症状：agent 确实停了，浏览器还在转圈
+        try {
+            if (notifyClient) {
+                // ⚠️ 顺序：先说「有哪些没做完」，再说「停了」。
+                //    反过来的话前端可能在收到 interrupted 后就关掉了渲染，
+                //    而 tool-aborted 才是用户真正需要看到的那条
+                if (!pendingTools.isEmpty()) {
+                    send(t.emitter(), ChatEvent.toolAborted("system", pendingTools));
+                }
+                send(t.emitter(), ChatEvent.interrupted("system", "已停止本次生成"));
+            }
+            t.emitter().complete();
+        } catch (Exception ignored) {
+            // 连接可能已被客户端关掉，或已经 complete 过 —— 都不是错误
+        }
         return true;
     }
 
-    /** 打断时给前端一个明确的收尾：先说停了，再关连接 */
-    private void finishAsInterrupted(SseEmitter emitter, String conversationId) {
-        send(emitter, ChatEvent.interrupted("system", "已停止本次生成"));
-        try {
-            emitter.complete();
-        } catch (Exception ignored) {
-            // 连接可能已经被客户端关掉了，这不是错误
-        }
-    }
+
 
     private void send(SseEmitter emitter, ChatEvent event) {
         try {

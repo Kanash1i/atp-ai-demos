@@ -14,6 +14,8 @@ import io.agentscope.core.agent.EventType;
 import io.agentscope.core.agent.StreamOptions;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
+import io.agentscope.core.message.ToolUseBlock;
+import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.message.TextBlock;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -84,6 +86,24 @@ public class ChatService {
     private final ConcurrentHashMap<String, IntentCategory> activeAgent = new ConcurrentHashMap<>();
 
     /**
+     * 每个会话「已经发起但还没拿到结果」的工具调用。
+     *
+     * <h3>为什么需要它</h3>
+     *
+     * 打断时用户最需要知道的不是「停了」，而是<b>停下时有哪些操作已经做了一半</b> ——
+     * 因为其中可能有已经写进库的（{@code commit_case} 发出去就是提交了）。
+     *
+     * <p>AgentScope 的 {@code InterruptContext.pendingToolCalls} 给的就是这份清单，
+     * 但 {@code handleInterrupt} 是 protected 而 {@code ReActAgent} 的构造函数是 private，
+     * 继承这条路走不通。所以改成在事件流里自己跟踪：
+     * 看到工具调用发起就记上，看到结果就划掉，打断时剩下的就是「在飞的」。
+     *
+     * <p>⚠️ 用 LinkedHashSet 保持顺序 —— 用户读这份清单时，
+     * 「先调了什么再调了什么」比字母序有意义得多。
+     */
+    private final ConcurrentHashMap<String, java.util.Set<String>> inFlightTools = new ConcurrentHashMap<>();
+
+    /**
      * 发一句话，拿回一串事件。
      *
      * @param conversationId 会话 id。同一个会话复用同一个 agent 实例，多轮上下文才连得上
@@ -137,6 +157,7 @@ public class ChatService {
         StringBuilder answer = new StringBuilder();
 
         return agent.raw().stream(input, options)
+                .doOnNext(e -> trackTools(conversationId, e))
                 .map(e -> toChatEvent(e, agentName))
                 .filter(e -> e.content() != null && !e.content().isBlank())
                 .doOnNext(e -> {
@@ -153,6 +174,7 @@ public class ChatService {
                         history.recordAssistant(conversationId, answer.toString(),
                                 agentName, timeline(route, agentName));
                     }
+                    inFlightTools.remove(conversationId);
                 })
                 .doOnCancel(() -> {
                     // ⚠️ 订阅被取消 = 下游不要了（SSE 断开、超时、或我们主动 dispose）。
@@ -162,6 +184,7 @@ public class ChatService {
                     log.info("会话 {} 的流被取消，停止 agent", conversationId);
                     agent.raw().interrupt();
                     persistPartial(conversationId, answer, agentName, route);
+                    inFlightTools.remove(conversationId);
                 })
                 .onErrorResume(e -> {
                     // ⚠️ 错误也要推给前端。吞掉的话前端会一直等 done，
@@ -179,6 +202,7 @@ public class ChatService {
     public void close(String conversationId) {
         sessions.remove(conversationId);
         activeAgent.remove(conversationId);
+        inFlightTools.remove(conversationId);
     }
 
     /**
@@ -214,8 +238,15 @@ public class ChatService {
         // handleInterrupt，agent 可以据此决定收尾时说什么
         agent.raw().interrupt(Msg.builder().role(MsgRole.USER).name("user")
                 .content(TextBlock.builder().text("用户请求停止本次生成").build()).build());
-        log.info("会话 {} 已请求打断（agent={}）", conversationId, agent.name());
+        String pending = inFlightOf(conversationId);
+        log.info("会话 {} 已请求打断（agent={}，在飞工具：{}）",
+                conversationId, agent.name(), pending.isEmpty() ? "无" : pending);
         return true;
+    }
+
+    /** 打断时还在飞的工具名（给 controller 推 tool-aborted 事件用） */
+    public String pendingToolsOf(String conversationId) {
+        return inFlightOf(conversationId);
     }
 
     /**
@@ -337,15 +368,128 @@ public class ChatService {
         };
     }
 
+    /**
+     * 从事件里认出工具调用的开始与结束，维护「在飞」清单。
+     *
+     * <p>⚠️ 只在事件流里做，不去碰 agent 内部状态 —— 那是框架的东西，
+     * 我们只观察它对外推的事件。
+     */
+    private void trackTools(String conversationId, Event event) {
+        Msg msg = event.getMessage();
+        if (msg == null || msg.getContent() == null) {
+            return;
+        }
+        java.util.Set<String> flight = inFlightTools
+                .computeIfAbsent(conversationId, k -> java.util.Collections.synchronizedSet(new java.util.LinkedHashSet<>()));
+        for (var block : msg.getContent()) {
+            if (block instanceof ToolUseBlock use && isRealToolName(use.getName())) {
+                // 发起：记上
+                flight.add(use.getName());
+            } else if (block instanceof ToolResultBlock res) {
+                // 有结果了：划掉。⚠️ 按 name 划而不是 id ——
+                //    同名工具连续调两次时会误划一次，但清单是给人看的，
+                //    「commit_case 可能没做完」比精确到第几次调用更重要
+                if (isRealToolName(res.getName())) {
+                    flight.remove(res.getName());
+                }
+            }
+        }
+    }
+
+    /**
+     * 是不是一个真实的工具名。
+     *
+     * <h3>⚠️ 流式增量里会出现内部占位名</h3>
+     *
+     * AgentScope 在推增量 chunk 时，工具块的 name 可能是 {@code __fragment__} ——
+     * 那是"这一片还没拼完"的标记，不是工具。实测把它当工具名记下来之后，
+     * 打断时报给用户的是「在飞工具：__fragment__」，
+     * <b>看起来像系统内部泄漏，而用户完全不知道那是什么</b>。
+     *
+     * <p>过滤规则保守：只认小写字母加下划线的形式（我们的工具名都是
+     * {@code search_standards} / {@code commit_case} 这种），
+     * 认不出来的一律不报 —— 少报一个工具，好过报一个用户看不懂的词。
+     */
+    private boolean isRealToolName(String name) {
+        return name != null && name.matches("[a-z][a-z0-9_]{2,}");
+    }
+
+    /** 打断时还在飞的工具名，逗号分隔。没有就返回空串 */
+    private String inFlightOf(String conversationId) {
+        java.util.Set<String> flight = inFlightTools.get(conversationId);
+        if (flight == null || flight.isEmpty()) {
+            return "";
+        }
+        synchronized (flight) {
+            return String.join("、", flight);
+        }
+    }
+
+    /**
+     * 从事件里取出要推给前端的文本。
+     *
+     * <h3>⚠️ 工具块的文本是嵌套的，不在顶层</h3>
+     *
+     * 原来只在顶层找 {@code TextBlock}，而工具调用的内容分别在
+     * {@code ToolUseBlock.getInput()} 和 {@code ToolResultBlock.getOutput()} 里 ——
+     * 顶层一个 TextBlock 都没有，所以 {@code extractText} 返回空串，
+     * 又被下游的 {@code filter(不为空)} 整个丢掉。
+     *
+     * <p>结果是 <b>tool 事件从来没推出去过</b>：前端那个「工具调用可视化」
+     * 一直没有数据，而这恰恰是这个 demo 最该展示的东西 ——
+     * 用户能看见 agent 查了哪条规范、拿了哪个模块、校验报了什么。
+     *
+     * <p>症状极隐蔽：没有报错，没有空白面板，只是那一类事件根本不出现，
+     * 看起来就像「agent 这次没调工具」。
+     */
     private String extractText(Event event) {
         Msg msg = event.getMessage();
         if (msg == null || msg.getContent() == null) {
             return "";
         }
-        return msg.getContent().stream()
+        StringBuilder sb = new StringBuilder();
+        for (var block : msg.getContent()) {
+            if (block instanceof TextBlock t && t.getText() != null) {
+                sb.append(t.getText());
+            } else if (block instanceof ToolUseBlock use) {
+                // 「正在调用哪个工具、参数是什么」—— 前端渲染成工具卡片的标题
+                sb.append("▸ ").append(use.getName());
+                if (use.getInput() != null && !use.getInput().isEmpty()) {
+                    sb.append(' ').append(abbreviate(String.valueOf(use.getInput()), 160));
+                }
+            } else if (block instanceof ToolResultBlock res) {
+                // 结果本身还是一层 ContentBlock 列表，要再剥一层
+                sb.append("✓ ").append(res.getName()).append(' ')
+                        .append(abbreviate(flattenOutput(res), 400));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 剥开 ToolResultBlock 的嵌套内容 */
+    private String flattenOutput(ToolResultBlock res) {
+        if (res.getOutput() == null) {
+            return "";
+        }
+        return res.getOutput().stream()
                 .filter(TextBlock.class::isInstance).map(TextBlock.class::cast)
                 .map(TextBlock::getText)
                 .filter(java.util.Objects::nonNull)
-                .collect(Collectors.joining());
+                .collect(Collectors.joining(" "));
+    }
+
+    /**
+     * 截断长文本。
+     *
+     * <p>⚠️ 工具返回可能很长（{@code atp schema} 就有 4000 多字符），
+     * 原样推给前端会把对话区淹掉，而用户要看的只是「调了什么、大概返回了什么」。
+     * 完整内容在服务端日志里。
+     */
+    private String abbreviate(String text, int max) {
+        if (text == null) {
+            return "";
+        }
+        String flat = text.replaceAll("\\s+", " ").trim();
+        return flat.length() <= max ? flat : flat.substring(0, max) + "…";
     }
 }
