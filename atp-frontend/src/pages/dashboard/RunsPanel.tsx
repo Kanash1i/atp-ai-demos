@@ -251,7 +251,15 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
                         {t('runs.failedAtStep', { seq: data.failedSeq })}
                       </div>
                     )}
-                    <div className="font-mono text-[11.5px] leading-[1.8] text-ink-2">{data.errorMsg}</div>
+                    {/*
+                      errorMsg 是 Playwright 原样抛的，多行 + 带绝对路径的堆栈。
+                      不加 whitespace-pre-wrap 的话换行会被 HTML 折掉，
+                      一整段堆栈压成一行长文本，等于没写。break-words 是给
+                      /tmp/playwright-java-…/package/lib/server/progress.js 那种长路径的。
+                    */}
+                    <div className="max-h-[220px] overflow-y-auto font-mono text-[11.5px] leading-[1.8] break-words whitespace-pre-wrap text-ink-2">
+                      {data.errorMsg}
+                    </div>
                   </div>
                 )}
 
