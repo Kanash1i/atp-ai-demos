@@ -116,6 +116,16 @@ public class ChatService {
     private final ConcurrentHashMap<String, String> lastPlanDigest = new ConcurrentHashMap<>();
 
     /**
+     * 此刻真的有一轮在跑的会话。
+     *
+     * <p>与 {@link #activeAgent} 的区别：那个是<b>会话级</b>的（上次由谁接管，
+     * 用于会话粘性，跨轮保留），这个是<b>轮次级</b>的（这一轮跑没跑完）。
+     * 判断「能不能打断」只能看后者。
+     */
+    private final java.util.Set<String> running =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
      * 发一句话，拿回一串事件。
      *
      * @param conversationId 会话 id。同一个会话复用同一个 agent 实例，多轮上下文才连得上
@@ -166,6 +176,7 @@ public class ChatService {
 
         // ⚠️ 只收集最终回复（message），不收集 thinking ——
         //    一轮能有几百个增量片段、几十 KB，而回看历史时没人要重读思考过程
+        running.add(conversationId);
         StringBuilder answer = new StringBuilder();
 
         return agent.raw().stream(input, options)
@@ -194,6 +205,7 @@ public class ChatService {
                     }
                     inFlightTools.remove(conversationId);
                     lastPlanDigest.remove(conversationId);
+                    running.remove(conversationId);
                 })
                 .doOnCancel(() -> {
                     // ⚠️ 订阅被取消 = 下游不要了（SSE 断开、超时、或我们主动 dispose）。
@@ -205,6 +217,7 @@ public class ChatService {
                     persistPartial(conversationId, answer, agentName, route);
                     inFlightTools.remove(conversationId);
                     lastPlanDigest.remove(conversationId);
+                    running.remove(conversationId);
                 })
                 .onErrorResume(e -> {
                     // ⚠️ 错误也要推给前端。吞掉的话前端会一直等 done，
@@ -246,6 +259,18 @@ public class ChatService {
      * @return true = 确实有一轮在跑并已请求停止；false = 这个会话此刻空闲
      */
     public boolean interrupt(String conversationId) {
+        // ⚠️ 先看这一轮是不是真的在跑。
+        //
+        //    不能只看 activeAgent —— 它是**会话级**的（记住「上次由谁接管」，
+        //    给会话粘性用），一轮结束后不会清。所以对已经跑完的会话打断，
+        //    这里照样取得到 agent 然后返回 true，而实际什么都没停。
+        //
+        //    实测（前端报的）：连着打断两次，第二次仍是 {"interrupted":true}，
+        //    调用方据此以为「刚才那轮被我停了」，而它早就自己跑完了。
+        //    这个布尔要表达的是「这次停了什么」，不是「这个会话曾经有过 agent」。
+        if (!running.contains(conversationId)) {
+            return false;
+        }
         IntentCategory active = activeAgent.get(conversationId);
         if (active == null) {
             return false;
@@ -577,7 +602,20 @@ public class ChatService {
         if (text == null) {
             return "";
         }
-        String flat = text.replaceAll("\\s+", " ").trim();
-        return flat.length() <= max ? flat : flat.substring(0, max) + "…";
+        // ⚠️ 工具返回里常常带着**字面量的** \n（工具把结果 JSON 序列化过一道），
+        //    而不是真换行。不还原的话前端拿到的是一串「\n」字符 ——
+        //    它要么显示成乱码，要么得自己反转义，而反转义 400 字截断后的文本
+        //    很容易踩到半个转义序列。在源头还原掉最省事。
+        String unescaped = text.replace("\\n", " ").replace("\\t", " ").replace("\\\"", "\"");
+        String flat = unescaped.replaceAll("\\s+", " ").trim();
+        if (flat.length() <= max) {
+            return flat;
+        }
+        // ⚠️ 截断点不能落在转义序列或多字节字符中间。
+        //    往前退到最近一个空格，退不动就直接截 —— 宁可短几个字，
+        //    也不要给出一个解析不了的片段
+        String cut = flat.substring(0, max);
+        int lastSpace = cut.lastIndexOf(' ');
+        return (lastSpace > max - 40 ? cut.substring(0, lastSpace) : cut) + "…";
     }
 }
