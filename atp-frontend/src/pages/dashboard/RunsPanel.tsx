@@ -258,8 +258,13 @@ function TaskDrawer({ taskId, onClose }: { taskId: string; onClose: () => void }
                 {/*
                   ATP-ORDER-0003 是刻意保留的红 —— 它和 ATP-CART-0007 对购物车初始状态的
                   要求相反。把「为什么它是红的」写在失败详情里，比让人对着一条红记录猜要好。
+
+                  ⚠️ 必须同时判 FAILED。这条案例是**会通过的** —— 它跟 0007 的冲突只在
+                  两条一起跑、且共用购物车初始状态时才触发，单跑就是绿的。
+                  只看 caseCode 的话，绿行点进去也弹「这条红的是刻意保留的」，
+                  说明卡和它上面那个绿色 PASSED 标签当场打架。
                 */}
-                {data.caseCode === KNOWN_CONFLICT_CASE && (
+                {data.caseCode === KNOWN_CONFLICT_CASE && data.status === 'FAILED' && (
                   <div className="mb-5 rounded-md border border-ai/30 bg-ai-soft px-4 py-3">
                     <div className="mb-1.5 font-mono text-[10px] tracking-[.12em] text-ai">BY DESIGN</div>
                     <div className="text-[11.5px] leading-[1.85] text-ink-2">{t('runs.knownConflict')}</div>
