@@ -52,17 +52,19 @@ const TOOL_LINE = /^([▸✓✗])\s+([A-Za-z_][\w.-]*)\s*([\s\S]*)$/;
 const TOOL_CALL_CHUNK = /^▸\s+([A-Za-z_][\w.-]*)$/;
 
 /**
- * 工具结果里的换行是**字面量 `\n`**（后端把 JSON 节点 toString 了），
- * 不还原的话面板里全是 `\n\n【manual/…】` 这种噪声。
+ * 工具结果外面还裹着一层 JSON 字符串的引号，剥掉再显示。
  *
- * ⚠️ 不能用 JSON.parse 还原：结果被后端截到 400 字，尾部的引号常常是断的。
+ * ⚠️ 不能用 JSON.parse 剥：结果被后端截到 400 字，尾部的引号可能整个没了 ——
+ * 所以是「有才剥」，不是「假定成对」。
+ *
+ * 2026-09-06：这里原本还要还原字面量 `\n`（后端把 JSON 节点 toString 过一道）。
+ * 后端已在源头修掉，实测新流里字面量 `\n` 为 0 条，那段反转义就删了 ——
+ * 留着会让下一个人以为后端还在推转义文本。
  */
-function unescapeInline(raw: string): string {
-  let s = raw.trim();
-  if (s.startsWith('"')) s = s.slice(1);
-  if (s.endsWith('"')) s = s.slice(0, -1);
-  const map: Record<string, string> = { n: '\n', t: '\t', r: '\r', '"': '"', '\\': '\\' };
-  return s.replace(/\\(n|t|r|"|\\)/g, (_m, c: string) => map[c] ?? c);
+function unquote(raw: string): string {
+  const s = raw.trim();
+  const body = s.startsWith('"') ? s.slice(1) : s;
+  return body.endsWith('"') ? body.slice(0, -1) : body;
 }
 
 function parseTool(content: string): TraceItem {
@@ -73,7 +75,7 @@ function parseTool(content: string): TraceItem {
     kind: 'tool',
     phase: m[1] === '▸' ? 'call' : 'result',
     name: m[2],
-    detail: unescapeInline(m[3]),
+    detail: unquote(m[3]),
   };
 }
 
