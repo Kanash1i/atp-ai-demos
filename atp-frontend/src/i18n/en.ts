@@ -161,8 +161,7 @@ const en: Dict = {
     etaUnknown: 'Nothing has finished yet, so there is no basis to extrapolate',
     videoOf: 'Run recording for {{code}}',
     videoUnsupported: "Your browser can't play this webm — download it instead",
-    knownConflict: 'This red one is kept on purpose: it contradicts ATP-CART-0007 on the cart\'s initial state (one wants an out-of-stock item blocked at checkout, the other wants a clean cart that reaches checkout). Real platforms solve this with per-case test-data setup — it is not a defect.',
-  },
+    unstableCase: 'This case is left flaky on purpose. Its precondition says one in-stock item in the cart, but step 1 just opens the cart — no step ever sets that state up, so the outcome depends on whatever ran before it. That is why it is sometimes green and sometimes red. And the error lands on step 3, pick an address, one layer away from the real cause: an out-of-stock item still in the cart blocks checkout back at step 2. Test-data setup is a known gap here — per-case data parameterisation is not built yet.',  },
   approvals: {
     awaitingMe: 'Awaiting me',
     submittedByMe: 'Submitted',
