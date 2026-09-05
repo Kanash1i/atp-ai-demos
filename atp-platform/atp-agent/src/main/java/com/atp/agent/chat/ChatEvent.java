@@ -6,7 +6,7 @@ package com.atp.agent.chat;
  * <p>⚠️ 事件类型是**前端契约**，不是内部枚举 —— 前端按 type 决定渲染成
  * 气泡、进度行还是工具卡片。加类型要同步 {@code 02-前端契约.md}。
  *
- * @param type    thinking / tool / message / done / error / interrupted / tool-aborted
+ * @param type    thinking / tool / plan / message / done / error / interrupted / tool-aborted
  * @param agent   哪个 agent 发出的，前端用它做归属标记
  * @param content 正文
  */
@@ -30,6 +30,25 @@ public record ChatEvent(String type, String agent, String content) {
     /** 最终回复，流式增量 */
     public static ChatEvent message(String agent, String text) {
         return new ChatEvent("message", agent, text);
+    }
+
+    /**
+     * 任务清单快照。
+     *
+     * <h3>为什么单独一个事件，而不是塞进 thinking</h3>
+     *
+     * thinking 是流水账 —— 一轮几百条增量，用户滚到最后就找不到开头了。
+     * 而任务清单是<b>一个会变的状态</b>：前端应该把它钉在固定位置，
+     * 每次更新覆盖上一份，而不是追加成第 N 条消息。
+     *
+     * <p>⚠️ 这也正是打断时最该展示的东西：停下来的那一刻，
+     * 哪些子任务 DONE、哪个 IN_PROGRESS、剩下几个 TODO ——
+     * 比一句「已停止」有用得多，用户据此决定要不要接着做。
+     *
+     * <p>content 是 JSON：{@code {"name":"...","subtasks":[{"name":"","state":"DONE"}]}}
+     */
+    public static ChatEvent plan(String agent, String json) {
+        return new ChatEvent("plan", agent, json);
     }
 
     /**

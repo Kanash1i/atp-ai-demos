@@ -8,6 +8,7 @@ import com.atp.agent.tools.ExecutionTools;
 import com.atp.agent.tools.PageInspectTools;
 import com.atp.agent.tools.StandardsTools;
 import io.agentscope.core.ReActAgent;
+import io.agentscope.core.plan.PlanNotebook;
 import io.agentscope.core.memory.InMemoryMemory;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
@@ -79,6 +80,18 @@ public class CaseAuthoringAgent implements AtpAgent {
                 //    存 → 校验不过再改再存，一条案例正常就要七八轮。
                 //    给太少的话它会在还没校验通过时就被截断，交出一条不合规的案例
                 .maxIters(20)
+                // ⭐ 任务清单。只给这个 agent 开 —— 它是多步的（查规范 → 查模块 →
+                //    探页面 → 建草稿 → 校验 → 提交 → 自验），用户需要看见进度。
+                //    执行/知识/通用那三个一两步就完了，挂上只是噪音。
+                //
+                // ⚠️ needUserConfirm(false)：计划由 agent 自己定，不额外拦一道。
+                //    真正需要人确认的是 commit_case（写库那一步），
+                //    在计划阶段再拦一次，用户要点两次确认才写得进一条案例。
+                //    确认点多不等于更安全 —— 点多了人就不看内容了。
+                .planNotebook(PlanNotebook.builder()
+                        .maxSubtasks(8)
+                        .needUserConfirm(false)
+                        .build())
                 .build();
     }
 

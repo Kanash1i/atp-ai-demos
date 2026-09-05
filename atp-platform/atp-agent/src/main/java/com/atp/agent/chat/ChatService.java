@@ -16,6 +16,9 @@ import io.agentscope.core.message.Msg;
 import io.agentscope.core.message.MsgRole;
 import io.agentscope.core.message.ToolUseBlock;
 import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.plan.PlanNotebook;
+import io.agentscope.core.plan.model.Plan;
+import io.agentscope.core.plan.model.SubTask;
 import io.agentscope.core.message.TextBlock;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -104,6 +107,15 @@ public class ChatService {
     private final ConcurrentHashMap<String, java.util.Set<String>> inFlightTools = new ConcurrentHashMap<>();
 
     /**
+     * 上一次推给前端的任务清单指纹。
+     *
+     * <p>⚠️ 不记的话每个事件都会推一份完整清单 —— 一轮几百个 thinking 事件，
+     * 就是几百份一模一样的 JSON。前端要么自己去重，要么把固定区域刷爆。
+     * 变了才推，是把「什么时候算变了」这个判断留在产生端。
+     */
+    private final ConcurrentHashMap<String, String> lastPlanDigest = new ConcurrentHashMap<>();
+
+    /**
      * 发一句话，拿回一串事件。
      *
      * @param conversationId 会话 id。同一个会话复用同一个 agent 实例，多轮上下文才连得上
@@ -158,7 +170,13 @@ public class ChatService {
 
         return agent.raw().stream(input, options)
                 .doOnNext(e -> trackTools(conversationId, e))
-                .map(e -> toChatEvent(e, agentName))
+                // ⭐ 每个事件后看一眼计划有没有变，变了就多推一条 plan 事件。
+                //    用 concatMap 而不是 map，因为一个上游事件可能产出两条下游事件
+                .concatMap(e -> {
+                    ChatEvent base = toChatEvent(e, agentName);
+                    ChatEvent planEvent = planSnapshotIfChanged(conversationId, agent, agentName);
+                    return planEvent == null ? Flux.just(base) : Flux.just(planEvent, base);
+                })
                 .filter(e -> e.content() != null && !e.content().isBlank())
                 .doOnNext(e -> {
                     if ("message".equals(e.type())) {
@@ -175,6 +193,7 @@ public class ChatService {
                                 agentName, timeline(route, agentName));
                     }
                     inFlightTools.remove(conversationId);
+                    lastPlanDigest.remove(conversationId);
                 })
                 .doOnCancel(() -> {
                     // ⚠️ 订阅被取消 = 下游不要了（SSE 断开、超时、或我们主动 dispose）。
@@ -185,6 +204,7 @@ public class ChatService {
                     agent.raw().interrupt();
                     persistPartial(conversationId, answer, agentName, route);
                     inFlightTools.remove(conversationId);
+                    lastPlanDigest.remove(conversationId);
                 })
                 .onErrorResume(e -> {
                     // ⚠️ 错误也要推给前端。吞掉的话前端会一直等 done，
@@ -203,6 +223,7 @@ public class ChatService {
         sessions.remove(conversationId);
         activeAgent.remove(conversationId);
         inFlightTools.remove(conversationId);
+        lastPlanDigest.remove(conversationId);
     }
 
     /**
@@ -242,6 +263,64 @@ public class ChatService {
         log.info("会话 {} 已请求打断（agent={}，在飞工具：{}）",
                 conversationId, agent.name(), pending.isEmpty() ? "无" : pending);
         return true;
+    }
+
+    /**
+     * 取当前任务清单的快照，只在变化时返回事件，否则返回 null。
+     *
+     * <p>⚠️ 用 {@code toMarkdown} 的输出做指纹而不是对象身份 ——
+     * {@code PlanNotebook} 是就地改的（{@code updateSubtaskState} 直接改字段），
+     * 对象引用永远相同，靠 {@code ==} 判断不出任何变化。
+     */
+    private ChatEvent planSnapshotIfChanged(String conversationId, AtpAgent agent, String agentName) {
+        PlanNotebook notebook = agent.raw().getPlanNotebook();
+        if (notebook == null) {
+            return null;
+        }
+        Plan plan = notebook.getCurrentPlan();
+        if (plan == null) {
+            return null;
+        }
+        String digest = plan.toMarkdown(true);
+        String prev = lastPlanDigest.get(conversationId);
+        if (digest.equals(prev)) {
+            return null;
+        }
+        lastPlanDigest.put(conversationId, digest);
+        return ChatEvent.plan(agentName, planJson(plan));
+    }
+
+    /**
+     * 把计划序列化成前端好渲染的 JSON。
+     *
+     * <p>不直接推 {@code toMarkdown} 的原因：那是给模型看的格式，
+     * 前端要的是结构化数据 —— 它得按状态给每个子任务上不同的颜色，
+     * 而从 Markdown 里正则出状态是倒着来的。
+     */
+    private String planJson(Plan plan) {
+        StringBuilder sb = new StringBuilder("{\"name\":").append(quote(plan.getName()))
+                .append(",\"subtasks\":[");
+        java.util.List<SubTask> subs = plan.getSubtasks() == null ? java.util.List.<SubTask>of() : plan.getSubtasks();
+        for (int i = 0; i < subs.size(); i++) {
+            SubTask t = subs.get(i);
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append("{\"name\":").append(quote(t.getName()))
+              .append(",\"state\":").append(quote(t.getState() == null ? "TODO" : t.getState().name()))
+              .append(",\"outcome\":").append(quote(t.getOutcome()))
+              .append('}');
+        }
+        return sb.append("]}").toString();
+    }
+
+    /** 最小的 JSON 字符串转义 —— 子任务名里可能有引号和换行 */
+    private String quote(String raw) {
+        if (raw == null) {
+            return "null";
+        }
+        return '"' + raw.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "") + '"';
     }
 
     /** 打断时还在飞的工具名（给 controller 推 tool-aborted 事件用） */
@@ -452,12 +531,21 @@ public class ChatService {
             if (block instanceof TextBlock t && t.getText() != null) {
                 sb.append(t.getText());
             } else if (block instanceof ToolUseBlock use) {
+                // ⚠️ 流式增量里的 __fragment__ 是「这一片还没拼完」的内部标记，不是工具。
+                //    实测漏掉它时，一轮里推了 180 条「▸ __fragment__」给前端 ——
+                //    真正的工具调用被淹在噪音里
+                if (!isRealToolName(use.getName())) {
+                    continue;
+                }
                 // 「正在调用哪个工具、参数是什么」—— 前端渲染成工具卡片的标题
                 sb.append("▸ ").append(use.getName());
                 if (use.getInput() != null && !use.getInput().isEmpty()) {
                     sb.append(' ').append(abbreviate(String.valueOf(use.getInput()), 160));
                 }
             } else if (block instanceof ToolResultBlock res) {
+                if (!isRealToolName(res.getName())) {
+                    continue;
+                }
                 // 结果本身还是一层 ContentBlock 列表，要再剥一层
                 sb.append("✓ ").append(res.getName()).append(' ')
                         .append(abbreviate(flattenOutput(res), 400));
