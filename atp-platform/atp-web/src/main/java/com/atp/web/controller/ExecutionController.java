@@ -57,9 +57,19 @@ public class ExecutionController {
     }
 
     /** 最近执行结果，默认 200 条 */
+    /**
+     * 最近执行结果。
+     *
+     * <p>默认滤掉 {@code ATP-DIFF-*} / {@code ATP-CLIT-*} —— 开发期造的对拍数据
+     * 与集成测试残留，跑必失败，占执行历史的 40% 且都很新，
+     * 不滤的话看板上最近 200 条里三分之一是它们。
+     *
+     * @param includeDevNoise 排查工具链本身的问题时传 true
+     */
     @GetMapping("/recent")
-    public List<TaskSummaryVO> recent(@RequestParam(defaultValue = "200") int limit) {
-        return executionQueryService.recent(limit);
+    public List<TaskSummaryVO> recent(@RequestParam(defaultValue = "200") int limit,
+                                      @RequestParam(defaultValue = "false") boolean includeDevNoise) {
+        return executionQueryService.recent(limit, !includeDevNoise);
     }
 
     /** 失败详情：步骤级结果 + 录像 + 失败截图 */

@@ -48,7 +48,9 @@ x-node: &node
 
     # 录像慢放。演示时录像才看得清，CI 里应设 0。
     # ⚠️ 只影响观感不影响判定 —— 不会把不稳定的案例「等」成通过
-    ATP_SLOWMO_MS: ${ATP_SLOWMO_MS:-250}
+    # ⚠️ 默认 0 —— 开着会把耗时对照稀释掉（12.9x → 1.8x 实测）。
+    #    录演示视频时临时 export ATP_SLOWMO_MS=300 再 up
+    ATP_SLOWMO_MS: ${ATP_SLOWMO_MS:-0}
   networks:
     - infra
     - default

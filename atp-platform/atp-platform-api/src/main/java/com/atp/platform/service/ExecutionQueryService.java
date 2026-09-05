@@ -130,10 +130,40 @@ public class ExecutionQueryService {
                 elapsed, eta);
     }
 
+    /**
+     * 开发期造出来的案例编号前缀 —— 它们不该出现在业务看板上。
+     *
+     * <p>{@code ATP-DIFF-*} 是两条写入路径对拍时造的，{@code ATP-CLIT-*} 是 CLI
+     * 集成测试留下的。两者的 {@code step_json} 都是占位内容，跑必失败。
+     *
+     * <p>⚠️ 它们占了执行历史的 40%（5034 条里 2039 条），而且都很新 ——
+     * 最近 200 条的窗口里 33% 是 DIFF。演示时看板上一片红，
+     * 而那些红跟被测系统的质量毫无关系。
+     */
+    private static final List<String> DEV_NOISE_PREFIXES = List.of("ATP-DIFF-", "ATP-CLIT-");
+
     /** 最近执行结果。默认 200 条，与设计稿一致 */
     public List<TaskSummaryVO> recent(int limit) {
-        return taskMapper.selectList(new LambdaQueryWrapper<ExecTask>()
-                        .isNotNull(ExecTask::getFinishedAt)
+        return recent(limit, true);
+    }
+
+    /**
+     * @param excludeDevNoise 是否滤掉开发期垃圾。默认 true ——
+     *                        看板是给人看被测系统质量的，不是看我们自己的测试残留。
+     *                        排查工具链本身的问题时传 false
+     */
+    public List<TaskSummaryVO> recent(int limit, boolean excludeDevNoise) {
+        LambdaQueryWrapper<ExecTask> q = new LambdaQueryWrapper<ExecTask>()
+                .isNotNull(ExecTask::getFinishedAt);
+        if (excludeDevNoise) {
+            // ⚠️ 在 SQL 里滤，不是查回来再 filter —— 后者会让 LIMIT 200 变成
+            //    「最近 200 条里剩下的那些」，实际可能只有 130 条，
+            //    而调用方以为自己拿到了 200 条最近的
+            for (String prefix : DEV_NOISE_PREFIXES) {
+                q.notLikeRight(ExecTask::getCaseCode, prefix);
+            }
+        }
+        return taskMapper.selectList(q
                         .orderByDesc(ExecTask::getFinishedAt)
                         .last("LIMIT " + Math.min(Math.max(limit, 1), 500)))
                 .stream()

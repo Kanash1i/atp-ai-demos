@@ -75,10 +75,26 @@ public class RunnerProperties {
      * <p>⚠️ 它只影响**观感**，不影响结果：Playwright 的自动等待照常工作，
      * 断言该失败还是失败。所以调大它不会把不稳定的案例「等」成通过。
      *
-     * <p>默认 250ms：一条 10 步的案例多花 2.5 秒，录像变得能看清，
-     * 而批量跑 100 条也只多 4 分钟。演示环境按需调，CI 里设 0。
+     * <h3>⚠️ 默认 0 —— 它会污染耗时数据</h3>
+     *
+     * 一开始默认给了 250ms，实测发现代价比预想大得多：
+     *
+     * <pre>
+     *                        ATP-LOGIN-0001(SLEEP)  vs  0002(显式等待)
+     *   slowMo=0              3.53s                     0.31s      12.9x
+     *   slowMo=250           28.79s                    24.04s       1.8x
+     * </pre>
+     *
+     * slowMo 对<b>每一个 Playwright 操作</b>生效 —— 不只是步骤数，
+     * 还有内部的等待与断言。所以它不是给每条案例加一个固定基数，
+     * 而是<b>按操作次数放大</b>，把「SLEEP 比显式等待慢一个量级」这个
+     * 本来很干净的对照稀释成了 1.8 倍。
+     *
+     * <p>耗时是这个平台的一等数据（看板的平均耗时、案例间的对照都靠它），
+     * 不能为了录像好看去动它。要录好看的录像就单跑一条时显式开：
+     * {@code ATP_SLOWMO_MS=300}。
      */
-    private int slowMoMs = 250;
+    private int slowMoMs = 0;
 
     /** 执行环境的变量，如 base_url / test_user */
     private Map<String, String> variables = new LinkedHashMap<>();

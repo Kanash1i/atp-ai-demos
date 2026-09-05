@@ -52,7 +52,10 @@ atp:
     # 每个浏览器操作之间的停顿（毫秒）。0 = 不停顿。
     # ⚠️ 只影响录像观感，不影响判定 —— 自动等待与断言逻辑不变。
     #    案例在同网络里常常 200ms 就跑完，录下来不到一秒，人眼看不清。
-    slow-mo-ms: ${ATP_SLOWMO_MS:250}
+    # ⚠️ 默认 0。slowMo 按操作次数放大耗时，会污染看板的耗时统计
+    #    与案例之间的对照（实测把 12.9x 的差距稀释成 1.8x）。
+    #    只在单独录一条演示录像时开：ATP_SLOWMO_MS=300
+    slow-mo-ms: ${ATP_SLOWMO_MS:0}
     heartbeat-seconds: 30
     poll-timeout-seconds: 5
     # 执行环境。案例里的 ${xxx} 从这里取
