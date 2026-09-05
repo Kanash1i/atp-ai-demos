@@ -15,18 +15,60 @@ import { uuidv4 } from './uuid';
  * `/api/chat/conversations` 的历史列表翻回来。两件事都要做，缺一件都不够。
  */
 
+/**
+ * 处理过程的一条。
+ *
+ * thinking 是增量文本，连续的要合成一条，不然一轮 800 个 token 就是 800 个 <pre>。
+ * tool 是结构化的：`▸ name` 是发起、`✓ name "…"` 是结果。
+ *
+ * ⚠️ 发起（▸）实际是从 **thinking 通道**下来的，不是 tool 事件 ——
+ * 后端只把结果推成 tool。这里按内容识别，把它提成 call，
+ * 才能在面板里配成「发起 → 结果」一对。
+ */
+export type TraceItem =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool'; phase: 'call' | 'result'; name: string; detail: string };
+
+/** agent 自己列的任务清单。**是一份会变的状态，不是一条消息** —— 每次覆盖，不追加 */
+export type SubtaskState = 'TODO' | 'IN_PROGRESS' | 'DONE' | 'ABANDONED';
+
+export interface PlanSubtask {
+  name: string;
+  state: SubtaskState;
+  /** 只有 DONE 才有 */
+  outcome: string | null;
+}
+
+export interface AgentPlan {
+  name: string;
+  subtasks: PlanSubtask[];
+}
+
 export interface Turn {
   id: string;
   question: string;
   /** 路由结论，形如「案例编写 · L2 0.98」。末尾是置信度 */
   route: string | null;
   agent: string | null;
-  /** thinking 是增量，按顺序拼 */
-  thinking: string;
+  /** 思考 + 工具调用，按到达顺序。thinking 增量合并进最后一条 */
+  trace: TraceItem[];
+  /** 最后一份任务清单。后端做了指纹去重，来几条渲染几次即可 */
+  plan: AgentPlan | null;
   /** message 是完整内容，直接替换 —— 当增量拼会显示两遍 */
   answer: string;
   error: string | null;
   streaming: boolean;
+  /** 已按下停止、interrupt 接口已发出，但流还没收尾 */
+  stopping?: boolean;
+  /** 收到过 interrupted 事件 */
+  interrupted?: boolean;
+  /**
+   * tool-aborted 带下来的工具名（「、」分隔），可能是空串。
+   *
+   * ⚠️ 语义是「这些工具已经执行了，结果被丢弃」，**不是「已撤销」**。
+   * 打断只保证不再走下一步，已经发出去的写入不回滚。措辞不能让人以为数据回到了打断前。
+   */
+  abortedTools?: string | null;
   /** 历史消息没有 thinking 流，用它区分「刚跑的」和「翻回来的」 */
   fromHistory?: boolean;
 }
@@ -78,4 +120,18 @@ export function patchTurn(id: string, fn: (t: Turn) => Turn): void {
 /** 删掉的正好是当前会话时，顺手开一个新的，免得界面停在一个已经不存在的 id 上 */
 export function forgetIfCurrent(conversationId: string): void {
   if (state.conversationId === conversationId) newConversation();
+}
+
+/** 思考总字数 —— 面板右上角那个计数 */
+export function thinkingLength(trace: TraceItem[]): number {
+  return trace.reduce((n, x) => (x.kind === 'thinking' ? n + x.text.length : n), 0);
+}
+
+/** 增量思考并进最后一条；前一条不是 thinking 就新起一条 */
+export function appendThinking(trace: TraceItem[], text: string): TraceItem[] {
+  const last = trace[trace.length - 1];
+  if (last?.kind === 'thinking') {
+    return [...trace.slice(0, -1), { kind: 'thinking', text: last.text + text }];
+  }
+  return [...trace, { kind: 'thinking', text }];
 }

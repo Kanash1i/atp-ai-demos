@@ -378,7 +378,16 @@ export interface ValidationProblem extends ProblemDetail {
    智能 Agent 助手（面板⑤）—— SSE
    ============================================================ */
 
-export type ChatEventType = 'route' | 'thinking' | 'message' | 'done' | 'error';
+/**
+ * 前四个是过程，`message` 是最终回复，后三个是收尾。
+ *
+ * ⚠️ 打断收尾的顺序是 `tool-aborted` → `interrupted`，**没有 `done`**（流直接结束）。
+ * 反过来假设「先 interrupted 就可以收摊」会把前一条丢掉，而前一条才是用户真正要看的。
+ */
+export type ChatEventType =
+  | 'route' | 'thinking' | 'tool' | 'plan'
+  | 'message'
+  | 'done' | 'error' | 'interrupted' | 'tool-aborted';
 
 export interface ChatEvent {
   type: ChatEventType;
@@ -387,6 +396,10 @@ export interface ChatEvent {
   /**
    * ⚠️ `thinking` 是**增量**（一次几个字，一轮 150~800 个），要按顺序拼接；
    * `message` 是**完整**内容，直接替换。把 message 也当增量拼会显示两遍。
+   *
+   * `plan` 是一段 **JSON 字符串**（AgentPlan），要 parse；
+   * `tool` 是拼好的展示串 `✓ name "结果"`，结果被后端截到 400 字，尾部可能没有闭合引号；
+   * `tool-aborted` 是「、」分隔的工具名，**可能是空串**。
    */
   content: string;
 }
@@ -416,4 +429,19 @@ export interface ChatTimeline {
   agent?: string;
   layer?: string;
   score?: number;
+}
+
+/* ---------- 打断 ---------- */
+
+/**
+ * POST /api/chat/{id}/interrupt 的响应。
+ *
+ * ⚠️ 对一轮**已经结束**的会话再打断，实测返回的是
+ * `{"interrupted":true,"pendingTools":""}` —— 不是 `interrupted:false`。
+ * 所以「有没有东西被打断」要看 pendingTools 空不空，别看这个布尔。
+ */
+export interface InterruptResult {
+  interrupted: boolean;
+  /** 「、」分隔的工具名，可能是空串 */
+  pendingTools: string;
 }
