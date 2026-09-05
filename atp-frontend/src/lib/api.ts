@@ -1,7 +1,7 @@
 import type {
   Approval, ApprovalStats, AuthUser, CaseDetail, ChatConversation, ChatEvent, ChatMessage,
   CreateDraftRequest, Decision,
-  DispatchRequest, DispatchResponse, DraftView, ExecNode, ExecStats, LoginResponse,
+  DispatchRequest, DispatchResponse, DraftView, ExecNode, ExecStats, InterruptResult, LoginResponse,
   ModuleDictEntry, ProblemDetail, Project, RecentRun, RunningBatch, TaskDetail, TreeModule,
   ValidationFinding, ValidationResult,
 } from './types';
@@ -387,6 +387,16 @@ export const conversationMessages = (conversationId: string) =>
 export async function deleteConversation(conversationId: string): Promise<void> {
   await request(`/api/chat/${conversationId}`, { method: 'DELETE' });
 }
+
+/**
+ * 打断当前这一轮生成。
+ *
+ * ⚠️ 调它之后**不要**顺手 abort 本地的 fetch —— 收尾的
+ * `tool-aborted` / `interrupted` 两条事件还在后面，本地一断就全收不到，
+ * 而「哪些工具做了一半」正是用户最需要看到的信息。让服务端自己把流关掉。
+ */
+export const interruptChat = (conversationId: string) =>
+  post<InterruptResult>(`/api/chat/${conversationId}/interrupt`, {});
 
 /** POST 单独写，避免上面 get<> 的语义被误用 */
 export async function decideApproval(
